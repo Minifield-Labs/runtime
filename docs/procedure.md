@@ -6,6 +6,18 @@ This repository owns loading the delivered artifact, assembling public context, 
 
 All thresholds must be agreed for the actual reference device and product scope. A successful desktop inference demonstration doesn't establish browser support, acceptable mobile performance, or furniture-plan correctness.
 
+## Audited foundation from Wires
+
+The [transfer audit](wires-audit.md) documents implemented scalar Q4/Q8 references, serialized model ownership, WASM result handling, token validation, and sequence bucket selection. Tests cover these boundaries; a complete browser decoder remains to be built.
+
+Build the Worker host around explicit lifetime ownership. Keep immutable weights and compiled pipelines resident, give requests isolated activations or serialize them, and release buffers only after their last GPU consumer completes. Cancellation must preserve that completion boundary.
+
+Initialize adapters and read back results asynchronously. Surface shader validation, device loss, and non-finite outputs. Maintain a compatible CPU reference/fallback and choose dispatch thresholds from device measurements.
+
+Measure transient model copies during loading, shader compilation, prompt prefill, token-by-token decode, KV-cache growth, and final readback separately. Bucket shape specialization while preserving positions and masks. Record the cache state and actual dispatch count for each benchmark.
+
+Use the same transport compression when comparing bundled and separate model delivery. Historical encoder timings and the source's 3-run warm median don't establish performance for a larger product decoder.
+
 ## 1. Define the reference deployment
 
 Record the intended operating system, browser/native host, CPU/GPU architecture, available acceleration, RAM, storage, context, and supported offline behavior. Name a reproducible reference device.

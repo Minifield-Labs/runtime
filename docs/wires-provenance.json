@@ -1,0 +1,95 @@
+{
+  "reviewed_on": "2026-09-11",
+  "source_root": "/Users/xandermay/Documents/wires",
+  "source_revision": "file-sha256; source folders have no accessible Git history",
+  "original_sources_modified": false,
+  "records": [
+    {
+      "source": "unrvl-embdb/src/quant.rs",
+      "sha256": "94ac274957a6147d89aa0347bbafa3ea6a7b618d43a0d4bae5b47280d44edd44",
+      "bytes": 12602,
+      "destinations": [
+        "engines/quant-reference/src/q4.rs"
+      ],
+      "use": "adapted-or-extracted"
+    },
+    {
+      "source": "unrvl-embdb/src/error.rs",
+      "sha256": "4376f161d542a156e9c252b7b84b3b3af2045b50965c718fc4596a69f1656bfd",
+      "bytes": 2066,
+      "destinations": [
+        "engines/quant-reference/src/error.rs"
+      ],
+      "use": "adapted-or-extracted"
+    },
+    {
+      "source": "unrvl-embdb/LICENSE",
+      "sha256": "452128a04541eb861f3628182b26fc5055ee57df79d855078d9ba67248ec0dfc",
+      "bytes": 1081,
+      "destinations": [
+        "engines/quant-reference/LICENSE"
+      ],
+      "use": "adapted-or-extracted"
+    },
+    {
+      "source": "unrvl-embdb/web/unrvl-embdb.js",
+      "sha256": "83dbd25e00c8054fdf26d423692846deb9cb17a5438109e1ad2b6956f5a1a10b",
+      "bytes": 7829,
+      "destinations": [
+        "src/inference/wasm-memory.mjs",
+        "src/context/token-input.mjs"
+      ],
+      "use": "adapted-or-extracted"
+    },
+    {
+      "source": "unrvl-embdb/experiments/cubecl-q4-probe/src/w8.rs",
+      "sha256": "f86e152b55789de2a920a8e4fa7075a7cb7828214e3dc3989e49df93186b2191",
+      "bytes": 31555,
+      "destinations": [
+        "engines/quant-reference/src/q8.rs"
+      ],
+      "use": "adapted-or-extracted"
+    },
+    {
+      "source": "unrvl-embdb/experiments/cubecl-q4-probe/src/wasm.rs",
+      "sha256": "007ab651e54e41858b4a59c2470b98c84ee7700ba9e6785d9a80bd09310c06b3",
+      "bytes": 6992,
+      "destinations": [
+        "src/inference/resident-model.mjs"
+      ],
+      "use": "adapted-or-extracted"
+    },
+    {
+      "source": "unrvl-embdb/experiments/cubecl-q4-probe/src/w8_runner.rs",
+      "sha256": "20975bc750bb89d40e6caaa8b8ae16af3b7216ee773a5b432a87824178964390",
+      "bytes": 27669,
+      "destinations": [
+        "src/inference/resident-model.mjs"
+      ],
+      "use": "adapted-or-extracted"
+    },
+    {
+      "source": "unrvl-embdb/docs/BACKENDS.md",
+      "sha256": "1950032f19d4ef72cf295cee1e5465d4239d1fbde04ec14bea71fc0bbcdf1288",
+      "bytes": 4698,
+      "destinations": [],
+      "use": "reviewed-reference"
+    },
+    {
+      "source": "unrvl-embdb/experiments/cubecl-q4-probe/docs/OPTIMIZATION_NOTES.md",
+      "sha256": "73da159c513fd542dafcf6c2441a0f1ff1bbba83e3881c3f4f5e693658959303",
+      "bytes": 11206,
+      "destinations": [
+        "src/inference/sequence-buckets.mjs"
+      ],
+      "use": "adapted-or-extracted"
+    },
+    {
+      "source": "unrvl-embdb/experiments/cubecl-q4-probe/docs/W8_BENCHMARK.md",
+      "sha256": "6a6fc11bd3ea4f51b570578be04928fc43f2ba63410d91e05d70549e418e8b25",
+      "bytes": 4267,
+      "destinations": [],
+      "use": "reviewed-reference"
+    }
+  ]
+}

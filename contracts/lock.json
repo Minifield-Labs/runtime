@@ -9,6 +9,18 @@
       "files": {
         "contracts/model-bundle/v0.1.0/model-bundle.schema.json": "aa8eb9546f9eb711f6ee3ccd7ef0cb3bb78edce18bd97a59ca23779396703011"
       }
+    },
+    {
+      "name": "quant-matrix",
+      "version": "0.1.0",
+      "owner": "training",
+      "mode": "snapshot",
+      "files": {},
+      "artifacts": {
+        "contracts/quant-matrix/v0.1.0/README.md": "6bca460ff40795ce9c1477932ccc5ce4afb822cfb934bf8a0a8eb27290826111",
+        "examples/quant-matrix-v0.1.0/fixture.mfq8": "58a578b1a791d58781642e003eb6fde164c6fe48bc78bb77ca349182689951be",
+        "examples/quant-matrix-v0.1.0/fixture.json": "1143303fac4212125ee178ebfbcad7b7ee65c29864bbc6a2cc4d7417ab75c10d"
+      }
     }
   ]
 }

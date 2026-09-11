@@ -1,0 +1,14 @@
+[package]
+name = "minifield-quant-reference"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+description = "Audited scalar quantized matrix references, extracted from Wires"
+license = "MIT"
+
+[lib]
+path = "src/lib.rs"
+
+[profile.release]
+overflow-checks = true

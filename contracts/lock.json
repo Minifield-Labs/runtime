@@ -1,0 +1,14 @@
+{
+  "lock_version": 1,
+  "contracts": [
+    {
+      "name": "model-bundle",
+      "version": "0.1.0",
+      "owner": "training",
+      "mode": "snapshot",
+      "files": {
+        "contracts/model-bundle/v0.1.0/model-bundle.schema.json": "aa8eb9546f9eb711f6ee3ccd7ef0cb3bb78edce18bd97a59ca23779396703011"
+      }
+    }
+  ]
+}

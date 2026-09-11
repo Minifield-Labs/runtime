@@ -1,0 +1,57 @@
+{
+  "schema_version": "0.1.0",
+  "bundle_id": "example-view-fixture",
+  "purpose": "contract_fixture",
+  "product_id": "example-view",
+  "product_version": "0.1.0",
+  "base_model": {
+    "id": "fixture-only",
+    "revision": "fixture-v1"
+  },
+  "training": {
+    "run_id": "fixture-run",
+    "dataset_id": "example-view-v1",
+    "dataset_manifest_sha256": "a8f21bacb1485d7027456a08ec4fd8c1bc752875cc34d68ebe20fd2295c1d2d1"
+  },
+  "engine": {
+    "name": "fixture",
+    "version": "0.1.0",
+    "weight_format": "fixture",
+    "quantization": "none"
+  },
+  "limits": {
+    "context_tokens": 4096,
+    "max_tool_calls": 8,
+    "max_output_tokens": 256
+  },
+  "decoding": {
+    "temperature": 0,
+    "top_p": 1
+  },
+  "files": [
+    {
+      "role": "weights",
+      "path": "example.weights.fixture.txt",
+      "sha256": "f1fc6052e56ac7c84b264e4a42447466a817c1933dcfc8e3f68cee46845521e3",
+      "bytes": 60
+    },
+    {
+      "role": "tokenizer",
+      "path": "tokenizer.fixture.json",
+      "sha256": "a0afae336148f7e8aa6cb5c8cea0d9b2252c4b7b17cc32ad079b5875a0a6f785",
+      "bytes": 71
+    },
+    {
+      "role": "chat_template",
+      "path": "chat-template.fixture.txt",
+      "sha256": "046a0427d80dbbb06f1120dcbe080ddca83cf8a156f64ad93a8add6b10b509f2",
+      "bytes": 75
+    },
+    {
+      "role": "product_contract",
+      "path": "product.json",
+      "sha256": "1e408926e8ffd803c8bdc358a3715537e82e941f3ef993634f25af4aa19b9aa6",
+      "bytes": 1103
+    }
+  ]
+}

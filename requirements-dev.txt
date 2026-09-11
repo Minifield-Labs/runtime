@@ -1,0 +1,2 @@
+# Contract validation only. Model and runtime dependencies are chosen per implementation.
+jsonschema==4.23.0

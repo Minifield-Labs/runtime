@@ -1,0 +1,53 @@
+{
+  "schema_version": "0.1.0",
+  "product_id": "example-view",
+  "product_version": "0.1.0",
+  "description": "Synthetic view-only product for checking the data contract.",
+  "scope": {
+    "supported": [
+      "Filter tasks by completion status."
+    ],
+    "unsupported": [
+      "Plan travel.",
+      "Generate furniture plans."
+    ]
+  },
+  "tools": [
+    {
+      "name": "set_filter",
+      "description": "Set the task view's completion filter.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "enum": [
+              "all",
+              "active",
+              "done"
+            ]
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "enum": [
+              "all",
+              "active",
+              "done"
+            ]
+          }
+        },
+        "required": [
+          "filter"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

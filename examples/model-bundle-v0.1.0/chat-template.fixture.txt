@@ -1,0 +1,1 @@
+Contract fixture only. Use a model's exact template during implementation.

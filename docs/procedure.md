@@ -6,6 +6,14 @@ This repository owns loading the delivered artifact, assembling public context, 
 
 All thresholds must be agreed for the actual reference device and product scope. A successful desktop inference demonstration doesn't establish browser support, acceptable mobile performance, or furniture-plan correctness.
 
+## Product integration from the first version
+
+Platform owns candidate selection, durable validation jobs, artifact distribution, and release/rollback controls. Runtime consumes the exact registered bundle and reports evidence tied to its digest, engine, product version, and device. Keep core inference in Rust with browser integration code for browser APIs and host application actions.
+
+Connect the first bundle-validation path to the product. A user must select a candidate, run the supported device check, inspect its actual result, and return to the result after reconnecting. Make runtime capabilities and failed compatibility checks visible before promotion.
+
+Customer inference remains on the user's device. Uploading prompts, product state, or outputs for diagnostics needs an explicit data-flow decision. Job metadata and synthetic validation reports can support the platform workflow without assuming access to live customer conversations.
+
 ## Audited foundation from Wires
 
 The [transfer audit](wires-audit.md) documents implemented scalar Q4/Q8 references, serialized model ownership, WASM result handling, token validation, and sequence bucket selection. Tests cover these boundaries; a complete browser decoder remains to be built.
@@ -200,6 +208,7 @@ Define diagnostics before collecting them. Default local processing should keep 
 
 ## First deliverable checklist
 
+- [ ] Select a registered candidate through the product and record exact bundle/device validation results there.
 - [ ] Select one reference device, engine, and explicit resource budget.
 - [ ] Load an intact candidate with the exact tokenizer/template.
 - [ ] Complete one actual BuildUp tool round trip after inspecting its interface.

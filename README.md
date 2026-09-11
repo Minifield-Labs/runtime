@@ -20,6 +20,8 @@ The [Wires transfer audit](docs/wires-audit.md) records source provenance, repai
 
 The current foundation uses portable JavaScript modules and a dependency-free Rust reference crate. The deployed decoder/backend will be selected during the deployment proof. Python supports development-time contract checks.
 
+Platform owns the product UI/API, job history, artifact registry, and release controls from the first version. Runtime consumes registered bundles and returns validation evidence tied to bundle, engine, product, and device versions. Core inference remains Rust with a thin browser integration layer.
+
 ## Input contract
 
 Load self-contained model bundles matching the pinned schema in contracts/model-bundle/. Check checksums, supported engine/format, product version, and memory/context constraints before starting a session. Refuse unknown versions and fixtures in a real loader.

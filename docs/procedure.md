@@ -18,6 +18,10 @@ Customer inference remains on the user's device. Uploading prompts, product stat
 
 The [transfer audit](wires-audit.md) documents implemented scalar Q4/Q8 references, serialized model ownership, WASM result handling, token validation, and sequence bucket selection. Tests cover these boundaries; a complete browser decoder remains to be built.
 
+The [ordered experiment plan](../experiments/README.md) owns individual protocols and status for baseline measurements, prefix reuse, bounded attention, packed execution, structured actions, and conditional KV compression/speculative decoding. These are unmeasured experiments; the device and behavioral gates below still govern delivery. The [Wafer reading](wafer-inference-experiments.md) retains research context and cache estimates.
+
+The [xn optimization reference](xn-optimization-reference.md) maps a pinned Rust inference implementation to potential batch-1 kernel, cache, and scheduling trials. Consult its model and browser compatibility limits before adopting code or selecting it as a comparison engine.
+
 Build the Worker host around explicit lifetime ownership. Keep immutable weights and compiled pipelines resident, give requests isolated activations or serialize them, and release buffers only after their last GPU consumer completes. Cancellation must preserve that completion boundary.
 
 Initialize adapters and read back results asynchronously. Surface shader validation, device loss, and non-finite outputs. Maintain a compatible CPU reference/fallback and choose dispatch thresholds from device measurements.
@@ -29,6 +33,8 @@ Use the same transport compression when comparing bundled and separate model del
 ## 1. Define the reference deployment
 
 Record the intended operating system, browser/native host, CPU/GPU architecture, available acceleration, RAM, storage, context, and supported offline behavior. Name a reproducible reference device.
+
+The current local inference target is batch 1, with one active sequence and a bounded reusable prefix/session cache. Keep general batching and parallel candidate search outside the first implementation. Sequential reasoning and processing multiple prompt tokens during prefill both fit this target.
 
 Choose explicit limits for:
 

@@ -6,6 +6,8 @@ This independent repository includes audited scalar Q4/Q8 matrix references, ser
 
 Read the [detailed procedure and success criteria](docs/procedure.md) for implementation order, required artifacts, validation, failure handling, and the first milestone.
 
+The [ordered experiment plan](experiments/README.md) contains individual protocols for the decoder baseline, prefix reuse, memory, packed execution, action syntax, and conditional KV compression/speculative decoding.
+
 The [Wires transfer audit](docs/wires-audit.md) records source provenance, repaired lifecycle/input issues, benchmark limits, and the remaining browser work.
 
 ## Ownership

@@ -16,4 +16,11 @@ The manager serializes operations. Each operation must settle only after its fin
 
 Replacement builds a candidate before disposing the old resource. Budget for that temporary overlap, or explicitly unload before loading when memory is tight. A failed factory retains the old model; a failed old-model disposal clears the active slot and attempts candidate cleanup.
 
-The helpers are Worker-compatible modules. They don't start a Worker, choose a GPU backend, implement device-loss fallback, or expose product tools. Those steps belong to the runtime procedure.
+`training-model.mjs` verifies complete local LFM2 training-model exports before
+an engine sees their paths. The first native backend is the Rust mistral.rs
+process adapter under `engines/mistralrs/`. It keeps checkpoint merging outside
+runtime and passes the trained serializer's raw prompt to the engine.
+
+The lower-level lifecycle helpers remain Worker-compatible. They don't start a
+browser Worker, implement device-loss fallback, or expose product tools. Those
+steps belong to the runtime procedure.

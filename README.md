@@ -2,7 +2,11 @@
 
 Run a delivered product specialist and connect its supported actions to the host application.
 
-This independent repository includes audited scalar Q4/Q8 matrix references, serialized model ownership, WASM memory checks, token validation, and bounded sequence buckets. Full decoder loading, GPU execution, Worker hosting, and product integration remain to be implemented.
+This independent repository includes audited scalar Q4/Q8 matrix references,
+serialized model ownership, WASM memory checks, token validation, bounded
+sequence buckets, and a native mistral.rs adapter for complete LFM2 training
+model exports. Browser Worker hosting and product integration remain to be
+implemented.
 
 Read the [detailed procedure and success criteria](docs/procedure.md) for implementation order, required artifacts, validation, failure handling, and the first milestone.
 

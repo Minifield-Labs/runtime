@@ -2,9 +2,17 @@
 
 Run a delivered product specialist and connect its supported actions to the host application.
 
-This is an independent repository. It currently contains execution boundaries, the pinned model-bundle contract, synthetic fixtures, and validation checks. Model loading and product tool integration remain to be implemented.
+This independent repository includes audited scalar Q4/Q8 matrix references,
+serialized model ownership, WASM memory checks, token validation, bounded
+sequence buckets, and a native mistral.rs adapter for complete LFM2 training
+model exports. Browser Worker hosting and product integration remain to be
+implemented.
 
 Read the [detailed procedure and success criteria](docs/procedure.md) for implementation order, required artifacts, validation, failure handling, and the first milestone.
+
+The [ordered experiment plan](experiments/README.md) contains individual protocols for the decoder baseline, prefix reuse, memory, packed execution, action syntax, and conditional KV compression/speculative decoding.
+
+The [Wires transfer audit](docs/wires-audit.md) records source provenance, repaired lifecycle/input issues, benchmark limits, and the remaining browser work.
 
 ## Ownership
 
@@ -16,7 +24,9 @@ Read the [detailed procedure and success criteria](docs/procedure.md) for implem
 - products/: host integrations and supported-action mappings.
 - configs/: reviewed configuration templates.
 
-The target browser/native runtime and implementation language will be selected during the deployment proof. The only current Python dependency supports development-time contract checks; it doesn't select the inference stack.
+The current foundation uses portable JavaScript modules and a dependency-free Rust reference crate. The deployed decoder/backend will be selected during the deployment proof. Python supports development-time contract checks.
+
+Platform owns the product UI/API, job history, artifact registry, and release controls from the first version. Runtime consumes registered bundles and returns validation evidence tied to bundle, engine, product, and device versions. Core inference remains Rust with a thin browser integration layer.
 
 ## Input contract
 
@@ -37,6 +47,16 @@ python3 -m venv .venv
 ```
 
 The check validates schemas, pinned snapshots, example hashes, and handoff consistency. It also checks that malformed records are rejected. It doesn't run a teacher, a trainer, or model inference.
+
+Run the audited JavaScript and scalar kernel tests with Node 22+ and Rust 1.85+:
+
+```sh
+npm test
+cargo test --manifest-path engines/quant-reference/Cargo.toml --offline
+cargo clippy --manifest-path engines/quant-reference/Cargo.toml --offline --all-targets -- -D warnings
+```
+
+See the [reference crate](engines/quant-reference/README.md) for WASM compilation and cross-language matrix checks. The tiny MFQ8 fixture is a kernel contract, separate from complete model bundles.
 
 ## First implementation
 

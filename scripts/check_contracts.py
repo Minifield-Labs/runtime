@@ -43,6 +43,8 @@ def validators():
     lock = read(ROOT / "contracts/lock.json")
     pinned = {}
     for contract in lock["contracts"]:
+        for path, expected in contract.get("artifacts", {}).items():
+            need(digest(local_file(ROOT, path)) == expected, f"Contract artifact pin changed: {path}")
         for path, expected in contract["files"].items():
             need(path not in pinned, f"Duplicate schema pin: {path}")
             pinned[path] = expected

@@ -10,9 +10,9 @@
 pub mod lfm2;
 pub mod loader;
 pub use lfm2::{
-    LayerKind, Lfm2Config, Lfm2LayerWeightRole, Lfm2LoadRequest, Lfm2StorageDType,
-    Lfm2TypedWeights, Lfm2WeightLoadTask, Lfm2WeightPlan, Lfm2WeightRole, NumericalMode,
-    parse_lfm2_config,
+    LayerKind, Lfm2Config, Lfm2ExecutionLimits, Lfm2Executor, Lfm2LayerWeightRole, Lfm2LoadRequest,
+    Lfm2Prefix, Lfm2StorageDType, Lfm2TypedWeights, Lfm2WeightLoadTask, Lfm2WeightPlan,
+    Lfm2WeightRole, LogitsTask, NumericalMode, PrefixTask, ScoreTask, parse_lfm2_config,
 };
 pub use loader::{
     LoadRequest, LoaderError, LoaderLimits, LoaderPoll, LoaderResourceReport, LoaderStage,

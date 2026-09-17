@@ -8,10 +8,11 @@ The active Rust workspace owns its execution and kernels. It has no third-party 
 
 - engines/engine-api: backend-neutral tensor, resource, completion, asset, token, and finite inference-operation contracts.
 - crates/backend-cpu: owned scalar FP32 storage and arithmetic, linear, normalization, convolution, rotary-position, and attention kernels.
-- crates/executor-core: checked model configuration, model-derived weight inventory, typed roles, and bounded tensor loading.
+- crates/executor-core: checked configuration and bounded typed weight loading, full LFM2 execution, prefix caches, append/fork operations, and complete candidate scoring.
+- crates/text-tokenizer: owned bounded tokenizer asset parsing, byte-level BPE, Unicode pretokenization, and incremental UTF-8 decoding.
 - engines/decoding-protocol: separate pure Rust schema/argument framing and teacher-trace component for caller integration.
 
-The full model executor, cache lifecycle, tokenizer, generation loop, plaintext binary, and device backends remain implementation work. Read [implementation status](docs/two-stage-implementation-status.md) for exact validation and remaining gaps.
+The model executor and tokenizer now run the trained tiny diagnostic model through owned Rust APIs. The product generation loop, plaintext binary, quantized execution, and device backends remain implementation work. Read [implementation status](docs/two-stage-implementation-status.md) for exact validation and remaining gaps.
 
 Historical JavaScript helpers and excluded engine prototypes are not part of the new Rust execution core. The scalar CPU implementation provides a correctness baseline; it makes no throughput claim.
 

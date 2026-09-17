@@ -710,6 +710,7 @@ impl<Buffer> LoadedTensor<Buffer> {
 pub struct TypedWeights<Buffer> {
     owner: Rc<()>,
     backend: BackendIdentity,
+    lease: BackendLease,
     config_sha256: [u8; 32],
     asset_sha256: [u8; 32],
     tensors: Vec<LoadedTensor<Buffer>>,
@@ -721,6 +722,12 @@ impl<Buffer> TypedWeights<Buffer> {
     #[must_use]
     pub fn backend(&self) -> BackendIdentity {
         self.backend
+    }
+    /// Check the non-forgeable backend instance and the generation at which these weights were
+    /// published. Matching diagnostic IDs are not enough to reuse model storage.
+    #[must_use]
+    pub fn matches_backend_lease(&self, lease: &BackendLease) -> bool {
+        self.lease.same_actual_instance(lease) && self.lease.identity() == lease.identity()
     }
     #[must_use]
     pub const fn config_sha256(&self) -> [u8; 32] {
@@ -1508,6 +1515,7 @@ where
                     Ok(LoaderPoll::Ready(Ok(TypedWeights {
                         owner: Rc::new(()),
                         backend: backend.identity(),
+                        lease: backend.clone(),
                         config_sha256: self.request.expected_config_sha256,
                         asset_sha256: observed,
                         tensors,

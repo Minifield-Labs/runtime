@@ -334,6 +334,10 @@ impl FenceRetirement<CpuCompletion<()>, CpuBuffer> for CpuFenceRetirement {
         }
         self.retired.borrow_mut().extend(pending);
     }
+
+    fn has_unresolved(&self) -> bool {
+        !self.retired.borrow().is_empty()
+    }
 }
 
 impl CpuBackend {

@@ -959,6 +959,14 @@ pub trait FenceRetirement<Fence, Buffer> {
 
     /// Advance all abandoned fences once. A ready success or error releases its retained buffers.
     fn poll_retired(&self);
+
+    /// Return whether any fence may still reference an abandoned task's source snapshots.
+    ///
+    /// Backends that cannot expose this information must keep the conservative default. Shared
+    /// callers then retain source snapshots until the executor itself is dropped or reloaded.
+    fn has_unresolved(&self) -> bool {
+        true
+    }
 }
 
 /// Finite, backend-neutral inference operation contract.
@@ -1424,17 +1432,22 @@ pub struct CandidateScore {
 pub trait TokenExecutor {
     type Prefix;
     type Prefill: InferenceCompletion<Output = Self::Prefix>;
-    type Append: InferenceCompletion<Output = ()>;
+    /// A successful append publishes a new immutable prefix. The input snapshot is never
+    /// mutated: callers replace it only after this completion is ready.
+    type Append: InferenceCompletion<Output = Self::Prefix>;
+    /// A fork copies backend-resident state asynchronously before publishing an independent
+    /// prefix snapshot.
+    type Fork: InferenceCompletion<Output = Self::Prefix>;
     type Scores: InferenceCompletion<Output = Vec<CandidateScore>>;
     type Logits: InferenceCompletion<Output = Vec<f32>>;
 
     fn prefill(&mut self, input: TokenChunk<'_>) -> Result<Self::Prefill>;
     fn append_known(
         &mut self,
-        prefix: &mut Self::Prefix,
+        prefix: &Self::Prefix,
         input: TokenChunk<'_>,
     ) -> Result<Self::Append>;
-    fn fork(&mut self, prefix: &Self::Prefix) -> Result<Self::Prefix>;
+    fn fork(&mut self, prefix: &Self::Prefix) -> Result<Self::Fork>;
     fn next_logits(&mut self, prefix: &Self::Prefix) -> Result<Self::Logits>;
     fn score_candidates(
         &mut self,

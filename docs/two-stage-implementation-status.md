@@ -12,7 +12,7 @@ This draft implements an inference-only runtime owned by this repository. The ta
 
 ## Validation and limits
 
-The prior CPU/operator foundation passed independent operator and rounding fixtures. The accepted loader correction passed 46 ordinary owned tests, with one external-asset test ignored in the ordinary run, strict Clippy, and a wasm32 compile check. An explicitly enabled local asset test verified the pinned model header and inventory: 148 physical tensors and 354,483,968 parameters. Independent review and debug/release counterexamples verified asynchronous retirement, same-instance stale-generation cleanup, strict dtype admission, and rejection of foreign-instance fences/buffers without losing their ownership. Full model execution is now being implemented.
+The prior CPU/operator foundation passed independent operator and rounding fixtures. The accepted loader correction passed 46 ordinary owned tests, with one external-asset test ignored in the ordinary run, strict Clippy, and a wasm32 compile check. An explicitly enabled local asset test verified the pinned model header and inventory: 148 physical tensors and 354,483,968 parameters. Independent review and debug/release counterexamples verified asynchronous retirement, same-instance stale-generation cleanup, strict dtype admission, and rejection of foreign-instance fences/buffers without losing their ownership. Full FP32 model execution is implemented, including convolution and attention cache state, prefix forks, append operations, cooperative cancellation, and complete candidate scoring. Independent public-API review reproduced and corrected extreme-logit normalization and stale score publication. All six review probes now pass. A separate Rust consumer matches all six frozen trained-tiny plaintext cases exactly, with source unchanged during verification.
 
 The separate protocol package now exposes public route framing and complete true/false candidates, forced array transitions, interleaved operation order, and global probe indices. The frozen corpus bridge matched all 4,134 rows with no remaining unqualified trace fields; debug-label naming differences are reported separately. After the coordinator corrected empty-description admission, all 43 default package tests passed with nine external-oracle tests ignored by default. The preceding full external oracle run passed all nine suites, and formatting, strict Clippy, rustdoc and wasm32 compilation passed. These remain teacher-driven traces; live model decoding and caller policy integration are separate work.
 
@@ -20,15 +20,15 @@ Bulk generated protocol traces, pattern oracles, and binary64 oracle dumps are e
 
 The committed 24 KiB numerical weight fixture is synthetic random test data for a two-layer, 16-hidden model. It is not a pretrained or trained model checkpoint. Actual model assets and private corpus inputs stay outside Git.
 
+The owned tokenizer passed ten compact tests and two external oracle suites. Coverage includes 1,145 exact encode/BOS/decode cases, streaming and byte handling, all 1,112,064 Unicode scalar classifications, strict malformed-asset checks, and native/wasm32 compilation. Tokenizer assets remain caller supplied.
+
 ## Remaining
 
-- Full model execution assembled from loaded typed weights.
-- Prefix/cache ownership, append, branch, cancellation, and complete candidate scoring.
-- Tokenizer, text generation loop, and plaintext executable.
+- Product text generation loop and plaintext executable. The independent plaintext consumer is a diagnostic, not that binary.
 - Owned CUDA and Metal backends, quantized kernels, artifact integration, and cross-backend qualification.
 - Browser delivery testing; wasm32 compilation alone does not establish browser correctness or performance.
 
-Historical JavaScript and excluded engine prototypes are not the new Rust executor. No end-to-end custom runtime or backend performance claim is made at this checkpoint.
+Historical JavaScript and excluded engine prototypes are not the new Rust executor. The trained tiny diagnostic establishes CPU numerical integration only. Actual asynchronous device ownership, low-precision execution, useful model quality, and backend performance remain unqualified.
 
 This snapshot was taken from the existing implementation checkout. Remote main has newer legacy runtime changes; integration remains required before merge.
 

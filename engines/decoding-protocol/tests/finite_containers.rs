@@ -99,7 +99,7 @@ fn fixture_events(value: &Value) -> TestResult<Vec<PublicEvent>> {
             |event| match event["type"].as_str().ok_or("fixture event type")? {
                 "system" => Ok(PublicEvent::System {
                     policy: event["policy"].as_str().ok_or("fixture policy")?.to_owned(),
-                    observation: raw(&event["observation"])?,
+                    observation: event.get("observation").map(raw).transpose()?,
                 }),
                 "user" => Ok(PublicEvent::User {
                     content: event["content"]

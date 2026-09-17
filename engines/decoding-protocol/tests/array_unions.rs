@@ -183,7 +183,7 @@ fn fixture_event(value: &Value) -> Result<PublicEvent, Box<dyn Error>> {
     match value["type"].as_str().ok_or("fixture event type")? {
         "system" => Ok(PublicEvent::System {
             policy: value["policy"].as_str().ok_or("fixture policy")?.to_owned(),
-            observation: raw(&value["observation"])?,
+            observation: value.get("observation").map(raw).transpose()?,
         }),
         "user" => Ok(PublicEvent::User {
             content: value["content"]

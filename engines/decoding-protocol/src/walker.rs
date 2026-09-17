@@ -54,6 +54,8 @@ pub struct ProbeTrace {
     pub suffix_segments: Vec<BranchAppend>,
     pub candidates: Vec<ProbeCandidate>,
     pub selected_index: usize,
+    /// Index of this probe in the authoritative interleaved operation log.
+    pub global_operation_index: usize,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -73,12 +75,67 @@ pub struct FiniteChoice {
     pub selected_index: usize,
 }
 
+/// One structural array transition that has no model target.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ForcedArrayLabel {
+    Continue,
+    Stop,
+}
+impl ForcedArrayLabel {
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::Continue => "continue",
+            Self::Stop => "stop",
+        }
+    }
+}
+
+/// Why an array transition was fixed by its structural bounds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ForcedArrayReason {
+    MinItems,
+    MaxItems,
+}
+impl ForcedArrayReason {
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::MinItems => "minItems",
+            Self::MaxItems => "maxItems",
+        }
+    }
+}
+
+/// One zero-loss array transition fixed by a minimum or maximum item bound.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForcedArray {
+    pub path: String,
+    pub label: ForcedArrayLabel,
+    pub reason: ForcedArrayReason,
+    pub main_length: usize,
+    pub direct_loss_tokens: usize,
+}
+
+/// One action in the trace's authoritative temporal order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TeacherOperation {
+    MainAppend { main_append_index: usize },
+    Probe { probe_index: usize },
+    FiniteChoice { finite_choice_index: usize },
+    ForcedArray { forced_array_index: usize },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct TeacherTrace {
     pub main: TracePrefix,
     pub probes: Vec<ProbeTrace>,
     pub finite_choices: Vec<FiniteChoice>,
+    pub forced_arrays: Vec<ForcedArray>,
+    /// Every main append and structural decision, recorded in occurrence order.
+    pub operation_log: Vec<TeacherOperation>,
     pub learned_token_count: usize,
+    recorded_main_append_count: usize,
 }
 
 /// A runtime-generated primitive that must retain its committed lexical
@@ -148,8 +205,12 @@ where
             main,
             probes: Vec::new(),
             finite_choices: Vec::new(),
+            forced_arrays: Vec::new(),
+            operation_log: Vec::new(),
             learned_token_count: 0,
+            recorded_main_append_count: 0,
         };
+        record_main_appends(&mut trace);
         let root = flatten_constraints(&teacher.effective, &teacher.effective.schema, "");
         let mut walk = Walk {
             prefix_builder: &prefix_builder,
@@ -164,6 +225,7 @@ where
         };
         walk.node("", &root, arguments)?;
         prefix_builder.append_fixed(&mut trace.main, "}", "envelope-close")?;
+        record_main_appends(&mut trace);
         finish_trace(&mut trace, unions, lexical)?;
         Ok(trace)
     }
@@ -234,6 +296,18 @@ fn planned_unions(teacher: &crate::TeacherPlan) -> BTreeMap<String, Vec<PlannedU
     unions
 }
 
+/// Add all main appends created since the last structural action. Callers invoke
+/// this at each action boundary, so the log preserves creation order without
+/// deriving order from offsets after trace construction.
+fn record_main_appends(trace: &mut TeacherTrace) {
+    for main_append_index in trace.recorded_main_append_count..trace.main.appends.len() {
+        trace
+            .operation_log
+            .push(TeacherOperation::MainAppend { main_append_index });
+    }
+    trace.recorded_main_append_count = trace.main.appends.len();
+}
+
 fn finish_trace(
     trace: &mut TeacherTrace,
     unions: BTreeMap<String, Vec<PlannedUnion>>,
@@ -249,6 +323,7 @@ fn finish_trace(
             "committed lexical value at {path} was not reached by structural planning"
         )));
     }
+    validate_operation_log(trace)?;
     let main_learned = trace
         .main
         .appends
@@ -267,6 +342,75 @@ fn finish_trace(
     trace.learned_token_count = main_learned
         .checked_add(probe_learned)
         .ok_or(ProtocolError::TokenLengthOverflow)?;
+    Ok(())
+}
+
+fn validate_operation_log(trace: &TeacherTrace) -> crate::Result<()> {
+    let mut expected_main = 0usize;
+    let mut expected_probe = 0usize;
+    let mut expected_finite = 0usize;
+    let mut expected_forced = 0usize;
+    for (global_operation_index, operation) in trace.operation_log.iter().enumerate() {
+        match *operation {
+            TeacherOperation::MainAppend { main_append_index } => {
+                if main_append_index != expected_main
+                    || trace.main.appends.get(main_append_index).is_none()
+                {
+                    return Err(ProtocolError::Schema(
+                        "operation log has an invalid main append reference".to_owned(),
+                    ));
+                }
+                expected_main += 1;
+            }
+            TeacherOperation::Probe { probe_index } => {
+                let Some(probe) = trace.probes.get(probe_index) else {
+                    return Err(ProtocolError::Schema(
+                        "operation log has an invalid probe reference".to_owned(),
+                    ));
+                };
+                if probe_index != expected_probe
+                    || probe.global_operation_index != global_operation_index
+                {
+                    return Err(ProtocolError::Schema(
+                        "operation log has an out-of-order probe reference".to_owned(),
+                    ));
+                }
+                expected_probe += 1;
+            }
+            TeacherOperation::FiniteChoice {
+                finite_choice_index,
+            } => {
+                if finite_choice_index != expected_finite
+                    || trace.finite_choices.get(finite_choice_index).is_none()
+                {
+                    return Err(ProtocolError::Schema(
+                        "operation log has an invalid finite-choice reference".to_owned(),
+                    ));
+                }
+                expected_finite += 1;
+            }
+            TeacherOperation::ForcedArray { forced_array_index } => {
+                if forced_array_index != expected_forced
+                    || trace.forced_arrays.get(forced_array_index).is_none()
+                {
+                    return Err(ProtocolError::Schema(
+                        "operation log has an invalid forced-array reference".to_owned(),
+                    ));
+                }
+                expected_forced += 1;
+            }
+        }
+    }
+    if expected_main != trace.main.appends.len()
+        || expected_probe != trace.probes.len()
+        || expected_finite != trace.finite_choices.len()
+        || expected_forced != trace.forced_arrays.len()
+        || trace.recorded_main_append_count != trace.main.appends.len()
+    {
+        return Err(ProtocolError::Schema(
+            "operation log does not cover every trace record exactly once".to_owned(),
+        ));
+    }
     Ok(())
 }
 
@@ -458,6 +602,8 @@ where
                 "probe selection is outside its alternatives".to_owned(),
             ));
         }
+        record_main_appends(self.trace);
+        let global_operation_index = self.trace.operation_log.len();
         let fork_main_length = self.trace.main.token_ids.len();
         let prefix_token_ids = self.trace.main.token_ids.clone();
         let fork_main_sha256_u32le = token_hash(&prefix_token_ids);
@@ -502,7 +648,12 @@ where
             suffix_segments,
             candidates,
             selected_index,
+            global_operation_index,
         });
+        let probe_index = self.trace.probes.len() - 1;
+        self.trace
+            .operation_log
+            .push(TeacherOperation::Probe { probe_index });
         Ok(())
     }
 
@@ -513,6 +664,7 @@ where
         values: Vec<RawJson>,
         selected_value: &RawJson,
     ) -> crate::Result<()> {
+        record_main_appends(self.trace);
         let fork_main_length = self.trace.main.token_ids.len();
         let fork_main_sha256_u32le = token_hash(&self.trace.main.token_ids);
         let candidates = values
@@ -530,12 +682,6 @@ where
         let selected_index = selected_index.ok_or_else(|| {
             ProtocolError::Schema("teacher finite value is outside its domain".to_owned())
         })?;
-        self.prefix_builder.append_value(
-            &mut self.trace.main,
-            selected_value,
-            TraceOwnership::Learned,
-            "finite-value",
-        )?;
         self.trace.finite_choices.push(FiniteChoice {
             path: path.to_owned(),
             fork_main_length,
@@ -543,7 +689,38 @@ where
             candidates,
             selected_index,
         });
-        Ok(())
+        let finite_choice_index = self.trace.finite_choices.len() - 1;
+        self.trace
+            .operation_log
+            .push(TeacherOperation::FiniteChoice {
+                finite_choice_index,
+            });
+        self.prefix_builder.append_value(
+            &mut self.trace.main,
+            selected_value,
+            TraceOwnership::Learned,
+            "finite-value",
+        )
+    }
+
+    fn emit_forced_array(
+        &mut self,
+        path: &str,
+        label: ForcedArrayLabel,
+        reason: ForcedArrayReason,
+    ) {
+        record_main_appends(self.trace);
+        self.trace.forced_arrays.push(ForcedArray {
+            path: path.to_owned(),
+            label,
+            reason,
+            main_length: self.trace.main.token_ids.len(),
+            direct_loss_tokens: 0,
+        });
+        let forced_array_index = self.trace.forced_arrays.len() - 1;
+        self.trace
+            .operation_log
+            .push(TeacherOperation::ForcedArray { forced_array_index });
     }
 
     fn finite_domain(
@@ -774,7 +951,13 @@ where
             .append_fixed(&mut self.trace.main, "[", "array-open")?;
         for (index, value) in values.iter().enumerate() {
             let item_path = append(path, &index.to_string());
-            if index >= min_items {
+            if index < min_items {
+                self.emit_forced_array(
+                    &item_path,
+                    ForcedArrayLabel::Continue,
+                    ForcedArrayReason::MinItems,
+                );
+            } else {
                 self.emit_probe(
                     ProbeOperation::Array,
                     &item_path,
@@ -794,7 +977,13 @@ where
             self.node(&item_path, &child, value)?;
         }
         let stop_path = append(path, &values.len().to_string());
-        if max_items.is_none_or(|maximum| values.len() < maximum) && values.len() >= min_items {
+        if max_items == Some(values.len()) {
+            self.emit_forced_array(
+                &stop_path,
+                ForcedArrayLabel::Stop,
+                ForcedArrayReason::MaxItems,
+            );
+        } else if values.len() >= min_items {
             self.emit_probe(
                 ProbeOperation::Array,
                 &stop_path,

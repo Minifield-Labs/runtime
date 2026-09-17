@@ -9,6 +9,20 @@ tool execution, or product effects.
 The draft artifact is fixtures/decoding-protocol.draft-5.json with SHA-256
 e78b6ecfa07a71cf21203ae697aec7b92a19768bbc02e320be58ad1452150fde.
 
+## Route and teacher traces
+
+TracePrefixBuilder.build_routing accepts only public events plus a
+caller-supplied available route name and description. It emits independently
+tokenized route framing and both complete true and false candidates; it does
+not infer permissions, choose a route, or score a model. System-event
+observation is optional, so absence remains distinct from explicit JSON null.
+
+TeacherTrace records main appends, probes, finite choices, and zero-loss
+min/max array transitions in operation_log at occurrence time. Indexed
+records are validated before return, and each selected probe exposes its global
+operation index. The trace remains teacher-driven and requires an injected
+segment tokenizer.
+
 ## Default checks
 
 cargo test -p minifield-decoding-protocol --locked uses compact source and

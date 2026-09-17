@@ -45,7 +45,7 @@ fn event(value: &Value) -> Result<PublicEvent, Box<dyn Error>> {
                 .as_str()
                 .ok_or("policy missing")?
                 .to_owned(),
-            observation: raw(&object["observation"])?,
+            observation: object.get("observation").map(raw).transpose()?,
         },
         "user" => PublicEvent::User {
             content: object["content"]
@@ -258,7 +258,12 @@ fn raw_event(value: &RawJson) -> Result<PublicEvent, Box<dyn Error>> {
     Ok(match kind.as_str() {
         "system" => PublicEvent::System {
             policy: raw_string(value, "policy")?,
-            observation: raw_field(value, "observation")?.clone(),
+            observation: value.object_entries().and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|(key, _)| key == "observation")
+                    .map(|(_, value)| value.clone())
+            }),
         },
         "user" => PublicEvent::User {
             content: raw_string(value, "content")?,

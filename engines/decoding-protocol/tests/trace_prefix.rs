@@ -24,7 +24,10 @@ fn typed_public_events_and_header_are_independently_segmented() -> Result<(), Bo
     )?;
     let event = PublicEvent::System {
         policy: "Use <only> public data.".to_owned(),
-        observation: RawJson::Object(vec![("state".to_owned(), RawJson::String("ok".to_owned()))]),
+        observation: Some(RawJson::Object(vec![(
+            "state".to_owned(),
+            RawJson::String("ok".to_owned()),
+        )])),
     };
     let policy = TokenPolicy::draft5()?;
     let builder = TracePrefixBuilder::new(&Segments, &policy);

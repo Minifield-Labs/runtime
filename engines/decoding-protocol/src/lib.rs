@@ -438,7 +438,7 @@ pub use effective::{
 pub enum PublicEvent {
     System {
         policy: String,
-        observation: RawJson,
+        observation: Option<RawJson>,
     },
     User {
         content: String,
@@ -472,11 +472,16 @@ impl PublicEvent {
             Self::System {
                 policy,
                 observation,
-            } => RawJson::Object(vec![
-                ("type".to_owned(), RawJson::String("system".to_owned())),
-                ("policy".to_owned(), RawJson::String(policy.clone())),
-                ("observation".to_owned(), observation.clone()),
-            ]),
+            } => {
+                let mut fields = vec![
+                    ("type".to_owned(), RawJson::String("system".to_owned())),
+                    ("policy".to_owned(), RawJson::String(policy.clone())),
+                ];
+                if let Some(observation) = observation {
+                    fields.push(("observation".to_owned(), observation.clone()));
+                }
+                RawJson::Object(fields)
+            }
             Self::User { content } => RawJson::Object(vec![
                 ("type".to_owned(), RawJson::String("user".to_owned())),
                 ("content".to_owned(), RawJson::String(content.clone())),
@@ -516,10 +521,14 @@ impl PublicEvent {
     }
 }
 
-pub use trace::{MainAppend, TeacherTraceInput, TraceOwnership, TracePrefix, TracePrefixBuilder};
+pub use trace::{
+    MainAppend, RoutingCandidate, RoutingTrace, RoutingTraceInput, TeacherTraceInput,
+    TraceOwnership, TracePrefix, TracePrefixBuilder, control_description,
+};
 pub use walker::{
-    BranchAppend, FiniteCandidate, FiniteChoice, ProbeCandidate, ProbeOperation, ProbeTrace,
-    TeacherLexicalValue, TeacherTrace, TeacherTraceBuilder,
+    BranchAppend, FiniteCandidate, FiniteChoice, ForcedArray, ForcedArrayLabel, ForcedArrayReason,
+    ProbeCandidate, ProbeOperation, ProbeTrace, TeacherLexicalValue, TeacherOperation,
+    TeacherTrace, TeacherTraceBuilder,
 };
 
 pub use teacher::{TeacherPlan, TeacherUnionChoice, discover_teacher_unions, plan_teacher};

@@ -12,9 +12,10 @@
 // and compact local names while preserving every independently serialized field.
 //! Opt-in, private cross-language corpus trace comparison. It owns no production behavior.
 use minifield_decoding_protocol::{
-    BranchAppend, FiniteChoice, PublicEvent, RawJson, RawJsonLimits, SchemaLimits,
-    SegmentTokenizer, TeacherTrace, TeacherTraceBuilder, TeacherTraceInput, TokenId, TokenPolicy,
-    TraceOwnership, normalize_schema_document, parse_json_document, parse_runtime_value,
+    BranchAppend, FiniteChoice, PublicEvent, RawJson, RawJsonLimits, RoutingTrace,
+    RoutingTraceInput, SchemaLimits, SegmentTokenizer, TeacherOperation, TeacherTrace,
+    TeacherTraceBuilder, TeacherTraceInput, TokenId, TokenPolicy, TraceOwnership,
+    TracePrefixBuilder, normalize_schema_document, parse_json_document, parse_runtime_value,
     plan_teacher, sha256_hex,
 };
 use serde_json::{Map, Value, json};
@@ -289,7 +290,12 @@ fn event(text: &str) -> R<PublicEvent> {
     match rs(&v, "type")?.as_str() {
         "system" => Ok(PublicEvent::System {
             policy: rs(&v, "policy")?,
-            observation: rf(&v, "observation")?.clone(),
+            observation: v.object_entries().and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|(key, _)| key == "observation")
+                    .map(|(_, value)| value.clone())
+            }),
         }),
         "user" => Ok(PublicEvent::User {
             content: rs(&v, "content")?,
@@ -770,6 +776,272 @@ fn finite(
         }
     });
 }
+fn main_branch(append: &minifield_decoding_protocol::MainAppend) -> BranchAppend {
+    BranchAppend {
+        source: append.source.clone(),
+        special_id: append.special_id,
+        token_ids: append.token_ids.clone(),
+        ownership: append.ownership,
+        branch_start: append.main_start,
+        branch_end: append.main_end,
+    }
+}
+
+fn routing(
+    r: &mut Row,
+    trace: &RoutingTrace,
+    expected: &Value,
+    m: &HashMap<String, Vec<u32>>,
+    p: &TokenPolicy,
+) {
+    let suffix = match a(
+        f(expected, "suffix_segments").unwrap_or(&Value::Null),
+        "routing suffix",
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            r.check("routing", || Err(error));
+            return;
+        }
+    };
+    r.eq(
+        "routing.suffix_count",
+        trace.suffix_segments.len(),
+        suffix.len(),
+    );
+    for (index, (actual, wanted)) in trace.suffix_segments.iter().zip(suffix).enumerate() {
+        let key = format!("routing.suffix[{index}]");
+        branch(r, &key, &main_branch(actual), wanted, m, p);
+        if let Ok(label) = s(wanted, "label") {
+            if actual.label != label {
+                r.labels
+                    .push((key, format!("rust={:?}; python={label:?}", actual.label)));
+            }
+        }
+    }
+    r.check("routing.prefix_ids", || {
+        summary(f(expected, "prefix_token_ids")?, &trace.prefix_token_ids)
+    });
+    let candidates = match a(
+        f(expected, "candidates").unwrap_or(&Value::Null),
+        "routing candidates",
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            r.check("routing", || Err(error));
+            return;
+        }
+    };
+    r.eq(
+        "routing.candidate_count",
+        trace.candidates.len(),
+        candidates.len(),
+    );
+    for (index, (actual, wanted)) in trace.candidates.iter().zip(candidates).enumerate() {
+        let key = format!("routing.candidate[{index}]");
+        r.check(&format!("{key}.label"), || {
+            if actual.label == s(wanted, "label")? {
+                Ok(())
+            } else {
+                Err("label differs".into())
+            }
+        });
+        r.check(&format!("{key}.ids"), || {
+            summary(f(wanted, "token_ids")?, &actual.token_ids)
+        });
+        r.check(&format!("{key}.positions"), || {
+            if actual.prediction_positions == pos(wanted)? {
+                Ok(())
+            } else {
+                Err("positions differ".into())
+            }
+        });
+    }
+}
+
+fn forced(
+    r: &mut Row,
+    index: usize,
+    actual: &minifield_decoding_protocol::ForcedArray,
+    wanted: &Value,
+) {
+    let key = format!("forced[{index}]");
+    r.check(&format!("{key}.operation"), || {
+        if s(wanted, "operation")? == "array" {
+            Ok(())
+        } else {
+            Err("operation differs".into())
+        }
+    });
+    r.check(&format!("{key}.path"), || {
+        let expected = s(wanted, "path")?;
+        if actual.path == expected {
+            Ok(())
+        } else {
+            Err(format!("actual={:?}; expected={expected:?}", actual.path))
+        }
+    });
+    r.check(&format!("{key}.label"), || {
+        if actual.label.wire() == s(wanted, "label")? {
+            Ok(())
+        } else {
+            Err("label differs".into())
+        }
+    });
+    r.check(&format!("{key}.reason"), || {
+        if actual.reason.wire() == s(wanted, "reason")? {
+            Ok(())
+        } else {
+            Err("reason differs".into())
+        }
+    });
+    r.check(&format!("{key}.main_length"), || {
+        if actual.main_length == n(wanted, "main_length")? {
+            Ok(())
+        } else {
+            Err("main length differs".into())
+        }
+    });
+    r.check(&format!("{key}.zero_loss"), || {
+        if actual.direct_loss_tokens == n(wanted, "direct_loss_tokens")? {
+            summary(f(wanted, "probe_token_ids")?, &[])?;
+            Ok(())
+        } else {
+            Err("direct loss differs".into())
+        }
+    });
+}
+
+fn compare_operations(r: &mut Row, trace: &TeacherTrace, oracle: &Value) {
+    let wanted = match a(
+        f(oracle, "expected_operations").unwrap_or(&Value::Null),
+        "operations",
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            r.check("operations", || Err(error));
+            return;
+        }
+    };
+    r.eq("operations.count", trace.operation_log.len(), wanted.len());
+    let mut next_main = 0usize;
+    let mut next_probe = 0usize;
+    let mut next_finite = 0usize;
+    let mut next_forced = 0usize;
+    for (global, (actual, expected)) in trace.operation_log.iter().zip(wanted).enumerate() {
+        let key = format!("operations[{global}]");
+        match *actual {
+            TeacherOperation::MainAppend { main_append_index } => {
+                r.check(&format!("{key}.main"), || {
+                    if s(expected, "kind")? == "main_append" && main_append_index == next_main {
+                        Ok(())
+                    } else {
+                        Err("main operation differs".into())
+                    }
+                });
+                next_main += 1;
+            }
+            TeacherOperation::Probe { probe_index } => {
+                r.check(&format!("{key}.probe"), || {
+                    let probe = trace.probes.get(probe_index).ok_or("probe index")?;
+                    if s(expected, "kind")? == "probe"
+                        && probe_index == next_probe
+                        && probe.global_operation_index == global
+                    {
+                        Ok(())
+                    } else {
+                        Err("probe operation differs".into())
+                    }
+                });
+                next_probe += 1;
+            }
+            TeacherOperation::FiniteChoice {
+                finite_choice_index,
+            } => {
+                r.check(&format!("{key}.finite"), || {
+                    if s(expected, "kind")? == "finite_choice" && finite_choice_index == next_finite
+                    {
+                        Ok(())
+                    } else {
+                        Err("finite operation differs".into())
+                    }
+                });
+                next_finite += 1;
+            }
+            TeacherOperation::ForcedArray { forced_array_index } => {
+                r.check(&format!("{key}.forced"), || {
+                    if s(expected, "kind")? == "forced" && forced_array_index == next_forced {
+                        Ok(())
+                    } else {
+                        Err("forced operation differs".into())
+                    }
+                });
+                next_forced += 1;
+            }
+        }
+    }
+    r.eq(
+        "operations.main_coverage",
+        next_main,
+        trace.main.appends.len(),
+    );
+    r.eq("operations.probe_coverage", next_probe, trace.probes.len());
+    r.eq(
+        "operations.finite_coverage",
+        next_finite,
+        trace.finite_choices.len(),
+    );
+    r.eq(
+        "operations.forced_coverage",
+        next_forced,
+        trace.forced_arrays.len(),
+    );
+}
+
+fn compare_probe_targets(r: &mut Row, trace: &TeacherTrace, oracle: &Value) {
+    let wanted = match a(
+        f(oracle, "learned_probe_targets").unwrap_or(&Value::Null),
+        "probe targets",
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            r.check("targets.learned_probe", || Err(error));
+            return;
+        }
+    };
+    r.eq(
+        "targets.learned_probe_count",
+        trace.probes.len(),
+        wanted.len(),
+    );
+    for (index, (probe, expected)) in trace.probes.iter().zip(wanted).enumerate() {
+        let key = format!("targets.learned_probe[{index}]");
+        r.check(&format!("{key}.operation_index"), || {
+            if probe.global_operation_index == n(expected, "operation_index")? {
+                Ok(())
+            } else {
+                Err("global operation index differs".into())
+            }
+        });
+        let Some(selected) = probe.candidates.get(probe.selected_index) else {
+            r.check(&format!("{key}.candidate"), || {
+                Err("selected probe candidate missing".into())
+            });
+            continue;
+        };
+        r.check(&format!("{key}.ids"), || {
+            summary(f(expected, "selected_token_ids")?, &selected.token_ids)
+        });
+        r.check(&format!("{key}.positions"), || {
+            if selected.prediction_positions == pos(expected)? {
+                Ok(())
+            } else {
+                Err("positions differ".into())
+            }
+        });
+    }
+}
+
 fn compare(
     input: &Value,
     expected: &Value,
@@ -799,7 +1071,8 @@ fn compare(
     .map_err(|e| format!("rust_build: schema: {e}"))?;
     let args = parse_runtime_value(s(input, "argument_json")?.as_bytes())
         .map_err(|e| format!("rust_build: arguments: {e}"))?;
-    let trace = TeacherTraceBuilder::new(&PinnedTokenizer(m), p)
+    let tokenizer = PinnedTokenizer(m);
+    let trace = TeacherTraceBuilder::new(&tokenizer, p)
         .build(
             &TeacherTraceInput {
                 public_events: &events,
@@ -809,6 +1082,13 @@ fn compare(
             &args,
         )
         .map_err(|e| format!("rust_build: trace: {e}"))?;
+    let route_trace = TracePrefixBuilder::new(&tokenizer, p)
+        .build_routing(&RoutingTraceInput {
+            public_events: &events,
+            candidate_name: &route,
+            candidate_description: &s(input, "route_description")?,
+        })
+        .map_err(|e| format!("rust_build: routing: {e}"))?;
     let teacher = plan_teacher(&plan, &args).map_err(|e| format!("rust_build: teacher: {e}"))?;
     let mut r = Row::default();
     r.eq("oracle.mode", s(oracle, "mode")?, "teacher".into());
@@ -897,6 +1177,8 @@ fn compare(
         }
     });
     compare_main(&mut r, &trace, oracle, m, p);
+    routing(&mut r, &route_trace, f(oracle, "routing")?, m, p);
+    compare_operations(&mut r, &trace, oracle);
     let probes = expected_ops(oracle, "probe")?;
     r.eq("probe.count", trace.probes.len(), probes.len());
     for (i, (x, v)) in trace.probes.iter().zip(probes.iter()).enumerate() {
@@ -972,6 +1254,16 @@ fn compare(
             Err("main targets differ".into())
         }
     });
+    compare_probe_targets(&mut r, &trace, oracle);
+    let forced_values = expected_ops(oracle, "forced")?;
+    r.eq(
+        "forced.count",
+        trace.forced_arrays.len(),
+        forced_values.len(),
+    );
+    for (index, (actual, wanted)) in trace.forced_arrays.iter().zip(forced_values).enumerate() {
+        forced(&mut r, index, actual, wanted);
+    }
     r.check("targets.denominator", || {
         if trace.learned_token_count == n(oracle, "learned_argument_token_count")? {
             Ok(())
@@ -1110,7 +1402,7 @@ fn compare_private_python_teacher_bridge_when_explicitly_requested()
         manifest["total"].as_u64()
     }
     .ok_or("missing manifest count")?;
-    let out = json!({"schema_version":1,"scope":scope,"bridge":root,"bridge_manifest_sha256":"7475c2bc8c11b4b4fea1b4f222dad047ce1f07b91bc21a268c80dacd7053a5ea","expected_rows":want,"rows":total.rows,"rows_ok":total.ok,"rows_failed":total.bad,"malformed_or_preflight_rows":total.malformed,"rust_build_failures":total.build,"semantic_issue_rows_by_field":total.fields,"executed_check_counts":total.checks,"debug_label_differences":total.labels,"unqualified_gates":["routing_suffix_and_true_false_candidates: no Rust routing builder","forced_operation_records: no Rust forced-record representation","global_interleaved_operation_order: main/probe/finite are separate collections","probe_target_global_operation_index: depends on global interleaved order"],"detailed_failures_first_25":total.detail,"elapsed_millis":began.elapsed().as_millis()});
+    let out = json!({"schema_version":1,"scope":scope,"bridge":root,"bridge_manifest_sha256":"7475c2bc8c11b4b4fea1b4f222dad047ce1f07b91bc21a268c80dacd7053a5ea","expected_rows":want,"rows":total.rows,"rows_ok":total.ok,"rows_failed":total.bad,"malformed_or_preflight_rows":total.malformed,"rust_build_failures":total.build,"semantic_issue_rows_by_field":total.fields,"executed_check_counts":total.checks,"debug_label_differences":total.labels,"unqualified_gates":[],"detailed_failures_first_25":total.detail,"elapsed_millis":began.elapsed().as_millis()});
     report(&out)?;
     if total.rows != want {
         return Err(format!("bridge rows {} != manifest {want}", total.rows).into());

@@ -1,0 +1,20 @@
+[package]
+name = "minifield-infer"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Thin plaintext stdin/stdout runner for the Minifield inference runtime"
+
+[dependencies]
+minifield-text-generation = { path = "../text-generation" }
+minifield-text-tokenizer = { path = "../text-tokenizer" }
+minifield-engine-api = { path = "../../engines/engine-api" }
+minifield-executor-core = { path = "../executor-core" }
+minifield-backend-cpu = { path = "../backend-cpu" }
+sha2 = "=0.10.9"
+serde_json = "=1.0.140"
+
+[lints]
+workspace = true

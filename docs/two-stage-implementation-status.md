@@ -22,9 +22,11 @@ The committed 24 KiB numerical weight fixture is synthetic random test data for 
 
 The owned tokenizer passed ten compact tests and two external oracle suites. Coverage includes 1,145 exact encode/BOS/decode cases, streaming and byte handling, all 1,112,064 Unicode scalar classifications, strict malformed-asset checks, and native/wasm32 compilation. Tokenizer assets remain caller supplied.
 
+The portable Rust generation library and native `minifield-infer` binary are implemented. The binary reads bounded UTF-8 stdin, preserves prompt whitespace, applies only the explicit BOS choice, and writes generated plaintext without an envelope. Twelve compact tests pass, and all six hash-verified trained-tiny cases match both library token IDs/text and actual binary stdin/stdout bytes. Independent coordinator checks cover Unicode output, malformed UTF-8 and duplicate options. Strict Clippy, formatting, docs and the generation library wasm32 compile check pass. Actual browser execution is the next separate gate.
+
 ## Remaining
 
-- Product text generation loop and plaintext executable. The independent plaintext consumer is a diagnostic, not that binary.
+- Quantized model execution and useful-model qualification beyond the tiny diagnostic.
 - Owned CUDA and Metal backends, quantized kernels, artifact integration, and cross-backend qualification.
 - Browser delivery testing; wasm32 compilation alone does not establish browser correctness or performance.
 

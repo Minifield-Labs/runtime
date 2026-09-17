@@ -4,6 +4,8 @@ members = [
     "crates/backend-cpu",
     "crates/executor-core",
     "crates/text-tokenizer",
+    "crates/text-generation",
+    "crates/infer-cli",
     "engines/decoding-protocol",
 ]
 exclude = [

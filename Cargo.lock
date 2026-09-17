@@ -130,6 +130,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "minifield-infer"
+version = "0.1.0"
+dependencies = [
+ "minifield-backend-cpu",
+ "minifield-engine-api",
+ "minifield-executor-core",
+ "minifield-text-generation",
+ "minifield-text-tokenizer",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "minifield-text-generation"
+version = "0.1.0"
+dependencies = [
+ "minifield-engine-api",
+ "minifield-text-tokenizer",
+]
+
+[[package]]
 name = "minifield-text-tokenizer"
 version = "0.1.0"
 dependencies = [

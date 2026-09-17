@@ -1,0 +1,109 @@
+{
+  "generator": "runs/coordinator-trace-goldens-001/generate.py",
+  "generator_sha256": "018a96c631a50c021a1286258075caeca211d5e3a389b55720e08c1c1aafe81a",
+  "command": [
+    "/home/xmay/Minifield Labs/training/.venv/bin/python",
+    "/home/xmay/Minifield Labs/experiments/2026-09-16-two-stage-routing/runs/coordinator-trace-goldens-001/generate.py"
+  ],
+  "python": "3.12.13 (main, Jul 18 2026, 17:02:19) [Clang 22.1.3 ]",
+  "tokenizers": "0.22.1",
+  "jsonschema": "4.25.1",
+  "node": "v21.6.1",
+  "v8": "11.8.172.17-node.19",
+  "case_count": 12,
+  "negative_case_count": 3,
+  "canonical_comparisons": 183,
+  "cases": [
+    {
+      "name": "synthetic.omnibus",
+      "mode": "teacher",
+      "main_tokens": 680,
+      "learned_tokens": 84,
+      "main_sha256_u32le": "876bcb8ec9e98313fdb356ccf1c78a4edbca9f72bd0ed5010c91797e015a1923"
+    },
+    {
+      "name": "synthetic.absent_empty",
+      "mode": "teacher",
+      "main_tokens": 306,
+      "learned_tokens": 5,
+      "main_sha256_u32le": "63be68f9ac1875a0f9ae24fd905eab2ef0a4c280bd177d46254c3437a70f4181"
+    },
+    {
+      "name": "synthetic.null_one",
+      "mode": "teacher",
+      "main_tokens": 315,
+      "learned_tokens": 15,
+      "main_sha256_u32le": "15a02a9328802d761a64ec0f9ce8c26b9f837663769d2274cd11438eb412e623"
+    },
+    {
+      "name": "synthetic.present_max",
+      "mode": "teacher",
+      "main_tokens": 320,
+      "learned_tokens": 23,
+      "main_sha256_u32le": "97d1f13c9bd76347378177e2aca9f448fc172b78158988366976000cff43c769"
+    },
+    {
+      "name": "synthetic.forced_array",
+      "mode": "teacher",
+      "main_tokens": 302,
+      "learned_tokens": 8,
+      "main_sha256_u32le": "07e20656ffeb2960736673469f152d11c9a09184aa0cc46f573d3636aabe52af"
+    },
+    {
+      "name": "synthetic.overlap_anyof",
+      "mode": "teacher",
+      "main_tokens": 297,
+      "learned_tokens": 7,
+      "main_sha256_u32le": "e7089a32729c4253a46a365e0f11a0448ee227a0b494cc0850d7b9ff14c22420"
+    },
+    {
+      "name": "synthetic.disjoint_oneof",
+      "mode": "teacher",
+      "main_tokens": 299,
+      "learned_tokens": 9,
+      "main_sha256_u32le": "338f64e817c879df1c21ee21a51ebb053200e25404fed59c7c729809e6aa92c0"
+    },
+    {
+      "name": "synthetic.const_object",
+      "mode": "teacher",
+      "main_tokens": 271,
+      "learned_tokens": 0,
+      "main_sha256_u32le": "78b1f456ae67b2785fe72c46437886a230f432bec2cc145f90c64a3d47d6b22e"
+    },
+    {
+      "name": "synthetic.singleton_intersection",
+      "mode": "teacher",
+      "main_tokens": 340,
+      "learned_tokens": 0,
+      "main_sha256_u32le": "787d0b5add4e54c1b5e9eb0e0bbb488cb9d53235b4f0c346211993b4886e5968"
+    },
+    {
+      "name": "synthetic.ref_sibling_empty_key",
+      "mode": "teacher",
+      "main_tokens": 357,
+      "learned_tokens": 6,
+      "main_sha256_u32le": "ddf4876cce50d974e3eaa736a1c2c0ff89692840e4927a7136b8b254c7248df3"
+    },
+    {
+      "name": "synthetic.canonical_numbers",
+      "mode": "teacher",
+      "main_tokens": 300,
+      "learned_tokens": 6,
+      "main_sha256_u32le": "a1b3fa81f5f59e5eaad271460fa8b3b9b5d20f313ecd52246c5668cc70ee75e0"
+    },
+    {
+      "name": "synthetic.runtime_lexical",
+      "mode": "runtime",
+      "main_tokens": 309,
+      "learned_tokens": 15,
+      "main_sha256_u32le": "57249e569a8547f39b298bff4278f4f9b34e018e18dab1101bea4b20a39ba42b"
+    }
+  ],
+  "files": {
+    "README.md": "644122546fae875381d4d946479a3fe891fca8022a14dadaf3bbd4a9f32e150e",
+    "canonical-oracle-expected.json": "6670dae7e9f75a568e4abe4f744b9a628894caa1b42e42138a8003e5eac5c062",
+    "canonical-oracle-inputs.json": "d36173444aed6cc470e18e00f3a8e70669314af817a3adbf4858fa43b0699816",
+    "canonical-oracle.cjs": "130835cc1ee5fc78a8ba6ff93e6d97cfcaa35625cddb3a2f06895d5ddb97a700",
+    "expected.json": "79700de8e13fd996128fcdc54d3dd07b48efb24f8118c834280bb106ffcf3920"
+  }
+}

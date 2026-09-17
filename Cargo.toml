@@ -1,0 +1,29 @@
+[workspace]
+members = [
+    "engines/engine-api",
+    "crates/backend-cpu",
+    "crates/executor-core",
+    "engines/decoding-protocol",
+]
+exclude = [
+    "engines/quant-reference",
+    "engines/lfm2-native",
+    "backends/cuda",
+    "backends/metal",
+]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"

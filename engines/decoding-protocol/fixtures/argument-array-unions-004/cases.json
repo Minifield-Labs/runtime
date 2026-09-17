@@ -1,0 +1,376 @@
+[
+  {
+    "name": "mixed_object_branches",
+    "public_events": [
+      {
+        "type": "system",
+        "policy": "Return the requested structured edit.",
+        "observation": {}
+      },
+      {
+        "type": "user",
+        "content": "Apply the supplied edits."
+      }
+    ],
+    "selected_route": "apply_edits",
+    "route_description": "Apply a sequence of typed edits.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "edits": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "const": "set"
+                  },
+                  "value": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "value"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "const": "remove"
+                  }
+                },
+                "required": [
+                  "op"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "edits"
+      ],
+      "additionalProperties": false
+    },
+    "arguments": {
+      "edits": [
+        {
+          "op": "set",
+          "value": "x"
+        },
+        {
+          "op": "remove"
+        }
+      ]
+    }
+  },
+  {
+    "name": "mixed_scalar_branches",
+    "public_events": [
+      {
+        "type": "system",
+        "policy": "Return the requested structured edit.",
+        "observation": {}
+      },
+      {
+        "type": "user",
+        "content": "Apply the supplied edits."
+      }
+    ],
+    "selected_route": "apply_edits",
+    "route_description": "Apply a sequence of typed edits.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "edits": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "integer",
+                "minimum": 0
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "edits"
+      ],
+      "additionalProperties": false
+    },
+    "arguments": {
+      "edits": [
+        "q",
+        3,
+        "z"
+      ]
+    }
+  },
+  {
+    "name": "shared_base_assertions",
+    "public_events": [
+      {
+        "type": "system",
+        "policy": "Return the requested structured edit.",
+        "observation": {}
+      },
+      {
+        "type": "user",
+        "content": "Apply the supplied edits."
+      }
+    ],
+    "selected_route": "apply_edits",
+    "route_description": "Apply a sequence of typed edits.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "edits": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "payload": {}
+            },
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "additionalProperties": false,
+            "oneOf": [
+              {
+                "properties": {
+                  "kind": {
+                    "const": "s"
+                  },
+                  "payload": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "n"
+                  },
+                  "payload": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "edits"
+      ],
+      "additionalProperties": false
+    },
+    "arguments": {
+      "edits": [
+        {
+          "kind": "s",
+          "payload": "x"
+        },
+        {
+          "kind": "n",
+          "payload": 2
+        }
+      ]
+    }
+  },
+  {
+    "name": "nested_item_unions",
+    "public_events": [
+      {
+        "type": "system",
+        "policy": "Return the requested structured edit.",
+        "observation": {}
+      },
+      {
+        "type": "user",
+        "content": "Apply the supplied edits."
+      }
+    ],
+    "selected_route": "apply_edits",
+    "route_description": "Apply a sequence of typed edits.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "edits": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "const": "set"
+                  },
+                  "path": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      ]
+                    }
+                  },
+                  "value": {}
+                },
+                "required": [
+                  "op",
+                  "path",
+                  "value"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "const": "remove"
+                  },
+                  "path": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "path"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "edits"
+      ],
+      "additionalProperties": false
+    },
+    "arguments": {
+      "edits": [
+        {
+          "op": "set",
+          "path": [
+            "items",
+            2
+          ],
+          "value": {
+            "label": "new"
+          }
+        },
+        {
+          "op": "remove",
+          "path": [
+            "old"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "array_or_null_items",
+    "public_events": [
+      {
+        "type": "system",
+        "policy": "Return the requested structured edit.",
+        "observation": {}
+      },
+      {
+        "type": "user",
+        "content": "Apply the supplied edits."
+      }
+    ],
+    "selected_route": "apply_edits",
+    "route_description": "Apply a sequence of typed edits.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "edits": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "anyOf": [
+              {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 3,
+                "items": {
+                  "type": "integer"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "edits"
+      ],
+      "additionalProperties": false
+    },
+    "arguments": {
+      "edits": [
+        [
+          1,
+          2
+        ],
+        null,
+        [
+          3
+        ]
+      ]
+    }
+  }
+]

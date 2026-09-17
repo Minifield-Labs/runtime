@@ -1,0 +1,330 @@
+[
+  {
+    "name": "const_array_child_union",
+    "public_events": [
+      {
+        "type": "system",
+        "policy": "Emit the exact supported value.",
+        "observation": {}
+      },
+      {
+        "type": "user",
+        "content": "Use the given finite value."
+      }
+    ],
+    "selected_route": "select_value",
+    "route_description": "Select the requested finite value.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "const": [
+            "x",
+            2
+          ]
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "arguments": {
+      "value": [
+        "x",
+        2
+      ]
+    }
+  },
+  {
+    "name": "enum_array_child_union",
+    "public_events": [
+      {
+        "type": "system",
+        "policy": "Emit the exact supported value.",
+        "observation": {}
+      },
+      {
+        "type": "user",
+        "content": "Use the given finite value."
+      }
+    ],
+    "selected_route": "select_value",
+    "route_description": "Select the requested finite value.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "enum": [
+            [
+              "x",
+              2
+            ],
+            [
+              "y",
+              3
+            ]
+          ]
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "arguments": {
+      "value": [
+        "x",
+        2
+      ]
+    }
+  },
+  {
+    "name": "const_object_child_union",
+    "public_events": [
+      {
+        "type": "system",
+        "policy": "Emit the exact supported value.",
+        "observation": {}
+      },
+      {
+        "type": "user",
+        "content": "Use the given finite value."
+      }
+    ],
+    "selected_route": "select_value",
+    "route_description": "Select the requested finite value.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          },
+          "required": [
+            "x"
+          ],
+          "additionalProperties": false,
+          "const": {
+            "x": "a"
+          }
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "arguments": {
+      "value": {
+        "x": "a"
+      }
+    }
+  },
+  {
+    "name": "enum_object_child_union",
+    "public_events": [
+      {
+        "type": "system",
+        "policy": "Emit the exact supported value.",
+        "observation": {}
+      },
+      {
+        "type": "user",
+        "content": "Use the given finite value."
+      }
+    ],
+    "selected_route": "select_value",
+    "route_description": "Select the requested finite value.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          },
+          "required": [
+            "x"
+          ],
+          "additionalProperties": false,
+          "enum": [
+            {
+              "x": "a"
+            },
+            {
+              "x": 2
+            }
+          ]
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "arguments": {
+      "value": {
+        "x": "a"
+      }
+    }
+  },
+  {
+    "name": "typed_outer_array_constant_items",
+    "public_events": [
+      {
+        "type": "system",
+        "policy": "Emit the exact supported value.",
+        "observation": {}
+      },
+      {
+        "type": "user",
+        "content": "Use the given finite value."
+      }
+    ],
+    "selected_route": "select_value",
+    "route_description": "Select the requested finite value.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "const": [
+              "x",
+              2
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 1
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "arguments": {
+      "value": [
+        [
+          "x",
+          2
+        ]
+      ]
+    }
+  },
+  {
+    "name": "finite_before_same_node_union",
+    "public_events": [
+      {
+        "type": "system",
+        "policy": "Emit the exact supported value.",
+        "observation": {}
+      },
+      {
+        "type": "user",
+        "content": "Use the given finite value."
+      }
+    ],
+    "selected_route": "select_value",
+    "route_description": "Select the requested finite value.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "enum": [
+            [
+              "x",
+              2
+            ],
+            [
+              "y",
+              3
+            ]
+          ],
+          "oneOf": [
+            {
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "arguments": {
+      "value": [
+        "x",
+        2
+      ]
+    }
+  }
+]

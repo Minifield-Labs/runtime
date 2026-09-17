@@ -1,0 +1,228 @@
+[
+  {
+    "name": "dynamic_array",
+    "public_events": [
+      {
+        "type": "system",
+        "policy": "Return the requested structured edit.",
+        "observation": {}
+      },
+      {
+        "type": "user",
+        "content": "Apply the supplied edits."
+      }
+    ],
+    "selected_route": "apply_edits",
+    "route_description": "Apply a sequence of typed edits.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "value": {}
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "arguments": {
+      "value": [
+        "low",
+        "normal",
+        {
+          "n": 2
+        },
+        [
+          3,
+          4
+        ]
+      ]
+    }
+  },
+  {
+    "name": "dynamic_wrapped_array",
+    "public_events": [
+      {
+        "type": "system",
+        "policy": "Return the requested structured edit.",
+        "observation": {}
+      },
+      {
+        "type": "user",
+        "content": "Apply the supplied edits."
+      }
+    ],
+    "selected_route": "apply_edits",
+    "route_description": "Apply a sequence of typed edits.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "allOf": [
+            {},
+            {
+              "description": "Arbitrary JSON value."
+            }
+          ]
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "arguments": {
+      "value": [
+        "x",
+        {
+          "z": [
+            1,
+            2
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "typed_array_dynamic_items",
+    "public_events": [
+      {
+        "type": "system",
+        "policy": "Return the requested structured edit.",
+        "observation": {}
+      },
+      {
+        "type": "user",
+        "content": "Apply the supplied edits."
+      }
+    ],
+    "selected_route": "apply_edits",
+    "route_description": "Apply a sequence of typed edits.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": {}
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "arguments": {
+      "value": [
+        [
+          "nested",
+          2
+        ],
+        {
+          "x": [
+            true,
+            null
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "finite_array_constant",
+    "public_events": [
+      {
+        "type": "system",
+        "policy": "Return the requested structured edit.",
+        "observation": {}
+      },
+      {
+        "type": "user",
+        "content": "Apply the supplied edits."
+      }
+    ],
+    "selected_route": "apply_edits",
+    "route_description": "Apply a sequence of typed edits.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "const": [
+            "a",
+            2
+          ]
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "arguments": {
+      "value": [
+        "a",
+        2
+      ]
+    }
+  },
+  {
+    "name": "dynamic_empty_array",
+    "public_events": [
+      {
+        "type": "system",
+        "policy": "Return the requested structured edit.",
+        "observation": {}
+      },
+      {
+        "type": "user",
+        "content": "Apply the supplied edits."
+      }
+    ],
+    "selected_route": "apply_edits",
+    "route_description": "Apply a sequence of typed edits.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "value": {}
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "arguments": {
+      "value": []
+    }
+  },
+  {
+    "name": "typed_empty_array",
+    "public_events": [
+      {
+        "type": "system",
+        "policy": "Return the requested structured edit.",
+        "observation": {}
+      },
+      {
+        "type": "user",
+        "content": "Apply the supplied edits."
+      }
+    ],
+    "selected_route": "apply_edits",
+    "route_description": "Apply a sequence of typed edits.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "array",
+          "maxItems": 0
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "arguments": {
+      "value": []
+    }
+  }
+]

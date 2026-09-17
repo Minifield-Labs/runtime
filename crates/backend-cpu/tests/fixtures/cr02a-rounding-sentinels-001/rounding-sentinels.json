@@ -1,0 +1,74 @@
+{
+  "scope": "Independent numerical-mode sentinels: strict bits for vector F32 multiplication/addition boundaries, separate from mathematical tolerance fixtures. No implementation imports.",
+  "rotary": {
+    "input": [
+      1.0,
+      1.0000001192092896
+    ],
+    "position": 1,
+    "theta": 1000000,
+    "head_dim": 2,
+    "frequency_f32": 1.0,
+    "cos_f32": 0.5403022766113281,
+    "sin_f32": 0.8414709568023682,
+    "expected_f32": [
+      -0.3011687994003296,
+      1.3817732334136963
+    ],
+    "expected_u32": [
+      3197776588,
+      1068555762
+    ],
+    "old_f64_then_cast_u32": [
+      3197776587,
+      1068555763
+    ]
+  },
+  "convolution": {
+    "B": [
+      [
+        -16777216.0
+      ]
+    ],
+    "C": [
+      [
+        1.0
+      ]
+    ],
+    "V": [
+      [
+        1.0
+      ]
+    ],
+    "prefix_U": [
+      [
+        16777216.0
+      ],
+      [
+        1.0
+      ]
+    ],
+    "kernel": [
+      [
+        1.0,
+        1.0,
+        1.0
+      ]
+    ],
+    "expected_f32": [
+      [
+        0.0
+      ]
+    ],
+    "expected_u32": [
+      [
+        0
+      ]
+    ],
+    "f64_then_cast": [
+      [
+        1.0
+      ]
+    ]
+  }
+}

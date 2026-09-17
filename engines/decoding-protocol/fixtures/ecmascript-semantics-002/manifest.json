@@ -1,0 +1,19 @@
+{
+  "status": "independent_Node_no_flags_semantics_reference",
+  "purpose": "generic admitted ASCII syntax over Unicode strings, especially UTF16 dot quantifiers",
+  "node": "v21.6.1",
+  "v8": "11.8.172.17-node.19",
+  "flags": "",
+  "case_count": 1107,
+  "pattern_count": 27,
+  "command": [
+    "node",
+    "oracle.cjs"
+  ],
+  "stdin_file": "inputs.json",
+  "files": {
+    "inputs.json": "c9d854e7a901f306ce36ea26bbae5e4dd16c7630baadb06bd2c8911488c6ac96",
+    "oracle.cjs": "a6c1cb244de4ba8ab443a50401faf5460d21566127cab6cd056fb33b9aecd04b",
+    "expected.json": "6a388b5bc0c8061521e77f037e2c1eee1a8c043c98ae3de6674dcd496330986b"
+  }
+}

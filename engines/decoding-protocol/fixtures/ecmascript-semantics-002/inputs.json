@@ -1,0 +1,6644 @@
+[
+  {
+    "id": "utf16_0000",
+    "pattern": "",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0001",
+    "pattern": "",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0002",
+    "pattern": "",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0003",
+    "pattern": "",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0004",
+    "pattern": "",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0005",
+    "pattern": "",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0006",
+    "pattern": "",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0007",
+    "pattern": "",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0008",
+    "pattern": "",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0009",
+    "pattern": "",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0010",
+    "pattern": "",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0011",
+    "pattern": "",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0012",
+    "pattern": "",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0013",
+    "pattern": "",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0014",
+    "pattern": "",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0015",
+    "pattern": "",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0016",
+    "pattern": "",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0017",
+    "pattern": "",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0018",
+    "pattern": "",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0019",
+    "pattern": "",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0020",
+    "pattern": "",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0021",
+    "pattern": "",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0022",
+    "pattern": "",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0023",
+    "pattern": "",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0024",
+    "pattern": "",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0025",
+    "pattern": "",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0026",
+    "pattern": "",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0027",
+    "pattern": "",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0028",
+    "pattern": "",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0029",
+    "pattern": "",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0030",
+    "pattern": "",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0031",
+    "pattern": "",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0032",
+    "pattern": "",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0033",
+    "pattern": "",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0034",
+    "pattern": "",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0035",
+    "pattern": "",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0036",
+    "pattern": "",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0037",
+    "pattern": "",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0038",
+    "pattern": "",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0039",
+    "pattern": "",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0040",
+    "pattern": "",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0041",
+    "pattern": "^.$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0042",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0043",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0044",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0045",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0046",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0047",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0048",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0049",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0050",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0051",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0052",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0053",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0054",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0055",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0056",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0057",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0058",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0059",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0060",
+    "pattern": "^.$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0061",
+    "pattern": "^.$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0062",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0063",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0064",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0065",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0066",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0067",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0068",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0069",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0070",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0071",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0072",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0073",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0074",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0075",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0076",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0077",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0078",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0079",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0080",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0081",
+    "pattern": "^.$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0082",
+    "pattern": "^..$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0083",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0084",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0085",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0086",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0087",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0088",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0089",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0090",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0091",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0092",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0093",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0094",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0095",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0096",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0097",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0098",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0099",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0100",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0101",
+    "pattern": "^..$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0102",
+    "pattern": "^..$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0103",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0104",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0105",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0106",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0107",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0108",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0109",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0110",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0111",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0112",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0113",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0114",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0115",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0116",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0117",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0118",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0119",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0120",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0121",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0122",
+    "pattern": "^..$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0123",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0124",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0125",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0126",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0127",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0128",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0129",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0130",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0131",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0132",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0133",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0134",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0135",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0136",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0137",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0138",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0139",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0140",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0141",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0142",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0143",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0144",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0145",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0146",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0147",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0148",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0149",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0150",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0151",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0152",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0153",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0154",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0155",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0156",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0157",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0158",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0159",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0160",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0161",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0162",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0163",
+    "pattern": "^.{2}$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0164",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0165",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0166",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0167",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0168",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0169",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0170",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0171",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0172",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0173",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0174",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0175",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0176",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0177",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0178",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0179",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0180",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0181",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0182",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0183",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0184",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0185",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0186",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0187",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0188",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0189",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0190",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0191",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0192",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0193",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0194",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0195",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0196",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0197",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0198",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0199",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0200",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0201",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0202",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0203",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0204",
+    "pattern": "^.{1,2}$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0205",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0206",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0207",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0208",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0209",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0210",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0211",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0212",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0213",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0214",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0215",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0216",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0217",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0218",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0219",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0220",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0221",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0222",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0223",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0224",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0225",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0226",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0227",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0228",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0229",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0230",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0231",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0232",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0233",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0234",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0235",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0236",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0237",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0238",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0239",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0240",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0241",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0242",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0243",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0244",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0245",
+    "pattern": "^.+$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0246",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0247",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0248",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0249",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0250",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0251",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0252",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0253",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0254",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0255",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0256",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0257",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0258",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0259",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0260",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0261",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0262",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0263",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0264",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0265",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0266",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0267",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0268",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0269",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0270",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0271",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0272",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0273",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0274",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0275",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0276",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0277",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0278",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0279",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0280",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0281",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0282",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0283",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0284",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0285",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0286",
+    "pattern": "^.*$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0287",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0288",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0289",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0290",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0291",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0292",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0293",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0294",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0295",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0296",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0297",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0298",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0299",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0300",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0301",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0302",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0303",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0304",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0305",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0306",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0307",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0308",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0309",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0310",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0311",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0312",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0313",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0314",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0315",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0316",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0317",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0318",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0319",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0320",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0321",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0322",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0323",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0324",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0325",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0326",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0327",
+    "pattern": "^a.$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0328",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0329",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0330",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0331",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0332",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0333",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0334",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0335",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0336",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0337",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0338",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0339",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0340",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0341",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0342",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0343",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0344",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0345",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0346",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0347",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0348",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0349",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0350",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0351",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0352",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0353",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0354",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0355",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0356",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0357",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0358",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0359",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0360",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0361",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0362",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0363",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0364",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0365",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0366",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0367",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0368",
+    "pattern": "^a..$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0369",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0370",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0371",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0372",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0373",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0374",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0375",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0376",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0377",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0378",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0379",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0380",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0381",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0382",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0383",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0384",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0385",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0386",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0387",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0388",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0389",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0390",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0391",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0392",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0393",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0394",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0395",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0396",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0397",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0398",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0399",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0400",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0401",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0402",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0403",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0404",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0405",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0406",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0407",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0408",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0409",
+    "pattern": "^a.{2}$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0410",
+    "pattern": "a.",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0411",
+    "pattern": "a.",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0412",
+    "pattern": "a.",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0413",
+    "pattern": "a.",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0414",
+    "pattern": "a.",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0415",
+    "pattern": "a.",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0416",
+    "pattern": "a.",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0417",
+    "pattern": "a.",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0418",
+    "pattern": "a.",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0419",
+    "pattern": "a.",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0420",
+    "pattern": "a.",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0421",
+    "pattern": "a.",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0422",
+    "pattern": "a.",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0423",
+    "pattern": "a.",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0424",
+    "pattern": "a.",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0425",
+    "pattern": "a.",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0426",
+    "pattern": "a.",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0427",
+    "pattern": "a.",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0428",
+    "pattern": "a.",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0429",
+    "pattern": "a.",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0430",
+    "pattern": "a.",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0431",
+    "pattern": "a.",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0432",
+    "pattern": "a.",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0433",
+    "pattern": "a.",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0434",
+    "pattern": "a.",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0435",
+    "pattern": "a.",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0436",
+    "pattern": "a.",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0437",
+    "pattern": "a.",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0438",
+    "pattern": "a.",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0439",
+    "pattern": "a.",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0440",
+    "pattern": "a.",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0441",
+    "pattern": "a.",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0442",
+    "pattern": "a.",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0443",
+    "pattern": "a.",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0444",
+    "pattern": "a.",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0445",
+    "pattern": "a.",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0446",
+    "pattern": "a.",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0447",
+    "pattern": "a.",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0448",
+    "pattern": "a.",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0449",
+    "pattern": "a.",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0450",
+    "pattern": "a.",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0451",
+    "pattern": ".$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0452",
+    "pattern": ".$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0453",
+    "pattern": ".$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0454",
+    "pattern": ".$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0455",
+    "pattern": ".$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0456",
+    "pattern": ".$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0457",
+    "pattern": ".$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0458",
+    "pattern": ".$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0459",
+    "pattern": ".$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0460",
+    "pattern": ".$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0461",
+    "pattern": ".$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0462",
+    "pattern": ".$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0463",
+    "pattern": ".$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0464",
+    "pattern": ".$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0465",
+    "pattern": ".$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0466",
+    "pattern": ".$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0467",
+    "pattern": ".$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0468",
+    "pattern": ".$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0469",
+    "pattern": ".$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0470",
+    "pattern": ".$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0471",
+    "pattern": ".$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0472",
+    "pattern": ".$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0473",
+    "pattern": ".$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0474",
+    "pattern": ".$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0475",
+    "pattern": ".$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0476",
+    "pattern": ".$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0477",
+    "pattern": ".$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0478",
+    "pattern": ".$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0479",
+    "pattern": ".$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0480",
+    "pattern": ".$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0481",
+    "pattern": ".$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0482",
+    "pattern": ".$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0483",
+    "pattern": ".$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0484",
+    "pattern": ".$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0485",
+    "pattern": ".$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0486",
+    "pattern": ".$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0487",
+    "pattern": ".$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0488",
+    "pattern": ".$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0489",
+    "pattern": ".$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0490",
+    "pattern": ".$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0491",
+    "pattern": ".$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0492",
+    "pattern": "^",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0493",
+    "pattern": "^",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0494",
+    "pattern": "^",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0495",
+    "pattern": "^",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0496",
+    "pattern": "^",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0497",
+    "pattern": "^",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0498",
+    "pattern": "^",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0499",
+    "pattern": "^",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0500",
+    "pattern": "^",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0501",
+    "pattern": "^",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0502",
+    "pattern": "^",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0503",
+    "pattern": "^",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0504",
+    "pattern": "^",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0505",
+    "pattern": "^",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0506",
+    "pattern": "^",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0507",
+    "pattern": "^",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0508",
+    "pattern": "^",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0509",
+    "pattern": "^",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0510",
+    "pattern": "^",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0511",
+    "pattern": "^",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0512",
+    "pattern": "^",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0513",
+    "pattern": "^",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0514",
+    "pattern": "^",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0515",
+    "pattern": "^",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0516",
+    "pattern": "^",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0517",
+    "pattern": "^",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0518",
+    "pattern": "^",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0519",
+    "pattern": "^",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0520",
+    "pattern": "^",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0521",
+    "pattern": "^",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0522",
+    "pattern": "^",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0523",
+    "pattern": "^",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0524",
+    "pattern": "^",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0525",
+    "pattern": "^",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0526",
+    "pattern": "^",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0527",
+    "pattern": "^",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0528",
+    "pattern": "^",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0529",
+    "pattern": "^",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0530",
+    "pattern": "^",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0531",
+    "pattern": "^",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0532",
+    "pattern": "^",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0533",
+    "pattern": "^$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0534",
+    "pattern": "^$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0535",
+    "pattern": "^$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0536",
+    "pattern": "^$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0537",
+    "pattern": "^$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0538",
+    "pattern": "^$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0539",
+    "pattern": "^$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0540",
+    "pattern": "^$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0541",
+    "pattern": "^$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0542",
+    "pattern": "^$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0543",
+    "pattern": "^$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0544",
+    "pattern": "^$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0545",
+    "pattern": "^$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0546",
+    "pattern": "^$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0547",
+    "pattern": "^$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0548",
+    "pattern": "^$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0549",
+    "pattern": "^$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0550",
+    "pattern": "^$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0551",
+    "pattern": "^$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0552",
+    "pattern": "^$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0553",
+    "pattern": "^$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0554",
+    "pattern": "^$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0555",
+    "pattern": "^$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0556",
+    "pattern": "^$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0557",
+    "pattern": "^$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0558",
+    "pattern": "^$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0559",
+    "pattern": "^$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0560",
+    "pattern": "^$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0561",
+    "pattern": "^$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0562",
+    "pattern": "^$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0563",
+    "pattern": "^$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0564",
+    "pattern": "^$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0565",
+    "pattern": "^$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0566",
+    "pattern": "^$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0567",
+    "pattern": "^$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0568",
+    "pattern": "^$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0569",
+    "pattern": "^$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0570",
+    "pattern": "^$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0571",
+    "pattern": "^$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0572",
+    "pattern": "^$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0573",
+    "pattern": "^$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0574",
+    "pattern": "a|b",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0575",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0576",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0577",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0578",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0579",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0580",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0581",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0582",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0583",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0584",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0585",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0586",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0587",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0588",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0589",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0590",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0591",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0592",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0593",
+    "pattern": "a|b",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0594",
+    "pattern": "a|b",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0595",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0596",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0597",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0598",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0599",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0600",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0601",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0602",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0603",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0604",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0605",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0606",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0607",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0608",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0609",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0610",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0611",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0612",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0613",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0614",
+    "pattern": "a|b",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0615",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0616",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0617",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0618",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0619",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0620",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0621",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0622",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0623",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0624",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0625",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0626",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0627",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0628",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0629",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0630",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0631",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0632",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0633",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0634",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0635",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0636",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0637",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0638",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0639",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0640",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0641",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0642",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0643",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0644",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0645",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0646",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0647",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0648",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0649",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0650",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0651",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0652",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0653",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0654",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0655",
+    "pattern": "^(?:ab|a)$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0656",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0657",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0658",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0659",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0660",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0661",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0662",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0663",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0664",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0665",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0666",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0667",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0668",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0669",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0670",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0671",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0672",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0673",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0674",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0675",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0676",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0677",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0678",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0679",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0680",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0681",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0682",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0683",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0684",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0685",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0686",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0687",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0688",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0689",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0690",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0691",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0692",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0693",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0694",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0695",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0696",
+    "pattern": "^(ab|a)+$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0697",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0698",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0699",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0700",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0701",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0702",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0703",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0704",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0705",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0706",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0707",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0708",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0709",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0710",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0711",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0712",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0713",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0714",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0715",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0716",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0717",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0718",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0719",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0720",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0721",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0722",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0723",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0724",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0725",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0726",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0727",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0728",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0729",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0730",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0731",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0732",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0733",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0734",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0735",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0736",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0737",
+    "pattern": "^[a-z]+$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0738",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0739",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0740",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0741",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0742",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0743",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0744",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0745",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0746",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0747",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0748",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0749",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0750",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0751",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0752",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0753",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0754",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0755",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0756",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0757",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0758",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0759",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0760",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0761",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0762",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0763",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0764",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0765",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0766",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0767",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0768",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0769",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0770",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0771",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0772",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0773",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0774",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0775",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0776",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0777",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0778",
+    "pattern": "^[A-Za-z0-9_]*$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0779",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0780",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0781",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0782",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0783",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0784",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0785",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0786",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0787",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0788",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0789",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0790",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0791",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0792",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0793",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0794",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0795",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0796",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0797",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0798",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0799",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0800",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0801",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0802",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0803",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0804",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0805",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0806",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0807",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0808",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0809",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0810",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0811",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0812",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0813",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0814",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0815",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0816",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0817",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0818",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0819",
+    "pattern": "^[-a]+$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0820",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0821",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0822",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0823",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0824",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0825",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0826",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0827",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0828",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0829",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0830",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0831",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0832",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0833",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0834",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0835",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0836",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0837",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0838",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0839",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0840",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0841",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0842",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0843",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0844",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0845",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0846",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0847",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0848",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0849",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0850",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0851",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0852",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0853",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0854",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0855",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0856",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0857",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0858",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0859",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0860",
+    "pattern": "^[a-b-c]+$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0861",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0862",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0863",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0864",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0865",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0866",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0867",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0868",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0869",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0870",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0871",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0872",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0873",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0874",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0875",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0876",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0877",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0878",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0879",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0880",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0881",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0882",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0883",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0884",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0885",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0886",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0887",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0888",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0889",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0890",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0891",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0892",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0893",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0894",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0895",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0896",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0897",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0898",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0899",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0900",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0901",
+    "pattern": "^[--0]+$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0902",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0903",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0904",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0905",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0906",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0907",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0908",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0909",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0910",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0911",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0912",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0913",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0914",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0915",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0916",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0917",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0918",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0919",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0920",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0921",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0922",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0923",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0924",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0925",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0926",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0927",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0928",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0929",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0930",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0931",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0932",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0933",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0934",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0935",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0936",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0937",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0938",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0939",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0940",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0941",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0942",
+    "pattern": "^(?:ab){1,2}$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0943",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0944",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0945",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0946",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0947",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0948",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0949",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0950",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0951",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0952",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0953",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0954",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0955",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0956",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0957",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0958",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_0959",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_0960",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_0961",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_0962",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0963",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_0964",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_0965",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_0966",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_0967",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_0968",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_0969",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_0970",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_0971",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_0972",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_0973",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0974",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_0975",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_0976",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_0977",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_0978",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0979",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0980",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_0981",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_0982",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_0983",
+    "pattern": "(?:a|b)+",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_0984",
+    "pattern": "a.b",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_0985",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_0986",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_0987",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_0988",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_0989",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_0990",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_0991",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_0992",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_0993",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_0994",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_0995",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_0996",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_0997",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_0998",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_0999",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_1000",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_1001",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_1002",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_1003",
+    "pattern": "a.b",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_1004",
+    "pattern": "a.b",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_1005",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_1006",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_1007",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_1008",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_1009",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_1010",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_1011",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_1012",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_1013",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_1014",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_1015",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_1016",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_1017",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_1018",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_1019",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_1020",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_1021",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_1022",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_1023",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_1024",
+    "pattern": "a.b",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_1025",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_1026",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_1027",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_1028",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_1029",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_1030",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_1031",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_1032",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_1033",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_1034",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_1035",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_1036",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_1037",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_1038",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_1039",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_1040",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_1041",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_1042",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_1043",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_1044",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_1045",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_1046",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_1047",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_1048",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_1049",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_1050",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_1051",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_1052",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_1053",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_1054",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_1055",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_1056",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_1057",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_1058",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_1059",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_1060",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_1061",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_1062",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_1063",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_1064",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_1065",
+    "pattern": "^a.b$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_1066",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": ""
+  },
+  {
+    "id": "utf16_1067",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "a"
+  },
+  {
+    "id": "utf16_1068",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "b"
+  },
+  {
+    "id": "utf16_1069",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "ab"
+  },
+  {
+    "id": "utf16_1070",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "aa"
+  },
+  {
+    "id": "utf16_1071",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "aaa"
+  },
+  {
+    "id": "utf16_1072",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "abab"
+  },
+  {
+    "id": "utf16_1073",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "abc"
+  },
+  {
+    "id": "utf16_1074",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "a-b"
+  },
+  {
+    "id": "utf16_1075",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "-"
+  },
+  {
+    "id": "utf16_1076",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "/"
+  },
+  {
+    "id": "utf16_1077",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "0"
+  },
+  {
+    "id": "utf16_1078",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "12"
+  },
+  {
+    "id": "utf16_1079",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "_"
+  },
+  {
+    "id": "utf16_1080",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "A"
+  },
+  {
+    "id": "utf16_1081",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "B"
+  },
+  {
+    "id": "utf16_1082",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "\n"
+  },
+  {
+    "id": "utf16_1083",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "\r"
+  },
+  {
+    "id": "utf16_1084",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "\r\n"
+  },
+  {
+    "id": "utf16_1085",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_1086",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": " "
+  },
+  {
+    "id": "utf16_1087",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "💻"
+  },
+  {
+    "id": "utf16_1088",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "😀"
+  },
+  {
+    "id": "utf16_1089",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "a💻"
+  },
+  {
+    "id": "utf16_1090",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "💻a"
+  },
+  {
+    "id": "utf16_1091",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "💻😀"
+  },
+  {
+    "id": "utf16_1092",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "é"
+  },
+  {
+    "id": "utf16_1093",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "aé"
+  },
+  {
+    "id": "utf16_1094",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "a\n"
+  },
+  {
+    "id": "utf16_1095",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "a\r"
+  },
+  {
+    "id": "utf16_1096",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_1097",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "a "
+  },
+  {
+    "id": "utf16_1098",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "\na"
+  },
+  {
+    "id": "utf16_1099",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "a\nb"
+  },
+  {
+    "id": "utf16_1100",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "a\rb"
+  },
+  {
+    "id": "utf16_1101",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_1102",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "a b"
+  },
+  {
+    "id": "utf16_1103",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "a\u0000b"
+  },
+  {
+    "id": "utf16_1104",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "\u0000"
+  },
+  {
+    "id": "utf16_1105",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "a\tb"
+  },
+  {
+    "id": "utf16_1106",
+    "pattern": "^.{0}$",
+    "flags": "",
+    "value": "a b"
+  }
+]

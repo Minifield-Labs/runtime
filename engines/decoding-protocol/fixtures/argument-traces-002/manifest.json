@@ -1,0 +1,61 @@
+{
+  "generator": "runs/coordinator-trace-goldens-002/generate.py",
+  "generator_sha256": "b433a596482c0177f83fc076e94e2305986c4352c2740711b6b0561d1f7f5ec2",
+  "python": "3.12.13 (main, Jul 18 2026, 17:02:19) [Clang 22.1.3 ]",
+  "tokenizers": "0.22.1",
+  "jsonschema": "4.25.1",
+  "node": "v21.6.1",
+  "v8": "11.8.172.17-node.19",
+  "case_count": 7,
+  "canonical_comparisons": 87,
+  "cases": [
+    {
+      "name": "synthetic.successive_choices",
+      "main_tokens": 436,
+      "learned_tokens": 21,
+      "main_sha256_u32le": "4b14446f80a2b961001d3ae37e83c111205b247e7a235d753f29e6fe707b92d2"
+    },
+    {
+      "name": "synthetic.forbidden_optional_omission",
+      "main_tokens": 319,
+      "learned_tokens": 0,
+      "main_sha256_u32le": "0dfe6be9c66a6c18d7ca4da5bf128fd0b8a8c037b079f7caf42f7dc124e4c70c"
+    },
+    {
+      "name": "synthetic.nullable_enum_null",
+      "main_tokens": 285,
+      "learned_tokens": 2,
+      "main_sha256_u32le": "05cc668523d631653b5b43dc63c90729d0602657656e85eef338da9330dfb02b"
+    },
+    {
+      "name": "synthetic.nullable_enum_string",
+      "main_tokens": 285,
+      "learned_tokens": 4,
+      "main_sha256_u32le": "d180967bcf0072d20fd2bc5e9fc36fcd8a9968510a7cb75eb8cc1407fc2aa6ba"
+    },
+    {
+      "name": "synthetic.integer_number_intersection",
+      "main_tokens": 292,
+      "learned_tokens": 2,
+      "main_sha256_u32le": "141f49d5db6c5f2d1b1d085951d85c40bcf9712dd302b32b5b814448ae47a612"
+    },
+    {
+      "name": "synthetic.boolean_remaining_singleton",
+      "main_tokens": 304,
+      "learned_tokens": 5,
+      "main_sha256_u32le": "645bdf3f918d2d90b1df65c0c4dfeb9cc30d458372cb0ae50001c096320748ad"
+    },
+    {
+      "name": "synthetic.finite_precedence_full_oneof",
+      "main_tokens": 307,
+      "learned_tokens": 0,
+      "main_sha256_u32le": "31f810a0982d23b1aa66873961043fb2d94bbac6f3bc2784db72518fb803dce6"
+    }
+  ],
+  "files": {
+    "README.md": "5f19c9aac02d805f07f0aa50d82105dc8ab1a15ef553a7fdbcd57cc23a3b95dc",
+    "canonical-oracle-expected.json": "1bab6f61406e02e4c920f9108d9ebf0597470162a12a1ab3d61128138d19485d",
+    "canonical-oracle-inputs.json": "442b7479fe026d521c1611bcaa8cbc8db649fe27b657fa7b9f54f15362dc4884",
+    "expected.json": "c68ca19d0e5db1c2bfa3e9fabb87318f5d402231055b6c99d341d9aafcca3384"
+  }
+}

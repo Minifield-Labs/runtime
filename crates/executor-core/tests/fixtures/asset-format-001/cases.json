@@ -1,0 +1,596 @@
+[
+  {
+    "id": "valid_f32",
+    "file": "valid_f32.bin",
+    "sha256": "1fa6bcfde3b5c5b07623e9b282bc92f89dc8ae9e2ebfd9d2097b1d6e1aa76548",
+    "bytes": 80,
+    "header_expect": "accept",
+    "load_expect": "accept",
+    "reason": "Finite F32 payload, exact row-major little-endian values.",
+    "reference_format_reader": {
+      "accepted": true,
+      "tensors": [
+        {
+          "name": "weight",
+          "dtype": "F32",
+          "shape": [
+            2
+          ],
+          "payload_sha256": "3ba8f8c83cc4783e8a2da62d18f5e629e2a9134da28834c798cd4529234bb5c0"
+        }
+      ]
+    },
+    "decoded_f32_u32": {
+      "weight": [
+        1067450368,
+        3223322624
+      ]
+    }
+  },
+  {
+    "id": "valid_unpadded_header",
+    "file": "valid_unpadded_header.bin",
+    "sha256": "de212b9fb8673be0f8d6558de738d49649f79ef0df45b7100ca77daa3e3532a7",
+    "bytes": 75,
+    "header_expect": "accept",
+    "load_expect": "accept",
+    "reason": "Header length need not be padded when all ranges remain valid.",
+    "reference_format_reader": {
+      "accepted": true,
+      "tensors": [
+        {
+          "name": "weight",
+          "dtype": "F32",
+          "shape": [
+            2
+          ],
+          "payload_sha256": "3ba8f8c83cc4783e8a2da62d18f5e629e2a9134da28834c798cd4529234bb5c0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "valid_reverse_header_order",
+    "file": "valid_reverse_header_order.bin",
+    "sha256": "e5f2576fcd632e2086ef67050fbe7c6cfe0813217d93751dd21855b876be74cb",
+    "bytes": 144,
+    "header_expect": "accept",
+    "load_expect": "accept",
+    "reason": "Object enumeration order is independent of physical byte order.",
+    "reference_format_reader": {
+      "accepted": true,
+      "tensors": [
+        {
+          "name": "first",
+          "dtype": "F32",
+          "shape": [
+            2
+          ],
+          "payload_sha256": "3ba8f8c83cc4783e8a2da62d18f5e629e2a9134da28834c798cd4529234bb5c0"
+        },
+        {
+          "name": "later",
+          "dtype": "F32",
+          "shape": [
+            2
+          ],
+          "payload_sha256": "3ba8f8c83cc4783e8a2da62d18f5e629e2a9134da28834c798cd4529234bb5c0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "valid_metadata",
+    "file": "valid_metadata.bin",
+    "sha256": "af0034a31d5780285846abf1af07828237a829f120cb2d4082da4a20e8e52188",
+    "bytes": 136,
+    "header_expect": "accept",
+    "load_expect": "accept",
+    "reason": "Metadata is an optional string map.",
+    "reference_format_reader": {
+      "accepted": true,
+      "tensors": [
+        {
+          "name": "weight",
+          "dtype": "F32",
+          "shape": [
+            2
+          ],
+          "payload_sha256": "3ba8f8c83cc4783e8a2da62d18f5e629e2a9134da28834c798cd4529234bb5c0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "valid_scalar",
+    "file": "valid_scalar.bin",
+    "sha256": "b6ea1fd34fedf781f286b923935e1b42ff459ac7cf961dd185e68c0ba0472484",
+    "bytes": 76,
+    "header_expect": "accept",
+    "load_expect": "accept",
+    "reason": "Container-level rank-zero tensor; model inventory determines allowed roles.",
+    "reference_format_reader": {
+      "accepted": true,
+      "tensors": [
+        {
+          "name": "scalar",
+          "dtype": "F32",
+          "shape": [],
+          "payload_sha256": "ea2845900b5856c9bf354b1aa9761b5aa6888e5ed61738fe9579ca42bc0f6054"
+        }
+      ]
+    }
+  },
+  {
+    "id": "valid_empty",
+    "file": "valid_empty.bin",
+    "sha256": "bfdf2f872c6ec3885ccf644ad9fc330e65abcffdd2e858d56b236cde50ef0483",
+    "bytes": 72,
+    "header_expect": "accept",
+    "load_expect": "accept",
+    "reason": "Container-level zero extent consumes no payload bytes.",
+    "reference_format_reader": {
+      "accepted": true,
+      "tensors": [
+        {
+          "name": "empty",
+          "dtype": "F32",
+          "shape": [
+            0,
+            2
+          ],
+          "payload_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    }
+  },
+  {
+    "id": "valid_bf16",
+    "file": "valid_bf16.bin",
+    "sha256": "6f1552bd9316771845178a8949edf15bb22ce0f01c8f872949238d7880aa6612",
+    "bytes": 78,
+    "header_expect": "accept",
+    "load_expect": "accept",
+    "reason": "BF16 storage expands exactly into declared F32 compute.",
+    "reference_format_reader": {
+      "accepted": true,
+      "tensors": [
+        {
+          "name": "weight",
+          "dtype": "BF16",
+          "shape": [
+            3
+          ],
+          "payload_sha256": "3dae5afab7b8a8729d4008570dcde49188a2260bfedbc8c9ab0a159f91074cab"
+        }
+      ]
+    },
+    "decoded_f32_u32": {
+      "weight": [
+        1065353216,
+        3223322624,
+        2147483648
+      ]
+    }
+  },
+  {
+    "id": "short_length_prefix",
+    "file": "short_length_prefix.bin",
+    "sha256": "8bb0cf6eb9b17d0f7d22b456f121257dc1254e1f01665370476383ea776df414",
+    "bytes": 7,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Missing eight-byte header length.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: header too small"
+    }
+  },
+  {
+    "id": "header_length_overflow",
+    "file": "header_length_overflow.bin",
+    "sha256": "56eedb32886b91137c82afd8f56f3b6503429bb119bc7e08919d8a4916b8147f",
+    "bytes": 10,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Reject checked header arithmetic before reading or allocating.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: header too large"
+    }
+  },
+  {
+    "id": "truncated_header",
+    "file": "truncated_header.bin",
+    "sha256": "3b9f0a25395bd7d56840ddf75e88e9a3c77d61235e0df9e2d614f5e25a442a43",
+    "bytes": 10,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Declared header extends past asset.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: invalid header length"
+    }
+  },
+  {
+    "id": "header_budget",
+    "file": "header_budget.bin",
+    "sha256": "1fa6bcfde3b5c5b07623e9b282bc92f89dc8ae9e2ebfd9d2097b1d6e1aa76548",
+    "bytes": 80,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Header read rejected by explicit small caller limit.",
+    "reference_format_reader": {
+      "accepted": true,
+      "tensors": [
+        {
+          "name": "weight",
+          "dtype": "F32",
+          "shape": [
+            2
+          ],
+          "payload_sha256": "3ba8f8c83cc4783e8a2da62d18f5e629e2a9134da28834c798cd4529234bb5c0"
+        }
+      ]
+    },
+    "limits_override": {
+      "max_header_bytes": 16
+    }
+  },
+  {
+    "id": "asset_budget",
+    "file": "asset_budget.bin",
+    "sha256": "1fa6bcfde3b5c5b07623e9b282bc92f89dc8ae9e2ebfd9d2097b1d6e1aa76548",
+    "bytes": 80,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Asset identity size exceeds caller limit before reads.",
+    "reference_format_reader": {
+      "accepted": true,
+      "tensors": [
+        {
+          "name": "weight",
+          "dtype": "F32",
+          "shape": [
+            2
+          ],
+          "payload_sha256": "3ba8f8c83cc4783e8a2da62d18f5e629e2a9134da28834c798cd4529234bb5c0"
+        }
+      ]
+    },
+    "limits_override": {
+      "max_asset_bytes": 8
+    }
+  },
+  {
+    "id": "invalid_utf8",
+    "file": "invalid_utf8.bin",
+    "sha256": "985ff275fd4e887498eee01e4d6add0fc2f6f7457a591102f4519673c3e55a7d",
+    "bytes": 17,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Header must be valid UTF-8.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: invalid UTF-8 in header: invalid utf-8 sequence of 1 bytes from index 6"
+    }
+  },
+  {
+    "id": "nonobject_header",
+    "file": "nonobject_header.bin",
+    "sha256": "ef3d7163ebe935281a84ad538362c3f1b2e89502b65bd1e836ff63b5678ae1da",
+    "bytes": 10,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Header root must be an object.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: invalid JSON in header: invalid type: sequence, expected struct HashMetadata at line 1 column 0"
+    }
+  },
+  {
+    "id": "leading_whitespace_header",
+    "file": "leading_whitespace_header.bin",
+    "sha256": "0705e0ad614b8ee2d2cf4a32ea0807bf082ece189123f70c7ad5a99ee616cb50",
+    "bytes": 83,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "First header byte is opening brace.",
+    "reference_format_reader": {
+      "accepted": true,
+      "tensors": [
+        {
+          "name": "weight",
+          "dtype": "F32",
+          "shape": [
+            2
+          ],
+          "payload_sha256": "3ba8f8c83cc4783e8a2da62d18f5e629e2a9134da28834c798cd4529234bb5c0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "trailing_nonspace_header",
+    "file": "trailing_nonspace_header.bin",
+    "sha256": "2a00c3f9279d3efa6b5eab47b4c25c1653e6949c52669d0620a0361d41c80048",
+    "bytes": 83,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Reject garbage after complete JSON.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: invalid JSON in header: trailing characters at line 1 column 67"
+    }
+  },
+  {
+    "id": "duplicate_tensor_name",
+    "file": "duplicate_tensor_name.bin",
+    "sha256": "19d4c6f4e22145e1785629bb0a045f460fc0549ca67710d0c14cc7d8976a4b8b",
+    "bytes": 136,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Duplicate root tensor keys rejected even if identical.",
+    "reference_format_reader": {
+      "accepted": true,
+      "tensors": [
+        {
+          "name": "weight",
+          "dtype": "F32",
+          "shape": [
+            2
+          ],
+          "payload_sha256": "3ba8f8c83cc4783e8a2da62d18f5e629e2a9134da28834c798cd4529234bb5c0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "duplicate_tensor_field",
+    "file": "duplicate_tensor_field.bin",
+    "sha256": "ef9399340468819087dda048f4f5d321519a661a5dc794011aeb71f5e2dc643a",
+    "bytes": 88,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Duplicate nested tensor metadata keys rejected.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: invalid JSON in header: duplicate field `shape` at line 1 column 71"
+    }
+  },
+  {
+    "id": "metadata_nonstring",
+    "file": "metadata_nonstring.bin",
+    "sha256": "a09bc4ceb3429f3236ff9fd352b86006a80898d9153053fa3b5b7f4edd840594",
+    "bytes": 104,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Metadata values must be strings.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: invalid JSON in header: invalid type: integer `1`, expected a string at line 1 column 28"
+    }
+  },
+  {
+    "id": "missing_dtype",
+    "file": "missing_dtype.bin",
+    "sha256": "c35dea11b341ef973a81a9c0f3dc8523b96605f2cbd95790fa24cf452fccd860",
+    "bytes": 64,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Required tensor metadata missing.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: invalid JSON in header: missing field `dtype` at line 1 column 45"
+    }
+  },
+  {
+    "id": "dimension_boolean",
+    "file": "dimension_boolean.bin",
+    "sha256": "8c2363804f998778259da1721ef22eec08b33f229b72aae3aae14b0e0e24ec54",
+    "bytes": 80,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Shape dimensions require unsigned integers, not booleans.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: invalid JSON in header: invalid type: boolean `true`, expected usize at line 1 column 64"
+    }
+  },
+  {
+    "id": "dimension_negative",
+    "file": "dimension_negative.bin",
+    "sha256": "ca978205c8eb1cbb8ad83a6fa2f2e6bac64ea1427c8df2ca3247f80c5b73bc36",
+    "bytes": 80,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Negative dimension rejected.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: invalid JSON in header: invalid value: integer `-2`, expected usize at line 1 column 60"
+    }
+  },
+  {
+    "id": "dimension_fractional",
+    "file": "dimension_fractional.bin",
+    "sha256": "25b675ad2b284a83d5250fe488b48835230b807f66019c41b05a0309f48489ce",
+    "bytes": 80,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Dimensions use exact unsigned integer JSON syntax.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: invalid JSON in header: invalid type: floating point `2.0`, expected usize at line 1 column 61"
+    }
+  },
+  {
+    "id": "shape_multiply_overflow",
+    "file": "shape_multiply_overflow.bin",
+    "sha256": "52a85498b38f70afc4a20691c8af32275d1a84cf8147ebfd7643156c4f1a8437",
+    "bytes": 96,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Checked element product overflows.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: overflow computing buffer size from shape and/or element type"
+    }
+  },
+  {
+    "id": "shape_byte_mismatch",
+    "file": "shape_byte_mismatch.bin",
+    "sha256": "3683b46cf123e38fe5e7e01e957ff71243a3bf9fa667210c1a7d2d7cf924f349",
+    "bytes": 80,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Tensor range disagrees with shape and storage dtype.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: invalid shape, data type, or offset for tensor"
+    }
+  },
+  {
+    "id": "reversed_offsets",
+    "file": "reversed_offsets.bin",
+    "sha256": "987902e2368b76f3fc46bc2756f67f5f548e024c28ed9980cddc47dddb462cdb",
+    "bytes": 80,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "End precedes start.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: invalid offset for tensor `weight`"
+    }
+  },
+  {
+    "id": "offset_outside_asset",
+    "file": "offset_outside_asset.bin",
+    "sha256": "7a3cfa59194c53054f2eea05ef6cb8e59d0c7175dcc00c950e8afadc87cd6e13",
+    "bytes": 80,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Physical range exceeds actual data buffer.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: invalid offset for tensor `weight`"
+    }
+  },
+  {
+    "id": "overlap",
+    "file": "overlap.bin",
+    "sha256": "bb43f7df96dc064054757598a86251a7b3ab8176bcfe34789c1904b9828de146",
+    "bytes": 128,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Distinct physical tensors overlap.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: invalid offset for tensor `b`"
+    }
+  },
+  {
+    "id": "hole",
+    "file": "hole.bin",
+    "sha256": "f6fe04724ef315f50e64160ad900071bfd3c8b3484c96f93a4b8f5b87aac7fa5",
+    "bytes": 84,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Payload coverage has an unindexed gap.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: invalid offset for tensor `weight`"
+    }
+  },
+  {
+    "id": "trailing_payload",
+    "file": "trailing_payload.bin",
+    "sha256": "152c27dfdaf01aa014039f8e4f13616f20ce39ecdd97390f9c5895e6ef194b43",
+    "bytes": 84,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Reject unindexed trailing payload.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: incomplete metadata, file not fully covered"
+    }
+  },
+  {
+    "id": "unknown_dtype",
+    "file": "unknown_dtype.bin",
+    "sha256": "381f23b21dd0bc6aae4afc30c2d4e0742c6753e617db0f68ad7d735eeb975626",
+    "bytes": 80,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Storage dtype unknown.",
+    "reference_format_reader": {
+      "accepted": false,
+      "error": "Error while deserializing: invalid JSON in header: unknown variant `BOGUS`, expected one of `BOOL`, `F4`, `F6_E2M3`, `F6_E3M2`, `U8`, `I8`, `F8_E5M2`, `F8_E4M3`, `F8_E8M0`, `I16`, `U16`, `F16`, `BF16`, `I32`, `U32`, `F32`, `F64`, `I64`, `U64` at line 1 column 61"
+    }
+  },
+  {
+    "id": "unsupported_f64_storage",
+    "file": "unsupported_f64_storage.bin",
+    "sha256": "75065dcbd539fe6849843cc72e154066cc2d0be93eab5cee916b37fec7f59bfd",
+    "bytes": 80,
+    "header_expect": "reject",
+    "load_expect": "not_reached",
+    "reason": "Initial owned model importer permits only F32/BF16 storage; distinguish unsupported from invalidformat.",
+    "reference_format_reader": {
+      "accepted": true,
+      "tensors": [
+        {
+          "name": "weight",
+          "dtype": "F64",
+          "shape": [
+            1
+          ],
+          "payload_sha256": "6c3c396ed6b5c36dcae172271f462051b1266b851e92df3deea8ac65478fd712"
+        }
+      ]
+    }
+  },
+  {
+    "id": "nonfinite_f32",
+    "file": "nonfinite_f32.bin",
+    "sha256": "9fb781ccb0b016a219c27a2aa3fa4afafd5cc70b73ed98020236ebe4094e3952",
+    "bytes": 76,
+    "header_expect": "accept",
+    "load_expect": "reject_nonfinite",
+    "reason": "Format allows nonfinite payload; owned model loader rejects before publication.",
+    "reference_format_reader": {
+      "accepted": true,
+      "tensors": [
+        {
+          "name": "weight",
+          "dtype": "F32",
+          "shape": [
+            1
+          ],
+          "payload_sha256": "d7173dd8a9e81deded3f2e4719ef149effbd21afd81da9d10ed50b5dff69a708"
+        }
+      ]
+    }
+  },
+  {
+    "id": "nonfinite_bf16",
+    "file": "nonfinite_bf16.bin",
+    "sha256": "d529a7912e654192612cd0933d96678bbd1fee33f0286dd5014db88644b0625d",
+    "bytes": 74,
+    "header_expect": "accept",
+    "load_expect": "reject_nonfinite",
+    "reason": "Valid BF16 storage encodes NaN; model loader rejects.",
+    "reference_format_reader": {
+      "accepted": true,
+      "tensors": [
+        {
+          "name": "weight",
+          "dtype": "BF16",
+          "shape": [
+            1
+          ],
+          "payload_sha256": "8885df4b050b6fd7c23bc77259f243f1dd81f757254c02fe432f3b1bf66338a5"
+        }
+      ]
+    }
+  }
+]

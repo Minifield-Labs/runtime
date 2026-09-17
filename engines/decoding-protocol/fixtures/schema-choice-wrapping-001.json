@@ -1,0 +1,187 @@
+{
+  "status": "coordinator_literal_interpretation_of_draft4_structural_wrapping_for_agent_review",
+  "resolved_schema": {
+    "type": "object",
+    "properties": {
+      "a": {
+        "type": "string"
+      },
+      "b": {
+        "type": "string"
+      },
+      "c": {
+        "type": "string"
+      },
+      "x": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "a",
+      "x"
+    ],
+    "additionalProperties": false,
+    "allOf": [
+      {
+        "anyOf": [
+          {
+            "required": [
+              "b"
+            ]
+          },
+          {
+            "required": [
+              "c"
+            ]
+          }
+        ]
+      },
+      {
+        "oneOf": [
+          {
+            "properties": {
+              "x": {
+                "const": "left"
+              }
+            }
+          },
+          {
+            "properties": {
+              "x": {
+                "const": "right"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "teacher": {
+    "a": "value",
+    "b": "required",
+    "x": "left"
+  },
+  "choices": [
+    {
+      "source_keyword_path": "/allOf/0/anyOf",
+      "selected_branch_index": 0,
+      "selected_alternative": {
+        "label": "branch:0",
+        "schema_path": "/allOf/0/anyOf/0",
+        "schema": {
+          "allOf": [
+            {
+              "type": "object",
+              "properties": {
+                "a": {
+                  "type": "string"
+                },
+                "b": {
+                  "type": "string"
+                },
+                "c": {
+                  "type": "string"
+                },
+                "x": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "a",
+                "x"
+              ],
+              "additionalProperties": false,
+              "allOf": [
+                {},
+                {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "x": {
+                          "const": "left"
+                        }
+                      }
+                    },
+                    {
+                      "properties": {
+                        "x": {
+                          "const": "right"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "required": [
+                "b"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "source_keyword_path": "/allOf/1/oneOf",
+      "selected_branch_index": 0,
+      "current_tree_keyword_path": "/allOf/0/allOf/1/oneOf",
+      "selected_alternative": {
+        "label": "branch:0",
+        "schema_path": "/allOf/1/oneOf/0",
+        "schema": {
+          "allOf": [
+            {
+              "allOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "a": {
+                      "type": "string"
+                    },
+                    "b": {
+                      "type": "string"
+                    },
+                    "c": {
+                      "type": "string"
+                    },
+                    "x": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "a",
+                    "x"
+                  ],
+                  "additionalProperties": false,
+                  "allOf": [
+                    {},
+                    {}
+                  ]
+                },
+                {
+                  "required": [
+                    "b"
+                  ]
+                }
+              ]
+            },
+            {
+              "properties": {
+                "x": {
+                  "const": "left"
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "invariants": [
+    "schema_path identifies the immutable resolved source; internal tree positions move after wrappers",
+    "remove only the current choice keyword at its current location; retain empty schema nodes",
+    "keep original full schema for final validation, separate from selected effective current conjunction",
+    "do not flatten or remove either prior allOf wrapper"
+  ]
+}

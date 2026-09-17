@@ -1,0 +1,85 @@
+[
+  {
+    "name": "constant_does_not_bypass_original_item_constraint",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "array",
+          "const": [
+            "x",
+            2
+          ],
+          "items": {
+            "type": "integer"
+          }
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "arguments": {
+      "value": [
+        "x",
+        2
+      ]
+    },
+    "expected": "reject-original-instance"
+  },
+  {
+    "name": "enum_does_not_bypass_original_object_assertion",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          },
+          "required": [
+            "x"
+          ],
+          "additionalProperties": false,
+          "enum": [
+            {
+              "x": "a"
+            },
+            {
+              "x": 2
+            }
+          ],
+          "allOf": [
+            {
+              "properties": {
+                "x": {
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "arguments": {
+      "value": {
+        "x": "a"
+      }
+    },
+    "expected": "reject-original-instance"
+  }
+]

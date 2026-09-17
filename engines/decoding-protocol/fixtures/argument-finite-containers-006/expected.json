@@ -1,0 +1,6904 @@
+[
+  {
+    "name": "const_array_child_union",
+    "oracle": {
+      "name": "select_value",
+      "mode": "teacher",
+      "public_events": [
+        {
+          "type": "system",
+          "policy": "Emit the exact supported value.",
+          "observation": {}
+        },
+        {
+          "type": "user",
+          "content": "Use the given finite value."
+        }
+      ],
+      "selected_route": "select_value",
+      "original_schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "const": [
+              "x",
+              2
+            ]
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "resolved_schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "const": [
+              "x",
+              2
+            ]
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "property_order": [
+        {
+          "schema_path": "",
+          "properties": [
+            "value"
+          ]
+        }
+      ],
+      "expected_arguments": {
+        "value": [
+          "x",
+          2
+        ]
+      },
+      "expected_action": {
+        "name": "select_value",
+        "arguments": {
+          "value": [
+            "x",
+            2
+          ]
+        }
+      },
+      "expected_operations": [
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 1,
+          "token_ids": [
+            1
+          ],
+          "ownership": "fixed",
+          "label": "bos",
+          "main_start": 0,
+          "main_end": 1,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 6,
+          "token_ids": [
+            6
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 1,
+          "main_end": 2,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "system\n",
+          "special_id": null,
+          "token_ids": [
+            24131,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 2,
+          "main_end": 4,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"observation\":{},\"policy\":\"Emit the exact supported value.\",\"type\":\"system\"}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            34306,
+            852,
+            6881,
+            24373,
+            2512,
+            10681,
+            3687,
+            42066,
+            6200,
+            785,
+            779,
+            5676,
+            7951,
+            2536,
+            523,
+            25475,
+            6383,
+            42066,
+            24131,
+            511,
+            602
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 4,
+          "main_end": 26,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 7,
+          "token_ids": [
+            7
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 26,
+          "main_end": 27,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\n",
+          "special_id": null,
+          "token_ids": [
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 27,
+          "main_end": 28,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 6,
+          "token_ids": [
+            6
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 28,
+          "main_end": 29,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "user\n",
+          "special_id": null,
+          "token_ids": [
+            6423,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 29,
+          "main_end": 31,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"content\":\"Use the given finite value.\",\"type\":\"user\"}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            8416,
+            42066,
+            14875,
+            779,
+            2997,
+            16065,
+            2536,
+            523,
+            25475,
+            6383,
+            42066,
+            6423,
+            511,
+            602
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 31,
+          "main_end": 46,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 7,
+          "token_ids": [
+            7
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 46,
+          "main_end": 47,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\n",
+          "special_id": null,
+          "token_ids": [
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 47,
+          "main_end": 48,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 6,
+          "token_ids": [
+            6
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 48,
+          "main_end": 49,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "assistant\n",
+          "special_id": null,
+          "token_ids": [
+            64015,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 49,
+          "main_end": 51,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "minifield.arguments/1\n",
+          "special_id": null,
+          "token_ids": [
+            1915,
+            888,
+            1769,
+            523,
+            57236,
+            524,
+            526,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 51,
+          "main_end": 59,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"name\":\"select_value\",\"parameters\":{\"additionalProperties\":false,\"properties\":{\"value\":{\"const\":[\"x\",2],\"items\":{\"oneOf\":[{\"type\":\"string\"},{\"type\":\"integer\"}]},\"type\":\"array\"}},\"required\":[\"value\"],\"type\":\"object\"},\"property_order\":[{\"properties\":[\"value\"],\"schema_path\":\"\"}]}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            3055,
+            42066,
+            14714,
+            19495,
+            25475,
+            30202,
+            6881,
+            38685,
+            3263,
+            2847,
+            20051,
+            6881,
+            13890,
+            2512,
+            39306,
+            6881,
+            38685,
+            4766,
+            6881,
+            38685,
+            4429,
+            6881,
+            13884,
+            597,
+            1878,
+            527,
+            570,
+            2512,
+            26207,
+            6881,
+            38685,
+            1174,
+            6978,
+            6881,
+            568,
+            38685,
+            6383,
+            42066,
+            4488,
+            511,
+            3205,
+            38685,
+            6383,
+            42066,
+            59003,
+            511,
+            20352,
+            602,
+            2512,
+            6383,
+            42066,
+            5588,
+            511,
+            2608,
+            2512,
+            35004,
+            6881,
+            13884,
+            4766,
+            13829,
+            2512,
+            6383,
+            42066,
+            7523,
+            511,
+            602,
+            2512,
+            13797,
+            572,
+            3667,
+            6881,
+            568,
+            38685,
+            39306,
+            6881,
+            13884,
+            4766,
+            13829,
+            2512,
+            50434,
+            17314,
+            6881,
+            19893,
+            20352,
+            602
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 59,
+          "main_end": 145,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\n",
+          "special_id": null,
+          "token_ids": [
+            708
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 145,
+          "main_end": 146,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"name\":",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            3055,
+            6881
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 146,
+          "main_end": 149,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\"select_value\"",
+          "special_id": null,
+          "token_ids": [
+            511,
+            14714,
+            19495,
+            511
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 149,
+          "main_end": 153,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": ",\"arguments\":",
+          "special_id": null,
+          "token_ids": [
+            2512,
+            57236,
+            6881
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 153,
+          "main_end": 156,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{",
+          "special_id": null,
+          "token_ids": [
+            600
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 156,
+          "main_end": 157,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\"value\"",
+          "special_id": null,
+          "token_ids": [
+            511,
+            4766,
+            511
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 157,
+          "main_end": 160,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": ":",
+          "special_id": null,
+          "token_ids": [
+            535
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 160,
+          "main_end": 161,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "[\"x\",2]",
+          "special_id": null,
+          "token_ids": [
+            13884,
+            597,
+            1878,
+            527,
+            570
+          ],
+          "ownership": "fixed",
+          "label": "value:/value",
+          "main_start": 161,
+          "main_end": 166,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 7,
+          "token_ids": [
+            7
+          ],
+          "ownership": "fixed",
+          "label": "value-end:/value",
+          "main_start": 166,
+          "main_end": 167,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "}",
+          "special_id": null,
+          "token_ids": [
+            602
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 167,
+          "main_end": 168,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "}",
+          "special_id": null,
+          "token_ids": [
+            602
+          ],
+          "ownership": "fixed",
+          "label": "envelope-close",
+          "main_start": 168,
+          "main_end": 169,
+          "prediction_positions": []
+        }
+      ],
+      "context_token_ids": [
+        1,
+        6,
+        24131,
+        708,
+        38685,
+        34306,
+        852,
+        6881,
+        24373,
+        2512,
+        10681,
+        3687,
+        42066,
+        6200,
+        785,
+        779,
+        5676,
+        7951,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        24131,
+        511,
+        602,
+        7,
+        708,
+        6,
+        6423,
+        708,
+        38685,
+        8416,
+        42066,
+        14875,
+        779,
+        2997,
+        16065,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        6423,
+        511,
+        602,
+        7,
+        708
+      ],
+      "main_token_ids": [
+        1,
+        6,
+        24131,
+        708,
+        38685,
+        34306,
+        852,
+        6881,
+        24373,
+        2512,
+        10681,
+        3687,
+        42066,
+        6200,
+        785,
+        779,
+        5676,
+        7951,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        24131,
+        511,
+        602,
+        7,
+        708,
+        6,
+        6423,
+        708,
+        38685,
+        8416,
+        42066,
+        14875,
+        779,
+        2997,
+        16065,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        6423,
+        511,
+        602,
+        7,
+        708,
+        6,
+        64015,
+        708,
+        1915,
+        888,
+        1769,
+        523,
+        57236,
+        524,
+        526,
+        708,
+        38685,
+        3055,
+        42066,
+        14714,
+        19495,
+        25475,
+        30202,
+        6881,
+        38685,
+        3263,
+        2847,
+        20051,
+        6881,
+        13890,
+        2512,
+        39306,
+        6881,
+        38685,
+        4766,
+        6881,
+        38685,
+        4429,
+        6881,
+        13884,
+        597,
+        1878,
+        527,
+        570,
+        2512,
+        26207,
+        6881,
+        38685,
+        1174,
+        6978,
+        6881,
+        568,
+        38685,
+        6383,
+        42066,
+        4488,
+        511,
+        3205,
+        38685,
+        6383,
+        42066,
+        59003,
+        511,
+        20352,
+        602,
+        2512,
+        6383,
+        42066,
+        5588,
+        511,
+        2608,
+        2512,
+        35004,
+        6881,
+        13884,
+        4766,
+        13829,
+        2512,
+        6383,
+        42066,
+        7523,
+        511,
+        602,
+        2512,
+        13797,
+        572,
+        3667,
+        6881,
+        568,
+        38685,
+        39306,
+        6881,
+        13884,
+        4766,
+        13829,
+        2512,
+        50434,
+        17314,
+        6881,
+        19893,
+        20352,
+        602,
+        708,
+        38685,
+        3055,
+        6881,
+        511,
+        14714,
+        19495,
+        511,
+        2512,
+        57236,
+        6881,
+        600,
+        511,
+        4766,
+        511,
+        535,
+        13884,
+        597,
+        1878,
+        527,
+        570,
+        7,
+        602,
+        602
+      ],
+      "main_sha256_u32le": "93e34a5a874b548d4a9d84a30d21fd69c2cdca84795237cbd86b81bea2670ac8",
+      "argument_token_range": [
+        156,
+        168
+      ],
+      "argument_json_for_assembly_check_only": "{\"value\":[\"x\",2]}",
+      "learned_main_targets": [],
+      "learned_probe_targets": [],
+      "learned_argument_token_count": 0,
+      "routing": {
+        "suffix_segments": [
+          {
+            "text": null,
+            "special_id": 6,
+            "token_ids": [
+              6
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "assistant\n",
+            "special_id": null,
+            "token_ids": [
+              64015,
+              708
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "minifield.route/1\n",
+            "special_id": null,
+            "token_ids": [
+              1915,
+              888,
+              1769,
+              523,
+              33113,
+              524,
+              526,
+              708
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "{\"available\":true,\"description\":\"Select the requested finite value.\",\"name\":\"select_value\"}",
+            "special_id": null,
+            "token_ids": [
+              38685,
+              28423,
+              6881,
+              10567,
+              2512,
+              19522,
+              42066,
+              15534,
+              779,
+              21968,
+              16065,
+              2536,
+              523,
+              25475,
+              3055,
+              42066,
+              14714,
+              19495,
+              511,
+              602
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "\nShould this be the next action? Answer true or false.\n",
+            "special_id": null,
+            "token_ids": [
+              708,
+              31928,
+              1033,
+              874,
+              779,
+              3280,
+              4272,
+              540,
+              42275,
+              3347,
+              933,
+              4831,
+              819
+            ],
+            "ownership": "fixed",
+            "label": ""
+          }
+        ],
+        "prefix_token_ids": [
+          1,
+          6,
+          24131,
+          708,
+          38685,
+          34306,
+          852,
+          6881,
+          24373,
+          2512,
+          10681,
+          3687,
+          42066,
+          6200,
+          785,
+          779,
+          5676,
+          7951,
+          2536,
+          523,
+          25475,
+          6383,
+          42066,
+          24131,
+          511,
+          602,
+          7,
+          708,
+          6,
+          6423,
+          708,
+          38685,
+          8416,
+          42066,
+          14875,
+          779,
+          2997,
+          16065,
+          2536,
+          523,
+          25475,
+          6383,
+          42066,
+          6423,
+          511,
+          602,
+          7,
+          708,
+          6,
+          64015,
+          708,
+          1915,
+          888,
+          1769,
+          523,
+          33113,
+          524,
+          526,
+          708,
+          38685,
+          28423,
+          6881,
+          10567,
+          2512,
+          19522,
+          42066,
+          15534,
+          779,
+          21968,
+          16065,
+          2536,
+          523,
+          25475,
+          3055,
+          42066,
+          14714,
+          19495,
+          511,
+          602,
+          708,
+          31928,
+          1033,
+          874,
+          779,
+          3280,
+          4272,
+          540,
+          42275,
+          3347,
+          933,
+          4831,
+          819
+        ],
+        "candidates": [
+          {
+            "label": "true",
+            "token_ids": [
+              10567,
+              7
+            ],
+            "prediction_positions": [
+              91,
+              92
+            ]
+          },
+          {
+            "label": "false",
+            "token_ids": [
+              13890,
+              7
+            ],
+            "prediction_positions": [
+              91,
+              92
+            ]
+          }
+        ]
+      },
+      "teacher_arguments": {
+        "value": [
+          "x",
+          2
+        ]
+      }
+    }
+  },
+  {
+    "name": "enum_array_child_union",
+    "oracle": {
+      "name": "select_value",
+      "mode": "teacher",
+      "public_events": [
+        {
+          "type": "system",
+          "policy": "Emit the exact supported value.",
+          "observation": {}
+        },
+        {
+          "type": "user",
+          "content": "Use the given finite value."
+        }
+      ],
+      "selected_route": "select_value",
+      "original_schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "enum": [
+              [
+                "x",
+                2
+              ],
+              [
+                "y",
+                3
+              ]
+            ]
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "resolved_schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "enum": [
+              [
+                "x",
+                2
+              ],
+              [
+                "y",
+                3
+              ]
+            ]
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "property_order": [
+        {
+          "schema_path": "",
+          "properties": [
+            "value"
+          ]
+        }
+      ],
+      "expected_arguments": {
+        "value": [
+          "x",
+          2
+        ]
+      },
+      "expected_action": {
+        "name": "select_value",
+        "arguments": {
+          "value": [
+            "x",
+            2
+          ]
+        }
+      },
+      "expected_operations": [
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 1,
+          "token_ids": [
+            1
+          ],
+          "ownership": "fixed",
+          "label": "bos",
+          "main_start": 0,
+          "main_end": 1,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 6,
+          "token_ids": [
+            6
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 1,
+          "main_end": 2,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "system\n",
+          "special_id": null,
+          "token_ids": [
+            24131,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 2,
+          "main_end": 4,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"observation\":{},\"policy\":\"Emit the exact supported value.\",\"type\":\"system\"}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            34306,
+            852,
+            6881,
+            24373,
+            2512,
+            10681,
+            3687,
+            42066,
+            6200,
+            785,
+            779,
+            5676,
+            7951,
+            2536,
+            523,
+            25475,
+            6383,
+            42066,
+            24131,
+            511,
+            602
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 4,
+          "main_end": 26,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 7,
+          "token_ids": [
+            7
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 26,
+          "main_end": 27,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\n",
+          "special_id": null,
+          "token_ids": [
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 27,
+          "main_end": 28,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 6,
+          "token_ids": [
+            6
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 28,
+          "main_end": 29,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "user\n",
+          "special_id": null,
+          "token_ids": [
+            6423,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 29,
+          "main_end": 31,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"content\":\"Use the given finite value.\",\"type\":\"user\"}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            8416,
+            42066,
+            14875,
+            779,
+            2997,
+            16065,
+            2536,
+            523,
+            25475,
+            6383,
+            42066,
+            6423,
+            511,
+            602
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 31,
+          "main_end": 46,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 7,
+          "token_ids": [
+            7
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 46,
+          "main_end": 47,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\n",
+          "special_id": null,
+          "token_ids": [
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 47,
+          "main_end": 48,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 6,
+          "token_ids": [
+            6
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 48,
+          "main_end": 49,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "assistant\n",
+          "special_id": null,
+          "token_ids": [
+            64015,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 49,
+          "main_end": 51,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "minifield.arguments/1\n",
+          "special_id": null,
+          "token_ids": [
+            1915,
+            888,
+            1769,
+            523,
+            57236,
+            524,
+            526,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 51,
+          "main_end": 59,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"name\":\"select_value\",\"parameters\":{\"additionalProperties\":false,\"properties\":{\"value\":{\"enum\":[[\"x\",2],[\"y\",3]],\"items\":{\"oneOf\":[{\"type\":\"string\"},{\"type\":\"integer\"}]},\"type\":\"array\"}},\"required\":[\"value\"],\"type\":\"object\"},\"property_order\":[{\"properties\":[\"value\"],\"schema_path\":\"\"}]}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            3055,
+            42066,
+            14714,
+            19495,
+            25475,
+            30202,
+            6881,
+            38685,
+            3263,
+            2847,
+            20051,
+            6881,
+            13890,
+            2512,
+            39306,
+            6881,
+            38685,
+            4766,
+            6881,
+            38685,
+            30568,
+            6881,
+            568,
+            13884,
+            597,
+            1878,
+            527,
+            5086,
+            13884,
+            598,
+            1878,
+            528,
+            30089,
+            2512,
+            26207,
+            6881,
+            38685,
+            1174,
+            6978,
+            6881,
+            568,
+            38685,
+            6383,
+            42066,
+            4488,
+            511,
+            3205,
+            38685,
+            6383,
+            42066,
+            59003,
+            511,
+            20352,
+            602,
+            2512,
+            6383,
+            42066,
+            5588,
+            511,
+            2608,
+            2512,
+            35004,
+            6881,
+            13884,
+            4766,
+            13829,
+            2512,
+            6383,
+            42066,
+            7523,
+            511,
+            602,
+            2512,
+            13797,
+            572,
+            3667,
+            6881,
+            568,
+            38685,
+            39306,
+            6881,
+            13884,
+            4766,
+            13829,
+            2512,
+            50434,
+            17314,
+            6881,
+            19893,
+            20352,
+            602
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 59,
+          "main_end": 151,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\n",
+          "special_id": null,
+          "token_ids": [
+            708
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 151,
+          "main_end": 152,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"name\":",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            3055,
+            6881
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 152,
+          "main_end": 155,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\"select_value\"",
+          "special_id": null,
+          "token_ids": [
+            511,
+            14714,
+            19495,
+            511
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 155,
+          "main_end": 159,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": ",\"arguments\":",
+          "special_id": null,
+          "token_ids": [
+            2512,
+            57236,
+            6881
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 159,
+          "main_end": 162,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{",
+          "special_id": null,
+          "token_ids": [
+            600
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 162,
+          "main_end": 163,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\"value\"",
+          "special_id": null,
+          "token_ids": [
+            511,
+            4766,
+            511
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 163,
+          "main_end": 166,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": ":",
+          "special_id": null,
+          "token_ids": [
+            535
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 166,
+          "main_end": 167,
+          "prediction_positions": []
+        },
+        {
+          "kind": "finite_choice",
+          "path": "/value",
+          "fork_main_length": 167,
+          "fork_main_sha256_u32le": "26832f0b81457a43b44c2036d18d8cc16aaf41c391d0460c1ca0e72977de7e98",
+          "candidates": [
+            {
+              "segments": [
+                {
+                  "text": "[\"x\",2]",
+                  "special_id": null,
+                  "token_ids": [
+                    13884,
+                    597,
+                    1878,
+                    527,
+                    570
+                  ],
+                  "ownership": "learned",
+                  "label": ""
+                },
+                {
+                  "text": null,
+                  "special_id": 7,
+                  "token_ids": [
+                    7
+                  ],
+                  "ownership": "learned",
+                  "label": ""
+                }
+              ],
+              "token_ids": [
+                13884,
+                597,
+                1878,
+                527,
+                570,
+                7
+              ],
+              "value": [
+                "x",
+                2
+              ],
+              "prediction_positions": [
+                166,
+                167,
+                168,
+                169,
+                170,
+                171
+              ]
+            },
+            {
+              "segments": [
+                {
+                  "text": "[\"y\",3]",
+                  "special_id": null,
+                  "token_ids": [
+                    13884,
+                    598,
+                    1878,
+                    528,
+                    570
+                  ],
+                  "ownership": "learned",
+                  "label": ""
+                },
+                {
+                  "text": null,
+                  "special_id": 7,
+                  "token_ids": [
+                    7
+                  ],
+                  "ownership": "learned",
+                  "label": ""
+                }
+              ],
+              "token_ids": [
+                13884,
+                598,
+                1878,
+                528,
+                570,
+                7
+              ],
+              "value": [
+                "y",
+                3
+              ],
+              "prediction_positions": [
+                166,
+                167,
+                168,
+                169,
+                170,
+                171
+              ]
+            }
+          ],
+          "selected_index": 0
+        },
+        {
+          "kind": "main_append",
+          "text": "[\"x\",2]",
+          "special_id": null,
+          "token_ids": [
+            13884,
+            597,
+            1878,
+            527,
+            570
+          ],
+          "ownership": "learned",
+          "label": "finite:/value",
+          "main_start": 167,
+          "main_end": 172,
+          "prediction_positions": [
+            166,
+            167,
+            168,
+            169,
+            170
+          ]
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 7,
+          "token_ids": [
+            7
+          ],
+          "ownership": "learned",
+          "label": "finite-end:/value",
+          "main_start": 172,
+          "main_end": 173,
+          "prediction_positions": [
+            171
+          ]
+        },
+        {
+          "kind": "main_append",
+          "text": "}",
+          "special_id": null,
+          "token_ids": [
+            602
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 173,
+          "main_end": 174,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "}",
+          "special_id": null,
+          "token_ids": [
+            602
+          ],
+          "ownership": "fixed",
+          "label": "envelope-close",
+          "main_start": 174,
+          "main_end": 175,
+          "prediction_positions": []
+        }
+      ],
+      "context_token_ids": [
+        1,
+        6,
+        24131,
+        708,
+        38685,
+        34306,
+        852,
+        6881,
+        24373,
+        2512,
+        10681,
+        3687,
+        42066,
+        6200,
+        785,
+        779,
+        5676,
+        7951,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        24131,
+        511,
+        602,
+        7,
+        708,
+        6,
+        6423,
+        708,
+        38685,
+        8416,
+        42066,
+        14875,
+        779,
+        2997,
+        16065,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        6423,
+        511,
+        602,
+        7,
+        708
+      ],
+      "main_token_ids": [
+        1,
+        6,
+        24131,
+        708,
+        38685,
+        34306,
+        852,
+        6881,
+        24373,
+        2512,
+        10681,
+        3687,
+        42066,
+        6200,
+        785,
+        779,
+        5676,
+        7951,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        24131,
+        511,
+        602,
+        7,
+        708,
+        6,
+        6423,
+        708,
+        38685,
+        8416,
+        42066,
+        14875,
+        779,
+        2997,
+        16065,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        6423,
+        511,
+        602,
+        7,
+        708,
+        6,
+        64015,
+        708,
+        1915,
+        888,
+        1769,
+        523,
+        57236,
+        524,
+        526,
+        708,
+        38685,
+        3055,
+        42066,
+        14714,
+        19495,
+        25475,
+        30202,
+        6881,
+        38685,
+        3263,
+        2847,
+        20051,
+        6881,
+        13890,
+        2512,
+        39306,
+        6881,
+        38685,
+        4766,
+        6881,
+        38685,
+        30568,
+        6881,
+        568,
+        13884,
+        597,
+        1878,
+        527,
+        5086,
+        13884,
+        598,
+        1878,
+        528,
+        30089,
+        2512,
+        26207,
+        6881,
+        38685,
+        1174,
+        6978,
+        6881,
+        568,
+        38685,
+        6383,
+        42066,
+        4488,
+        511,
+        3205,
+        38685,
+        6383,
+        42066,
+        59003,
+        511,
+        20352,
+        602,
+        2512,
+        6383,
+        42066,
+        5588,
+        511,
+        2608,
+        2512,
+        35004,
+        6881,
+        13884,
+        4766,
+        13829,
+        2512,
+        6383,
+        42066,
+        7523,
+        511,
+        602,
+        2512,
+        13797,
+        572,
+        3667,
+        6881,
+        568,
+        38685,
+        39306,
+        6881,
+        13884,
+        4766,
+        13829,
+        2512,
+        50434,
+        17314,
+        6881,
+        19893,
+        20352,
+        602,
+        708,
+        38685,
+        3055,
+        6881,
+        511,
+        14714,
+        19495,
+        511,
+        2512,
+        57236,
+        6881,
+        600,
+        511,
+        4766,
+        511,
+        535,
+        13884,
+        597,
+        1878,
+        527,
+        570,
+        7,
+        602,
+        602
+      ],
+      "main_sha256_u32le": "9d5c7810b12e69be4628e161f9d362a814fd2d9789caf461651a07260feaca14",
+      "argument_token_range": [
+        162,
+        174
+      ],
+      "argument_json_for_assembly_check_only": "{\"value\":[\"x\",2]}",
+      "learned_main_targets": [
+        {
+          "position": 166,
+          "token_id": 13884
+        },
+        {
+          "position": 167,
+          "token_id": 597
+        },
+        {
+          "position": 168,
+          "token_id": 1878
+        },
+        {
+          "position": 169,
+          "token_id": 527
+        },
+        {
+          "position": 170,
+          "token_id": 570
+        },
+        {
+          "position": 171,
+          "token_id": 7
+        }
+      ],
+      "learned_probe_targets": [],
+      "learned_argument_token_count": 6,
+      "routing": {
+        "suffix_segments": [
+          {
+            "text": null,
+            "special_id": 6,
+            "token_ids": [
+              6
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "assistant\n",
+            "special_id": null,
+            "token_ids": [
+              64015,
+              708
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "minifield.route/1\n",
+            "special_id": null,
+            "token_ids": [
+              1915,
+              888,
+              1769,
+              523,
+              33113,
+              524,
+              526,
+              708
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "{\"available\":true,\"description\":\"Select the requested finite value.\",\"name\":\"select_value\"}",
+            "special_id": null,
+            "token_ids": [
+              38685,
+              28423,
+              6881,
+              10567,
+              2512,
+              19522,
+              42066,
+              15534,
+              779,
+              21968,
+              16065,
+              2536,
+              523,
+              25475,
+              3055,
+              42066,
+              14714,
+              19495,
+              511,
+              602
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "\nShould this be the next action? Answer true or false.\n",
+            "special_id": null,
+            "token_ids": [
+              708,
+              31928,
+              1033,
+              874,
+              779,
+              3280,
+              4272,
+              540,
+              42275,
+              3347,
+              933,
+              4831,
+              819
+            ],
+            "ownership": "fixed",
+            "label": ""
+          }
+        ],
+        "prefix_token_ids": [
+          1,
+          6,
+          24131,
+          708,
+          38685,
+          34306,
+          852,
+          6881,
+          24373,
+          2512,
+          10681,
+          3687,
+          42066,
+          6200,
+          785,
+          779,
+          5676,
+          7951,
+          2536,
+          523,
+          25475,
+          6383,
+          42066,
+          24131,
+          511,
+          602,
+          7,
+          708,
+          6,
+          6423,
+          708,
+          38685,
+          8416,
+          42066,
+          14875,
+          779,
+          2997,
+          16065,
+          2536,
+          523,
+          25475,
+          6383,
+          42066,
+          6423,
+          511,
+          602,
+          7,
+          708,
+          6,
+          64015,
+          708,
+          1915,
+          888,
+          1769,
+          523,
+          33113,
+          524,
+          526,
+          708,
+          38685,
+          28423,
+          6881,
+          10567,
+          2512,
+          19522,
+          42066,
+          15534,
+          779,
+          21968,
+          16065,
+          2536,
+          523,
+          25475,
+          3055,
+          42066,
+          14714,
+          19495,
+          511,
+          602,
+          708,
+          31928,
+          1033,
+          874,
+          779,
+          3280,
+          4272,
+          540,
+          42275,
+          3347,
+          933,
+          4831,
+          819
+        ],
+        "candidates": [
+          {
+            "label": "true",
+            "token_ids": [
+              10567,
+              7
+            ],
+            "prediction_positions": [
+              91,
+              92
+            ]
+          },
+          {
+            "label": "false",
+            "token_ids": [
+              13890,
+              7
+            ],
+            "prediction_positions": [
+              91,
+              92
+            ]
+          }
+        ]
+      },
+      "teacher_arguments": {
+        "value": [
+          "x",
+          2
+        ]
+      }
+    }
+  },
+  {
+    "name": "const_object_child_union",
+    "oracle": {
+      "name": "select_value",
+      "mode": "teacher",
+      "public_events": [
+        {
+          "type": "system",
+          "policy": "Emit the exact supported value.",
+          "observation": {}
+        },
+        {
+          "type": "user",
+          "content": "Use the given finite value."
+        }
+      ],
+      "selected_route": "select_value",
+      "original_schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "x"
+            ],
+            "additionalProperties": false,
+            "const": {
+              "x": "a"
+            }
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "resolved_schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "x"
+            ],
+            "additionalProperties": false,
+            "const": {
+              "x": "a"
+            }
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "property_order": [
+        {
+          "schema_path": "",
+          "properties": [
+            "value"
+          ]
+        },
+        {
+          "schema_path": "/properties/value",
+          "properties": [
+            "x"
+          ]
+        }
+      ],
+      "expected_arguments": {
+        "value": {
+          "x": "a"
+        }
+      },
+      "expected_action": {
+        "name": "select_value",
+        "arguments": {
+          "value": {
+            "x": "a"
+          }
+        }
+      },
+      "expected_operations": [
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 1,
+          "token_ids": [
+            1
+          ],
+          "ownership": "fixed",
+          "label": "bos",
+          "main_start": 0,
+          "main_end": 1,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 6,
+          "token_ids": [
+            6
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 1,
+          "main_end": 2,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "system\n",
+          "special_id": null,
+          "token_ids": [
+            24131,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 2,
+          "main_end": 4,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"observation\":{},\"policy\":\"Emit the exact supported value.\",\"type\":\"system\"}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            34306,
+            852,
+            6881,
+            24373,
+            2512,
+            10681,
+            3687,
+            42066,
+            6200,
+            785,
+            779,
+            5676,
+            7951,
+            2536,
+            523,
+            25475,
+            6383,
+            42066,
+            24131,
+            511,
+            602
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 4,
+          "main_end": 26,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 7,
+          "token_ids": [
+            7
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 26,
+          "main_end": 27,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\n",
+          "special_id": null,
+          "token_ids": [
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 27,
+          "main_end": 28,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 6,
+          "token_ids": [
+            6
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 28,
+          "main_end": 29,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "user\n",
+          "special_id": null,
+          "token_ids": [
+            6423,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 29,
+          "main_end": 31,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"content\":\"Use the given finite value.\",\"type\":\"user\"}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            8416,
+            42066,
+            14875,
+            779,
+            2997,
+            16065,
+            2536,
+            523,
+            25475,
+            6383,
+            42066,
+            6423,
+            511,
+            602
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 31,
+          "main_end": 46,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 7,
+          "token_ids": [
+            7
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 46,
+          "main_end": 47,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\n",
+          "special_id": null,
+          "token_ids": [
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 47,
+          "main_end": 48,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 6,
+          "token_ids": [
+            6
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 48,
+          "main_end": 49,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "assistant\n",
+          "special_id": null,
+          "token_ids": [
+            64015,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 49,
+          "main_end": 51,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "minifield.arguments/1\n",
+          "special_id": null,
+          "token_ids": [
+            1915,
+            888,
+            1769,
+            523,
+            57236,
+            524,
+            526,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 51,
+          "main_end": 59,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"name\":\"select_value\",\"parameters\":{\"additionalProperties\":false,\"properties\":{\"value\":{\"additionalProperties\":false,\"const\":{\"x\":\"a\"},\"properties\":{\"x\":{\"oneOf\":[{\"type\":\"string\"},{\"type\":\"integer\"}]}},\"required\":[\"x\"],\"type\":\"object\"}},\"required\":[\"value\"],\"type\":\"object\"},\"property_order\":[{\"properties\":[\"value\"],\"schema_path\":\"\"},{\"properties\":[\"x\"],\"schema_path\":\"/properties/value\"}]}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            3055,
+            42066,
+            14714,
+            19495,
+            25475,
+            30202,
+            6881,
+            38685,
+            3263,
+            2847,
+            20051,
+            6881,
+            13890,
+            2512,
+            39306,
+            6881,
+            38685,
+            4766,
+            6881,
+            38685,
+            3263,
+            2847,
+            20051,
+            6881,
+            13890,
+            2512,
+            4429,
+            6881,
+            38685,
+            597,
+            42066,
+            574,
+            511,
+            602,
+            2512,
+            39306,
+            6881,
+            38685,
+            597,
+            6881,
+            38685,
+            1174,
+            6978,
+            6881,
+            568,
+            38685,
+            6383,
+            42066,
+            4488,
+            511,
+            3205,
+            38685,
+            6383,
+            42066,
+            59003,
+            511,
+            20352,
+            2608,
+            2512,
+            35004,
+            6881,
+            13884,
+            597,
+            13829,
+            2512,
+            6383,
+            42066,
+            7523,
+            511,
+            2608,
+            2512,
+            35004,
+            6881,
+            13884,
+            4766,
+            13829,
+            2512,
+            6383,
+            42066,
+            7523,
+            511,
+            602,
+            2512,
+            13797,
+            572,
+            3667,
+            6881,
+            568,
+            38685,
+            39306,
+            6881,
+            13884,
+            4766,
+            13829,
+            2512,
+            50434,
+            17314,
+            6881,
+            19893,
+            3205,
+            38685,
+            39306,
+            6881,
+            13884,
+            597,
+            13829,
+            2512,
+            50434,
+            17314,
+            6881,
+            9082,
+            39306,
+            524,
+            4766,
+            511,
+            20352,
+            602
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 59,
+          "main_end": 177,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\n",
+          "special_id": null,
+          "token_ids": [
+            708
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 177,
+          "main_end": 178,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"name\":",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            3055,
+            6881
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 178,
+          "main_end": 181,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\"select_value\"",
+          "special_id": null,
+          "token_ids": [
+            511,
+            14714,
+            19495,
+            511
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 181,
+          "main_end": 185,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": ",\"arguments\":",
+          "special_id": null,
+          "token_ids": [
+            2512,
+            57236,
+            6881
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 185,
+          "main_end": 188,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{",
+          "special_id": null,
+          "token_ids": [
+            600
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 188,
+          "main_end": 189,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\"value\"",
+          "special_id": null,
+          "token_ids": [
+            511,
+            4766,
+            511
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 189,
+          "main_end": 192,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": ":",
+          "special_id": null,
+          "token_ids": [
+            535
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 192,
+          "main_end": 193,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"x\":\"a\"}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            597,
+            42066,
+            574,
+            511,
+            602
+          ],
+          "ownership": "fixed",
+          "label": "value:/value",
+          "main_start": 193,
+          "main_end": 199,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 7,
+          "token_ids": [
+            7
+          ],
+          "ownership": "fixed",
+          "label": "value-end:/value",
+          "main_start": 199,
+          "main_end": 200,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "}",
+          "special_id": null,
+          "token_ids": [
+            602
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 200,
+          "main_end": 201,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "}",
+          "special_id": null,
+          "token_ids": [
+            602
+          ],
+          "ownership": "fixed",
+          "label": "envelope-close",
+          "main_start": 201,
+          "main_end": 202,
+          "prediction_positions": []
+        }
+      ],
+      "context_token_ids": [
+        1,
+        6,
+        24131,
+        708,
+        38685,
+        34306,
+        852,
+        6881,
+        24373,
+        2512,
+        10681,
+        3687,
+        42066,
+        6200,
+        785,
+        779,
+        5676,
+        7951,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        24131,
+        511,
+        602,
+        7,
+        708,
+        6,
+        6423,
+        708,
+        38685,
+        8416,
+        42066,
+        14875,
+        779,
+        2997,
+        16065,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        6423,
+        511,
+        602,
+        7,
+        708
+      ],
+      "main_token_ids": [
+        1,
+        6,
+        24131,
+        708,
+        38685,
+        34306,
+        852,
+        6881,
+        24373,
+        2512,
+        10681,
+        3687,
+        42066,
+        6200,
+        785,
+        779,
+        5676,
+        7951,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        24131,
+        511,
+        602,
+        7,
+        708,
+        6,
+        6423,
+        708,
+        38685,
+        8416,
+        42066,
+        14875,
+        779,
+        2997,
+        16065,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        6423,
+        511,
+        602,
+        7,
+        708,
+        6,
+        64015,
+        708,
+        1915,
+        888,
+        1769,
+        523,
+        57236,
+        524,
+        526,
+        708,
+        38685,
+        3055,
+        42066,
+        14714,
+        19495,
+        25475,
+        30202,
+        6881,
+        38685,
+        3263,
+        2847,
+        20051,
+        6881,
+        13890,
+        2512,
+        39306,
+        6881,
+        38685,
+        4766,
+        6881,
+        38685,
+        3263,
+        2847,
+        20051,
+        6881,
+        13890,
+        2512,
+        4429,
+        6881,
+        38685,
+        597,
+        42066,
+        574,
+        511,
+        602,
+        2512,
+        39306,
+        6881,
+        38685,
+        597,
+        6881,
+        38685,
+        1174,
+        6978,
+        6881,
+        568,
+        38685,
+        6383,
+        42066,
+        4488,
+        511,
+        3205,
+        38685,
+        6383,
+        42066,
+        59003,
+        511,
+        20352,
+        2608,
+        2512,
+        35004,
+        6881,
+        13884,
+        597,
+        13829,
+        2512,
+        6383,
+        42066,
+        7523,
+        511,
+        2608,
+        2512,
+        35004,
+        6881,
+        13884,
+        4766,
+        13829,
+        2512,
+        6383,
+        42066,
+        7523,
+        511,
+        602,
+        2512,
+        13797,
+        572,
+        3667,
+        6881,
+        568,
+        38685,
+        39306,
+        6881,
+        13884,
+        4766,
+        13829,
+        2512,
+        50434,
+        17314,
+        6881,
+        19893,
+        3205,
+        38685,
+        39306,
+        6881,
+        13884,
+        597,
+        13829,
+        2512,
+        50434,
+        17314,
+        6881,
+        9082,
+        39306,
+        524,
+        4766,
+        511,
+        20352,
+        602,
+        708,
+        38685,
+        3055,
+        6881,
+        511,
+        14714,
+        19495,
+        511,
+        2512,
+        57236,
+        6881,
+        600,
+        511,
+        4766,
+        511,
+        535,
+        38685,
+        597,
+        42066,
+        574,
+        511,
+        602,
+        7,
+        602,
+        602
+      ],
+      "main_sha256_u32le": "aeaf5f8156afac7e8a3acff5c4e4fa227d2e1e49ff3b0aec8160261d5ebcd9c6",
+      "argument_token_range": [
+        188,
+        201
+      ],
+      "argument_json_for_assembly_check_only": "{\"value\":{\"x\":\"a\"}}",
+      "learned_main_targets": [],
+      "learned_probe_targets": [],
+      "learned_argument_token_count": 0,
+      "routing": {
+        "suffix_segments": [
+          {
+            "text": null,
+            "special_id": 6,
+            "token_ids": [
+              6
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "assistant\n",
+            "special_id": null,
+            "token_ids": [
+              64015,
+              708
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "minifield.route/1\n",
+            "special_id": null,
+            "token_ids": [
+              1915,
+              888,
+              1769,
+              523,
+              33113,
+              524,
+              526,
+              708
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "{\"available\":true,\"description\":\"Select the requested finite value.\",\"name\":\"select_value\"}",
+            "special_id": null,
+            "token_ids": [
+              38685,
+              28423,
+              6881,
+              10567,
+              2512,
+              19522,
+              42066,
+              15534,
+              779,
+              21968,
+              16065,
+              2536,
+              523,
+              25475,
+              3055,
+              42066,
+              14714,
+              19495,
+              511,
+              602
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "\nShould this be the next action? Answer true or false.\n",
+            "special_id": null,
+            "token_ids": [
+              708,
+              31928,
+              1033,
+              874,
+              779,
+              3280,
+              4272,
+              540,
+              42275,
+              3347,
+              933,
+              4831,
+              819
+            ],
+            "ownership": "fixed",
+            "label": ""
+          }
+        ],
+        "prefix_token_ids": [
+          1,
+          6,
+          24131,
+          708,
+          38685,
+          34306,
+          852,
+          6881,
+          24373,
+          2512,
+          10681,
+          3687,
+          42066,
+          6200,
+          785,
+          779,
+          5676,
+          7951,
+          2536,
+          523,
+          25475,
+          6383,
+          42066,
+          24131,
+          511,
+          602,
+          7,
+          708,
+          6,
+          6423,
+          708,
+          38685,
+          8416,
+          42066,
+          14875,
+          779,
+          2997,
+          16065,
+          2536,
+          523,
+          25475,
+          6383,
+          42066,
+          6423,
+          511,
+          602,
+          7,
+          708,
+          6,
+          64015,
+          708,
+          1915,
+          888,
+          1769,
+          523,
+          33113,
+          524,
+          526,
+          708,
+          38685,
+          28423,
+          6881,
+          10567,
+          2512,
+          19522,
+          42066,
+          15534,
+          779,
+          21968,
+          16065,
+          2536,
+          523,
+          25475,
+          3055,
+          42066,
+          14714,
+          19495,
+          511,
+          602,
+          708,
+          31928,
+          1033,
+          874,
+          779,
+          3280,
+          4272,
+          540,
+          42275,
+          3347,
+          933,
+          4831,
+          819
+        ],
+        "candidates": [
+          {
+            "label": "true",
+            "token_ids": [
+              10567,
+              7
+            ],
+            "prediction_positions": [
+              91,
+              92
+            ]
+          },
+          {
+            "label": "false",
+            "token_ids": [
+              13890,
+              7
+            ],
+            "prediction_positions": [
+              91,
+              92
+            ]
+          }
+        ]
+      },
+      "teacher_arguments": {
+        "value": {
+          "x": "a"
+        }
+      }
+    }
+  },
+  {
+    "name": "enum_object_child_union",
+    "oracle": {
+      "name": "select_value",
+      "mode": "teacher",
+      "public_events": [
+        {
+          "type": "system",
+          "policy": "Emit the exact supported value.",
+          "observation": {}
+        },
+        {
+          "type": "user",
+          "content": "Use the given finite value."
+        }
+      ],
+      "selected_route": "select_value",
+      "original_schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "x"
+            ],
+            "additionalProperties": false,
+            "enum": [
+              {
+                "x": "a"
+              },
+              {
+                "x": 2
+              }
+            ]
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "resolved_schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "x"
+            ],
+            "additionalProperties": false,
+            "enum": [
+              {
+                "x": "a"
+              },
+              {
+                "x": 2
+              }
+            ]
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "property_order": [
+        {
+          "schema_path": "",
+          "properties": [
+            "value"
+          ]
+        },
+        {
+          "schema_path": "/properties/value",
+          "properties": [
+            "x"
+          ]
+        }
+      ],
+      "expected_arguments": {
+        "value": {
+          "x": "a"
+        }
+      },
+      "expected_action": {
+        "name": "select_value",
+        "arguments": {
+          "value": {
+            "x": "a"
+          }
+        }
+      },
+      "expected_operations": [
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 1,
+          "token_ids": [
+            1
+          ],
+          "ownership": "fixed",
+          "label": "bos",
+          "main_start": 0,
+          "main_end": 1,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 6,
+          "token_ids": [
+            6
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 1,
+          "main_end": 2,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "system\n",
+          "special_id": null,
+          "token_ids": [
+            24131,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 2,
+          "main_end": 4,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"observation\":{},\"policy\":\"Emit the exact supported value.\",\"type\":\"system\"}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            34306,
+            852,
+            6881,
+            24373,
+            2512,
+            10681,
+            3687,
+            42066,
+            6200,
+            785,
+            779,
+            5676,
+            7951,
+            2536,
+            523,
+            25475,
+            6383,
+            42066,
+            24131,
+            511,
+            602
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 4,
+          "main_end": 26,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 7,
+          "token_ids": [
+            7
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 26,
+          "main_end": 27,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\n",
+          "special_id": null,
+          "token_ids": [
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 27,
+          "main_end": 28,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 6,
+          "token_ids": [
+            6
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 28,
+          "main_end": 29,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "user\n",
+          "special_id": null,
+          "token_ids": [
+            6423,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 29,
+          "main_end": 31,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"content\":\"Use the given finite value.\",\"type\":\"user\"}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            8416,
+            42066,
+            14875,
+            779,
+            2997,
+            16065,
+            2536,
+            523,
+            25475,
+            6383,
+            42066,
+            6423,
+            511,
+            602
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 31,
+          "main_end": 46,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 7,
+          "token_ids": [
+            7
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 46,
+          "main_end": 47,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\n",
+          "special_id": null,
+          "token_ids": [
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 47,
+          "main_end": 48,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 6,
+          "token_ids": [
+            6
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 48,
+          "main_end": 49,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "assistant\n",
+          "special_id": null,
+          "token_ids": [
+            64015,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 49,
+          "main_end": 51,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "minifield.arguments/1\n",
+          "special_id": null,
+          "token_ids": [
+            1915,
+            888,
+            1769,
+            523,
+            57236,
+            524,
+            526,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 51,
+          "main_end": 59,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"name\":\"select_value\",\"parameters\":{\"additionalProperties\":false,\"properties\":{\"value\":{\"additionalProperties\":false,\"enum\":[{\"x\":\"a\"},{\"x\":2}],\"properties\":{\"x\":{\"oneOf\":[{\"type\":\"string\"},{\"type\":\"integer\"}]}},\"required\":[\"x\"],\"type\":\"object\"}},\"required\":[\"value\"],\"type\":\"object\"},\"property_order\":[{\"properties\":[\"value\"],\"schema_path\":\"\"},{\"properties\":[\"x\"],\"schema_path\":\"/properties/value\"}]}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            3055,
+            42066,
+            14714,
+            19495,
+            25475,
+            30202,
+            6881,
+            38685,
+            3263,
+            2847,
+            20051,
+            6881,
+            13890,
+            2512,
+            39306,
+            6881,
+            38685,
+            4766,
+            6881,
+            38685,
+            3263,
+            2847,
+            20051,
+            6881,
+            13890,
+            2512,
+            30568,
+            6881,
+            568,
+            38685,
+            597,
+            42066,
+            574,
+            511,
+            3205,
+            38685,
+            597,
+            6881,
+            527,
+            20352,
+            2512,
+            39306,
+            6881,
+            38685,
+            597,
+            6881,
+            38685,
+            1174,
+            6978,
+            6881,
+            568,
+            38685,
+            6383,
+            42066,
+            4488,
+            511,
+            3205,
+            38685,
+            6383,
+            42066,
+            59003,
+            511,
+            20352,
+            2608,
+            2512,
+            35004,
+            6881,
+            13884,
+            597,
+            13829,
+            2512,
+            6383,
+            42066,
+            7523,
+            511,
+            2608,
+            2512,
+            35004,
+            6881,
+            13884,
+            4766,
+            13829,
+            2512,
+            6383,
+            42066,
+            7523,
+            511,
+            602,
+            2512,
+            13797,
+            572,
+            3667,
+            6881,
+            568,
+            38685,
+            39306,
+            6881,
+            13884,
+            4766,
+            13829,
+            2512,
+            50434,
+            17314,
+            6881,
+            19893,
+            3205,
+            38685,
+            39306,
+            6881,
+            13884,
+            597,
+            13829,
+            2512,
+            50434,
+            17314,
+            6881,
+            9082,
+            39306,
+            524,
+            4766,
+            511,
+            20352,
+            602
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 59,
+          "main_end": 183,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\n",
+          "special_id": null,
+          "token_ids": [
+            708
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 183,
+          "main_end": 184,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"name\":",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            3055,
+            6881
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 184,
+          "main_end": 187,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\"select_value\"",
+          "special_id": null,
+          "token_ids": [
+            511,
+            14714,
+            19495,
+            511
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 187,
+          "main_end": 191,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": ",\"arguments\":",
+          "special_id": null,
+          "token_ids": [
+            2512,
+            57236,
+            6881
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 191,
+          "main_end": 194,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{",
+          "special_id": null,
+          "token_ids": [
+            600
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 194,
+          "main_end": 195,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\"value\"",
+          "special_id": null,
+          "token_ids": [
+            511,
+            4766,
+            511
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 195,
+          "main_end": 198,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": ":",
+          "special_id": null,
+          "token_ids": [
+            535
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 198,
+          "main_end": 199,
+          "prediction_positions": []
+        },
+        {
+          "kind": "finite_choice",
+          "path": "/value",
+          "fork_main_length": 199,
+          "fork_main_sha256_u32le": "bccbe6ed91b7777f09aa8e1688f39db61cb73bbb2098972c5527b0626d4434a0",
+          "candidates": [
+            {
+              "segments": [
+                {
+                  "text": "{\"x\":\"a\"}",
+                  "special_id": null,
+                  "token_ids": [
+                    38685,
+                    597,
+                    42066,
+                    574,
+                    511,
+                    602
+                  ],
+                  "ownership": "learned",
+                  "label": ""
+                },
+                {
+                  "text": null,
+                  "special_id": 7,
+                  "token_ids": [
+                    7
+                  ],
+                  "ownership": "learned",
+                  "label": ""
+                }
+              ],
+              "token_ids": [
+                38685,
+                597,
+                42066,
+                574,
+                511,
+                602,
+                7
+              ],
+              "value": {
+                "x": "a"
+              },
+              "prediction_positions": [
+                198,
+                199,
+                200,
+                201,
+                202,
+                203,
+                204
+              ]
+            },
+            {
+              "segments": [
+                {
+                  "text": "{\"x\":2}",
+                  "special_id": null,
+                  "token_ids": [
+                    38685,
+                    597,
+                    6881,
+                    527,
+                    602
+                  ],
+                  "ownership": "learned",
+                  "label": ""
+                },
+                {
+                  "text": null,
+                  "special_id": 7,
+                  "token_ids": [
+                    7
+                  ],
+                  "ownership": "learned",
+                  "label": ""
+                }
+              ],
+              "token_ids": [
+                38685,
+                597,
+                6881,
+                527,
+                602,
+                7
+              ],
+              "value": {
+                "x": 2
+              },
+              "prediction_positions": [
+                198,
+                199,
+                200,
+                201,
+                202,
+                203
+              ]
+            }
+          ],
+          "selected_index": 0
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"x\":\"a\"}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            597,
+            42066,
+            574,
+            511,
+            602
+          ],
+          "ownership": "learned",
+          "label": "finite:/value",
+          "main_start": 199,
+          "main_end": 205,
+          "prediction_positions": [
+            198,
+            199,
+            200,
+            201,
+            202,
+            203
+          ]
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 7,
+          "token_ids": [
+            7
+          ],
+          "ownership": "learned",
+          "label": "finite-end:/value",
+          "main_start": 205,
+          "main_end": 206,
+          "prediction_positions": [
+            204
+          ]
+        },
+        {
+          "kind": "main_append",
+          "text": "}",
+          "special_id": null,
+          "token_ids": [
+            602
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 206,
+          "main_end": 207,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "}",
+          "special_id": null,
+          "token_ids": [
+            602
+          ],
+          "ownership": "fixed",
+          "label": "envelope-close",
+          "main_start": 207,
+          "main_end": 208,
+          "prediction_positions": []
+        }
+      ],
+      "context_token_ids": [
+        1,
+        6,
+        24131,
+        708,
+        38685,
+        34306,
+        852,
+        6881,
+        24373,
+        2512,
+        10681,
+        3687,
+        42066,
+        6200,
+        785,
+        779,
+        5676,
+        7951,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        24131,
+        511,
+        602,
+        7,
+        708,
+        6,
+        6423,
+        708,
+        38685,
+        8416,
+        42066,
+        14875,
+        779,
+        2997,
+        16065,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        6423,
+        511,
+        602,
+        7,
+        708
+      ],
+      "main_token_ids": [
+        1,
+        6,
+        24131,
+        708,
+        38685,
+        34306,
+        852,
+        6881,
+        24373,
+        2512,
+        10681,
+        3687,
+        42066,
+        6200,
+        785,
+        779,
+        5676,
+        7951,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        24131,
+        511,
+        602,
+        7,
+        708,
+        6,
+        6423,
+        708,
+        38685,
+        8416,
+        42066,
+        14875,
+        779,
+        2997,
+        16065,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        6423,
+        511,
+        602,
+        7,
+        708,
+        6,
+        64015,
+        708,
+        1915,
+        888,
+        1769,
+        523,
+        57236,
+        524,
+        526,
+        708,
+        38685,
+        3055,
+        42066,
+        14714,
+        19495,
+        25475,
+        30202,
+        6881,
+        38685,
+        3263,
+        2847,
+        20051,
+        6881,
+        13890,
+        2512,
+        39306,
+        6881,
+        38685,
+        4766,
+        6881,
+        38685,
+        3263,
+        2847,
+        20051,
+        6881,
+        13890,
+        2512,
+        30568,
+        6881,
+        568,
+        38685,
+        597,
+        42066,
+        574,
+        511,
+        3205,
+        38685,
+        597,
+        6881,
+        527,
+        20352,
+        2512,
+        39306,
+        6881,
+        38685,
+        597,
+        6881,
+        38685,
+        1174,
+        6978,
+        6881,
+        568,
+        38685,
+        6383,
+        42066,
+        4488,
+        511,
+        3205,
+        38685,
+        6383,
+        42066,
+        59003,
+        511,
+        20352,
+        2608,
+        2512,
+        35004,
+        6881,
+        13884,
+        597,
+        13829,
+        2512,
+        6383,
+        42066,
+        7523,
+        511,
+        2608,
+        2512,
+        35004,
+        6881,
+        13884,
+        4766,
+        13829,
+        2512,
+        6383,
+        42066,
+        7523,
+        511,
+        602,
+        2512,
+        13797,
+        572,
+        3667,
+        6881,
+        568,
+        38685,
+        39306,
+        6881,
+        13884,
+        4766,
+        13829,
+        2512,
+        50434,
+        17314,
+        6881,
+        19893,
+        3205,
+        38685,
+        39306,
+        6881,
+        13884,
+        597,
+        13829,
+        2512,
+        50434,
+        17314,
+        6881,
+        9082,
+        39306,
+        524,
+        4766,
+        511,
+        20352,
+        602,
+        708,
+        38685,
+        3055,
+        6881,
+        511,
+        14714,
+        19495,
+        511,
+        2512,
+        57236,
+        6881,
+        600,
+        511,
+        4766,
+        511,
+        535,
+        38685,
+        597,
+        42066,
+        574,
+        511,
+        602,
+        7,
+        602,
+        602
+      ],
+      "main_sha256_u32le": "ed77477160e48176205b274919c37f6f2513c2af18e7440e75e41d6e41cb5061",
+      "argument_token_range": [
+        194,
+        207
+      ],
+      "argument_json_for_assembly_check_only": "{\"value\":{\"x\":\"a\"}}",
+      "learned_main_targets": [
+        {
+          "position": 198,
+          "token_id": 38685
+        },
+        {
+          "position": 199,
+          "token_id": 597
+        },
+        {
+          "position": 200,
+          "token_id": 42066
+        },
+        {
+          "position": 201,
+          "token_id": 574
+        },
+        {
+          "position": 202,
+          "token_id": 511
+        },
+        {
+          "position": 203,
+          "token_id": 602
+        },
+        {
+          "position": 204,
+          "token_id": 7
+        }
+      ],
+      "learned_probe_targets": [],
+      "learned_argument_token_count": 7,
+      "routing": {
+        "suffix_segments": [
+          {
+            "text": null,
+            "special_id": 6,
+            "token_ids": [
+              6
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "assistant\n",
+            "special_id": null,
+            "token_ids": [
+              64015,
+              708
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "minifield.route/1\n",
+            "special_id": null,
+            "token_ids": [
+              1915,
+              888,
+              1769,
+              523,
+              33113,
+              524,
+              526,
+              708
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "{\"available\":true,\"description\":\"Select the requested finite value.\",\"name\":\"select_value\"}",
+            "special_id": null,
+            "token_ids": [
+              38685,
+              28423,
+              6881,
+              10567,
+              2512,
+              19522,
+              42066,
+              15534,
+              779,
+              21968,
+              16065,
+              2536,
+              523,
+              25475,
+              3055,
+              42066,
+              14714,
+              19495,
+              511,
+              602
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "\nShould this be the next action? Answer true or false.\n",
+            "special_id": null,
+            "token_ids": [
+              708,
+              31928,
+              1033,
+              874,
+              779,
+              3280,
+              4272,
+              540,
+              42275,
+              3347,
+              933,
+              4831,
+              819
+            ],
+            "ownership": "fixed",
+            "label": ""
+          }
+        ],
+        "prefix_token_ids": [
+          1,
+          6,
+          24131,
+          708,
+          38685,
+          34306,
+          852,
+          6881,
+          24373,
+          2512,
+          10681,
+          3687,
+          42066,
+          6200,
+          785,
+          779,
+          5676,
+          7951,
+          2536,
+          523,
+          25475,
+          6383,
+          42066,
+          24131,
+          511,
+          602,
+          7,
+          708,
+          6,
+          6423,
+          708,
+          38685,
+          8416,
+          42066,
+          14875,
+          779,
+          2997,
+          16065,
+          2536,
+          523,
+          25475,
+          6383,
+          42066,
+          6423,
+          511,
+          602,
+          7,
+          708,
+          6,
+          64015,
+          708,
+          1915,
+          888,
+          1769,
+          523,
+          33113,
+          524,
+          526,
+          708,
+          38685,
+          28423,
+          6881,
+          10567,
+          2512,
+          19522,
+          42066,
+          15534,
+          779,
+          21968,
+          16065,
+          2536,
+          523,
+          25475,
+          3055,
+          42066,
+          14714,
+          19495,
+          511,
+          602,
+          708,
+          31928,
+          1033,
+          874,
+          779,
+          3280,
+          4272,
+          540,
+          42275,
+          3347,
+          933,
+          4831,
+          819
+        ],
+        "candidates": [
+          {
+            "label": "true",
+            "token_ids": [
+              10567,
+              7
+            ],
+            "prediction_positions": [
+              91,
+              92
+            ]
+          },
+          {
+            "label": "false",
+            "token_ids": [
+              13890,
+              7
+            ],
+            "prediction_positions": [
+              91,
+              92
+            ]
+          }
+        ]
+      },
+      "teacher_arguments": {
+        "value": {
+          "x": "a"
+        }
+      }
+    }
+  },
+  {
+    "name": "typed_outer_array_constant_items",
+    "oracle": {
+      "name": "select_value",
+      "mode": "teacher",
+      "public_events": [
+        {
+          "type": "system",
+          "policy": "Emit the exact supported value.",
+          "observation": {}
+        },
+        {
+          "type": "user",
+          "content": "Use the given finite value."
+        }
+      ],
+      "selected_route": "select_value",
+      "original_schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              },
+              "const": [
+                "x",
+                2
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "resolved_schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              },
+              "const": [
+                "x",
+                2
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "property_order": [
+        {
+          "schema_path": "",
+          "properties": [
+            "value"
+          ]
+        }
+      ],
+      "expected_arguments": {
+        "value": [
+          [
+            "x",
+            2
+          ]
+        ]
+      },
+      "expected_action": {
+        "name": "select_value",
+        "arguments": {
+          "value": [
+            [
+              "x",
+              2
+            ]
+          ]
+        }
+      },
+      "expected_operations": [
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 1,
+          "token_ids": [
+            1
+          ],
+          "ownership": "fixed",
+          "label": "bos",
+          "main_start": 0,
+          "main_end": 1,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 6,
+          "token_ids": [
+            6
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 1,
+          "main_end": 2,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "system\n",
+          "special_id": null,
+          "token_ids": [
+            24131,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 2,
+          "main_end": 4,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"observation\":{},\"policy\":\"Emit the exact supported value.\",\"type\":\"system\"}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            34306,
+            852,
+            6881,
+            24373,
+            2512,
+            10681,
+            3687,
+            42066,
+            6200,
+            785,
+            779,
+            5676,
+            7951,
+            2536,
+            523,
+            25475,
+            6383,
+            42066,
+            24131,
+            511,
+            602
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 4,
+          "main_end": 26,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 7,
+          "token_ids": [
+            7
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 26,
+          "main_end": 27,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\n",
+          "special_id": null,
+          "token_ids": [
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 27,
+          "main_end": 28,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 6,
+          "token_ids": [
+            6
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 28,
+          "main_end": 29,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "user\n",
+          "special_id": null,
+          "token_ids": [
+            6423,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 29,
+          "main_end": 31,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"content\":\"Use the given finite value.\",\"type\":\"user\"}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            8416,
+            42066,
+            14875,
+            779,
+            2997,
+            16065,
+            2536,
+            523,
+            25475,
+            6383,
+            42066,
+            6423,
+            511,
+            602
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 31,
+          "main_end": 46,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 7,
+          "token_ids": [
+            7
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 46,
+          "main_end": 47,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\n",
+          "special_id": null,
+          "token_ids": [
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 47,
+          "main_end": 48,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 6,
+          "token_ids": [
+            6
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 48,
+          "main_end": 49,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "assistant\n",
+          "special_id": null,
+          "token_ids": [
+            64015,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 49,
+          "main_end": 51,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "minifield.arguments/1\n",
+          "special_id": null,
+          "token_ids": [
+            1915,
+            888,
+            1769,
+            523,
+            57236,
+            524,
+            526,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 51,
+          "main_end": 59,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"name\":\"select_value\",\"parameters\":{\"additionalProperties\":false,\"properties\":{\"value\":{\"items\":{\"const\":[\"x\",2],\"items\":{\"oneOf\":[{\"type\":\"string\"},{\"type\":\"integer\"}]},\"type\":\"array\"},\"maxItems\":1,\"minItems\":1,\"type\":\"array\"}},\"required\":[\"value\"],\"type\":\"object\"},\"property_order\":[{\"properties\":[\"value\"],\"schema_path\":\"\"}]}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            3055,
+            42066,
+            14714,
+            19495,
+            25475,
+            30202,
+            6881,
+            38685,
+            3263,
+            2847,
+            20051,
+            6881,
+            13890,
+            2512,
+            39306,
+            6881,
+            38685,
+            4766,
+            6881,
+            38685,
+            26207,
+            6881,
+            38685,
+            4429,
+            6881,
+            13884,
+            597,
+            1878,
+            527,
+            570,
+            2512,
+            26207,
+            6881,
+            38685,
+            1174,
+            6978,
+            6881,
+            568,
+            38685,
+            6383,
+            42066,
+            4488,
+            511,
+            3205,
+            38685,
+            6383,
+            42066,
+            59003,
+            511,
+            20352,
+            602,
+            2512,
+            6383,
+            42066,
+            5588,
+            511,
+            602,
+            2512,
+            8708,
+            27134,
+            6881,
+            526,
+            2512,
+            1915,
+            27134,
+            6881,
+            526,
+            2512,
+            6383,
+            42066,
+            5588,
+            511,
+            2608,
+            2512,
+            35004,
+            6881,
+            13884,
+            4766,
+            13829,
+            2512,
+            6383,
+            42066,
+            7523,
+            511,
+            602,
+            2512,
+            13797,
+            572,
+            3667,
+            6881,
+            568,
+            38685,
+            39306,
+            6881,
+            13884,
+            4766,
+            13829,
+            2512,
+            50434,
+            17314,
+            6881,
+            19893,
+            20352,
+            602
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 59,
+          "main_end": 164,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\n",
+          "special_id": null,
+          "token_ids": [
+            708
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 164,
+          "main_end": 165,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"name\":",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            3055,
+            6881
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 165,
+          "main_end": 168,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\"select_value\"",
+          "special_id": null,
+          "token_ids": [
+            511,
+            14714,
+            19495,
+            511
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 168,
+          "main_end": 172,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": ",\"arguments\":",
+          "special_id": null,
+          "token_ids": [
+            2512,
+            57236,
+            6881
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 172,
+          "main_end": 175,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{",
+          "special_id": null,
+          "token_ids": [
+            600
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 175,
+          "main_end": 176,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\"value\"",
+          "special_id": null,
+          "token_ids": [
+            511,
+            4766,
+            511
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 176,
+          "main_end": 179,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": ":",
+          "special_id": null,
+          "token_ids": [
+            535
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 179,
+          "main_end": 180,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "[",
+          "special_id": null,
+          "token_ids": [
+            568
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 180,
+          "main_end": 181,
+          "prediction_positions": []
+        },
+        {
+          "kind": "forced",
+          "operation": "array",
+          "path": "/value/0",
+          "label": "continue",
+          "reason": "minItems",
+          "main_length": 181,
+          "direct_loss_tokens": 0,
+          "probe_token_ids": []
+        },
+        {
+          "kind": "main_append",
+          "text": "[\"x\",2]",
+          "special_id": null,
+          "token_ids": [
+            13884,
+            597,
+            1878,
+            527,
+            570
+          ],
+          "ownership": "fixed",
+          "label": "value:/value/0",
+          "main_start": 181,
+          "main_end": 186,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 7,
+          "token_ids": [
+            7
+          ],
+          "ownership": "fixed",
+          "label": "value-end:/value/0",
+          "main_start": 186,
+          "main_end": 187,
+          "prediction_positions": []
+        },
+        {
+          "kind": "forced",
+          "operation": "array",
+          "path": "/value/1",
+          "label": "stop",
+          "reason": "maxItems",
+          "main_length": 187,
+          "direct_loss_tokens": 0,
+          "probe_token_ids": []
+        },
+        {
+          "kind": "main_append",
+          "text": "]",
+          "special_id": null,
+          "token_ids": [
+            570
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 187,
+          "main_end": 188,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "}",
+          "special_id": null,
+          "token_ids": [
+            602
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 188,
+          "main_end": 189,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "}",
+          "special_id": null,
+          "token_ids": [
+            602
+          ],
+          "ownership": "fixed",
+          "label": "envelope-close",
+          "main_start": 189,
+          "main_end": 190,
+          "prediction_positions": []
+        }
+      ],
+      "context_token_ids": [
+        1,
+        6,
+        24131,
+        708,
+        38685,
+        34306,
+        852,
+        6881,
+        24373,
+        2512,
+        10681,
+        3687,
+        42066,
+        6200,
+        785,
+        779,
+        5676,
+        7951,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        24131,
+        511,
+        602,
+        7,
+        708,
+        6,
+        6423,
+        708,
+        38685,
+        8416,
+        42066,
+        14875,
+        779,
+        2997,
+        16065,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        6423,
+        511,
+        602,
+        7,
+        708
+      ],
+      "main_token_ids": [
+        1,
+        6,
+        24131,
+        708,
+        38685,
+        34306,
+        852,
+        6881,
+        24373,
+        2512,
+        10681,
+        3687,
+        42066,
+        6200,
+        785,
+        779,
+        5676,
+        7951,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        24131,
+        511,
+        602,
+        7,
+        708,
+        6,
+        6423,
+        708,
+        38685,
+        8416,
+        42066,
+        14875,
+        779,
+        2997,
+        16065,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        6423,
+        511,
+        602,
+        7,
+        708,
+        6,
+        64015,
+        708,
+        1915,
+        888,
+        1769,
+        523,
+        57236,
+        524,
+        526,
+        708,
+        38685,
+        3055,
+        42066,
+        14714,
+        19495,
+        25475,
+        30202,
+        6881,
+        38685,
+        3263,
+        2847,
+        20051,
+        6881,
+        13890,
+        2512,
+        39306,
+        6881,
+        38685,
+        4766,
+        6881,
+        38685,
+        26207,
+        6881,
+        38685,
+        4429,
+        6881,
+        13884,
+        597,
+        1878,
+        527,
+        570,
+        2512,
+        26207,
+        6881,
+        38685,
+        1174,
+        6978,
+        6881,
+        568,
+        38685,
+        6383,
+        42066,
+        4488,
+        511,
+        3205,
+        38685,
+        6383,
+        42066,
+        59003,
+        511,
+        20352,
+        602,
+        2512,
+        6383,
+        42066,
+        5588,
+        511,
+        602,
+        2512,
+        8708,
+        27134,
+        6881,
+        526,
+        2512,
+        1915,
+        27134,
+        6881,
+        526,
+        2512,
+        6383,
+        42066,
+        5588,
+        511,
+        2608,
+        2512,
+        35004,
+        6881,
+        13884,
+        4766,
+        13829,
+        2512,
+        6383,
+        42066,
+        7523,
+        511,
+        602,
+        2512,
+        13797,
+        572,
+        3667,
+        6881,
+        568,
+        38685,
+        39306,
+        6881,
+        13884,
+        4766,
+        13829,
+        2512,
+        50434,
+        17314,
+        6881,
+        19893,
+        20352,
+        602,
+        708,
+        38685,
+        3055,
+        6881,
+        511,
+        14714,
+        19495,
+        511,
+        2512,
+        57236,
+        6881,
+        600,
+        511,
+        4766,
+        511,
+        535,
+        568,
+        13884,
+        597,
+        1878,
+        527,
+        570,
+        7,
+        570,
+        602,
+        602
+      ],
+      "main_sha256_u32le": "a846d7a79927b98fc63ae8f5e649b54c3b676be460cf95a1fb934d7fc7faa609",
+      "argument_token_range": [
+        175,
+        189
+      ],
+      "argument_json_for_assembly_check_only": "{\"value\":[[\"x\",2]]}",
+      "learned_main_targets": [],
+      "learned_probe_targets": [],
+      "learned_argument_token_count": 0,
+      "routing": {
+        "suffix_segments": [
+          {
+            "text": null,
+            "special_id": 6,
+            "token_ids": [
+              6
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "assistant\n",
+            "special_id": null,
+            "token_ids": [
+              64015,
+              708
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "minifield.route/1\n",
+            "special_id": null,
+            "token_ids": [
+              1915,
+              888,
+              1769,
+              523,
+              33113,
+              524,
+              526,
+              708
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "{\"available\":true,\"description\":\"Select the requested finite value.\",\"name\":\"select_value\"}",
+            "special_id": null,
+            "token_ids": [
+              38685,
+              28423,
+              6881,
+              10567,
+              2512,
+              19522,
+              42066,
+              15534,
+              779,
+              21968,
+              16065,
+              2536,
+              523,
+              25475,
+              3055,
+              42066,
+              14714,
+              19495,
+              511,
+              602
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "\nShould this be the next action? Answer true or false.\n",
+            "special_id": null,
+            "token_ids": [
+              708,
+              31928,
+              1033,
+              874,
+              779,
+              3280,
+              4272,
+              540,
+              42275,
+              3347,
+              933,
+              4831,
+              819
+            ],
+            "ownership": "fixed",
+            "label": ""
+          }
+        ],
+        "prefix_token_ids": [
+          1,
+          6,
+          24131,
+          708,
+          38685,
+          34306,
+          852,
+          6881,
+          24373,
+          2512,
+          10681,
+          3687,
+          42066,
+          6200,
+          785,
+          779,
+          5676,
+          7951,
+          2536,
+          523,
+          25475,
+          6383,
+          42066,
+          24131,
+          511,
+          602,
+          7,
+          708,
+          6,
+          6423,
+          708,
+          38685,
+          8416,
+          42066,
+          14875,
+          779,
+          2997,
+          16065,
+          2536,
+          523,
+          25475,
+          6383,
+          42066,
+          6423,
+          511,
+          602,
+          7,
+          708,
+          6,
+          64015,
+          708,
+          1915,
+          888,
+          1769,
+          523,
+          33113,
+          524,
+          526,
+          708,
+          38685,
+          28423,
+          6881,
+          10567,
+          2512,
+          19522,
+          42066,
+          15534,
+          779,
+          21968,
+          16065,
+          2536,
+          523,
+          25475,
+          3055,
+          42066,
+          14714,
+          19495,
+          511,
+          602,
+          708,
+          31928,
+          1033,
+          874,
+          779,
+          3280,
+          4272,
+          540,
+          42275,
+          3347,
+          933,
+          4831,
+          819
+        ],
+        "candidates": [
+          {
+            "label": "true",
+            "token_ids": [
+              10567,
+              7
+            ],
+            "prediction_positions": [
+              91,
+              92
+            ]
+          },
+          {
+            "label": "false",
+            "token_ids": [
+              13890,
+              7
+            ],
+            "prediction_positions": [
+              91,
+              92
+            ]
+          }
+        ]
+      },
+      "teacher_arguments": {
+        "value": [
+          [
+            "x",
+            2
+          ]
+        ]
+      }
+    }
+  },
+  {
+    "name": "finite_before_same_node_union",
+    "oracle": {
+      "name": "select_value",
+      "mode": "teacher",
+      "public_events": [
+        {
+          "type": "system",
+          "policy": "Emit the exact supported value.",
+          "observation": {}
+        },
+        {
+          "type": "user",
+          "content": "Use the given finite value."
+        }
+      ],
+      "selected_route": "select_value",
+      "original_schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "enum": [
+              [
+                "x",
+                2
+              ],
+              [
+                "y",
+                3
+              ]
+            ],
+            "oneOf": [
+              {
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "resolved_schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "enum": [
+              [
+                "x",
+                2
+              ],
+              [
+                "y",
+                3
+              ]
+            ],
+            "oneOf": [
+              {
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "property_order": [
+        {
+          "schema_path": "",
+          "properties": [
+            "value"
+          ]
+        }
+      ],
+      "expected_arguments": {
+        "value": [
+          "x",
+          2
+        ]
+      },
+      "expected_action": {
+        "name": "select_value",
+        "arguments": {
+          "value": [
+            "x",
+            2
+          ]
+        }
+      },
+      "expected_operations": [
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 1,
+          "token_ids": [
+            1
+          ],
+          "ownership": "fixed",
+          "label": "bos",
+          "main_start": 0,
+          "main_end": 1,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 6,
+          "token_ids": [
+            6
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 1,
+          "main_end": 2,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "system\n",
+          "special_id": null,
+          "token_ids": [
+            24131,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 2,
+          "main_end": 4,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"observation\":{},\"policy\":\"Emit the exact supported value.\",\"type\":\"system\"}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            34306,
+            852,
+            6881,
+            24373,
+            2512,
+            10681,
+            3687,
+            42066,
+            6200,
+            785,
+            779,
+            5676,
+            7951,
+            2536,
+            523,
+            25475,
+            6383,
+            42066,
+            24131,
+            511,
+            602
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 4,
+          "main_end": 26,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 7,
+          "token_ids": [
+            7
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 26,
+          "main_end": 27,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\n",
+          "special_id": null,
+          "token_ids": [
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:0",
+          "main_start": 27,
+          "main_end": 28,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 6,
+          "token_ids": [
+            6
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 28,
+          "main_end": 29,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "user\n",
+          "special_id": null,
+          "token_ids": [
+            6423,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 29,
+          "main_end": 31,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"content\":\"Use the given finite value.\",\"type\":\"user\"}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            8416,
+            42066,
+            14875,
+            779,
+            2997,
+            16065,
+            2536,
+            523,
+            25475,
+            6383,
+            42066,
+            6423,
+            511,
+            602
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 31,
+          "main_end": 46,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 7,
+          "token_ids": [
+            7
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 46,
+          "main_end": 47,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\n",
+          "special_id": null,
+          "token_ids": [
+            708
+          ],
+          "ownership": "fixed",
+          "label": "event:1",
+          "main_start": 47,
+          "main_end": 48,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 6,
+          "token_ids": [
+            6
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 48,
+          "main_end": 49,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "assistant\n",
+          "special_id": null,
+          "token_ids": [
+            64015,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 49,
+          "main_end": 51,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "minifield.arguments/1\n",
+          "special_id": null,
+          "token_ids": [
+            1915,
+            888,
+            1769,
+            523,
+            57236,
+            524,
+            526,
+            708
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 51,
+          "main_end": 59,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"name\":\"select_value\",\"parameters\":{\"additionalProperties\":false,\"properties\":{\"value\":{\"enum\":[[\"x\",2],[\"y\",3]],\"items\":{\"oneOf\":[{\"type\":\"string\"},{\"type\":\"integer\"}]},\"oneOf\":[{\"type\":\"array\"},{\"type\":\"null\"}],\"type\":\"array\"}},\"required\":[\"value\"],\"type\":\"object\"},\"property_order\":[{\"properties\":[\"value\"],\"schema_path\":\"\"}]}",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            3055,
+            42066,
+            14714,
+            19495,
+            25475,
+            30202,
+            6881,
+            38685,
+            3263,
+            2847,
+            20051,
+            6881,
+            13890,
+            2512,
+            39306,
+            6881,
+            38685,
+            4766,
+            6881,
+            38685,
+            30568,
+            6881,
+            568,
+            13884,
+            597,
+            1878,
+            527,
+            5086,
+            13884,
+            598,
+            1878,
+            528,
+            30089,
+            2512,
+            26207,
+            6881,
+            38685,
+            1174,
+            6978,
+            6881,
+            568,
+            38685,
+            6383,
+            42066,
+            4488,
+            511,
+            3205,
+            38685,
+            6383,
+            42066,
+            59003,
+            511,
+            20352,
+            602,
+            2512,
+            1174,
+            6978,
+            6881,
+            568,
+            38685,
+            6383,
+            42066,
+            5588,
+            511,
+            3205,
+            38685,
+            6383,
+            42066,
+            18298,
+            511,
+            20352,
+            2512,
+            6383,
+            42066,
+            5588,
+            511,
+            2608,
+            2512,
+            35004,
+            6881,
+            13884,
+            4766,
+            13829,
+            2512,
+            6383,
+            42066,
+            7523,
+            511,
+            602,
+            2512,
+            13797,
+            572,
+            3667,
+            6881,
+            568,
+            38685,
+            39306,
+            6881,
+            13884,
+            4766,
+            13829,
+            2512,
+            50434,
+            17314,
+            6881,
+            19893,
+            20352,
+            602
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 59,
+          "main_end": 168,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\n",
+          "special_id": null,
+          "token_ids": [
+            708
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 168,
+          "main_end": 169,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{\"name\":",
+          "special_id": null,
+          "token_ids": [
+            38685,
+            3055,
+            6881
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 169,
+          "main_end": 172,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\"select_value\"",
+          "special_id": null,
+          "token_ids": [
+            511,
+            14714,
+            19495,
+            511
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 172,
+          "main_end": 176,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": ",\"arguments\":",
+          "special_id": null,
+          "token_ids": [
+            2512,
+            57236,
+            6881
+          ],
+          "ownership": "fixed",
+          "label": "",
+          "main_start": 176,
+          "main_end": 179,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "{",
+          "special_id": null,
+          "token_ids": [
+            600
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 179,
+          "main_end": 180,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "\"value\"",
+          "special_id": null,
+          "token_ids": [
+            511,
+            4766,
+            511
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 180,
+          "main_end": 183,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": ":",
+          "special_id": null,
+          "token_ids": [
+            535
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 183,
+          "main_end": 184,
+          "prediction_positions": []
+        },
+        {
+          "kind": "finite_choice",
+          "path": "/value",
+          "fork_main_length": 184,
+          "fork_main_sha256_u32le": "aabb14fb356262fa532ca43adc1a5927a41ccea2e26536be59e901bafb412b43",
+          "candidates": [
+            {
+              "segments": [
+                {
+                  "text": "[\"x\",2]",
+                  "special_id": null,
+                  "token_ids": [
+                    13884,
+                    597,
+                    1878,
+                    527,
+                    570
+                  ],
+                  "ownership": "learned",
+                  "label": ""
+                },
+                {
+                  "text": null,
+                  "special_id": 7,
+                  "token_ids": [
+                    7
+                  ],
+                  "ownership": "learned",
+                  "label": ""
+                }
+              ],
+              "token_ids": [
+                13884,
+                597,
+                1878,
+                527,
+                570,
+                7
+              ],
+              "value": [
+                "x",
+                2
+              ],
+              "prediction_positions": [
+                183,
+                184,
+                185,
+                186,
+                187,
+                188
+              ]
+            },
+            {
+              "segments": [
+                {
+                  "text": "[\"y\",3]",
+                  "special_id": null,
+                  "token_ids": [
+                    13884,
+                    598,
+                    1878,
+                    528,
+                    570
+                  ],
+                  "ownership": "learned",
+                  "label": ""
+                },
+                {
+                  "text": null,
+                  "special_id": 7,
+                  "token_ids": [
+                    7
+                  ],
+                  "ownership": "learned",
+                  "label": ""
+                }
+              ],
+              "token_ids": [
+                13884,
+                598,
+                1878,
+                528,
+                570,
+                7
+              ],
+              "value": [
+                "y",
+                3
+              ],
+              "prediction_positions": [
+                183,
+                184,
+                185,
+                186,
+                187,
+                188
+              ]
+            }
+          ],
+          "selected_index": 0
+        },
+        {
+          "kind": "main_append",
+          "text": "[\"x\",2]",
+          "special_id": null,
+          "token_ids": [
+            13884,
+            597,
+            1878,
+            527,
+            570
+          ],
+          "ownership": "learned",
+          "label": "finite:/value",
+          "main_start": 184,
+          "main_end": 189,
+          "prediction_positions": [
+            183,
+            184,
+            185,
+            186,
+            187
+          ]
+        },
+        {
+          "kind": "main_append",
+          "text": null,
+          "special_id": 7,
+          "token_ids": [
+            7
+          ],
+          "ownership": "learned",
+          "label": "finite-end:/value",
+          "main_start": 189,
+          "main_end": 190,
+          "prediction_positions": [
+            188
+          ]
+        },
+        {
+          "kind": "main_append",
+          "text": "}",
+          "special_id": null,
+          "token_ids": [
+            602
+          ],
+          "ownership": "fixed",
+          "label": "structure",
+          "main_start": 190,
+          "main_end": 191,
+          "prediction_positions": []
+        },
+        {
+          "kind": "main_append",
+          "text": "}",
+          "special_id": null,
+          "token_ids": [
+            602
+          ],
+          "ownership": "fixed",
+          "label": "envelope-close",
+          "main_start": 191,
+          "main_end": 192,
+          "prediction_positions": []
+        }
+      ],
+      "context_token_ids": [
+        1,
+        6,
+        24131,
+        708,
+        38685,
+        34306,
+        852,
+        6881,
+        24373,
+        2512,
+        10681,
+        3687,
+        42066,
+        6200,
+        785,
+        779,
+        5676,
+        7951,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        24131,
+        511,
+        602,
+        7,
+        708,
+        6,
+        6423,
+        708,
+        38685,
+        8416,
+        42066,
+        14875,
+        779,
+        2997,
+        16065,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        6423,
+        511,
+        602,
+        7,
+        708
+      ],
+      "main_token_ids": [
+        1,
+        6,
+        24131,
+        708,
+        38685,
+        34306,
+        852,
+        6881,
+        24373,
+        2512,
+        10681,
+        3687,
+        42066,
+        6200,
+        785,
+        779,
+        5676,
+        7951,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        24131,
+        511,
+        602,
+        7,
+        708,
+        6,
+        6423,
+        708,
+        38685,
+        8416,
+        42066,
+        14875,
+        779,
+        2997,
+        16065,
+        2536,
+        523,
+        25475,
+        6383,
+        42066,
+        6423,
+        511,
+        602,
+        7,
+        708,
+        6,
+        64015,
+        708,
+        1915,
+        888,
+        1769,
+        523,
+        57236,
+        524,
+        526,
+        708,
+        38685,
+        3055,
+        42066,
+        14714,
+        19495,
+        25475,
+        30202,
+        6881,
+        38685,
+        3263,
+        2847,
+        20051,
+        6881,
+        13890,
+        2512,
+        39306,
+        6881,
+        38685,
+        4766,
+        6881,
+        38685,
+        30568,
+        6881,
+        568,
+        13884,
+        597,
+        1878,
+        527,
+        5086,
+        13884,
+        598,
+        1878,
+        528,
+        30089,
+        2512,
+        26207,
+        6881,
+        38685,
+        1174,
+        6978,
+        6881,
+        568,
+        38685,
+        6383,
+        42066,
+        4488,
+        511,
+        3205,
+        38685,
+        6383,
+        42066,
+        59003,
+        511,
+        20352,
+        602,
+        2512,
+        1174,
+        6978,
+        6881,
+        568,
+        38685,
+        6383,
+        42066,
+        5588,
+        511,
+        3205,
+        38685,
+        6383,
+        42066,
+        18298,
+        511,
+        20352,
+        2512,
+        6383,
+        42066,
+        5588,
+        511,
+        2608,
+        2512,
+        35004,
+        6881,
+        13884,
+        4766,
+        13829,
+        2512,
+        6383,
+        42066,
+        7523,
+        511,
+        602,
+        2512,
+        13797,
+        572,
+        3667,
+        6881,
+        568,
+        38685,
+        39306,
+        6881,
+        13884,
+        4766,
+        13829,
+        2512,
+        50434,
+        17314,
+        6881,
+        19893,
+        20352,
+        602,
+        708,
+        38685,
+        3055,
+        6881,
+        511,
+        14714,
+        19495,
+        511,
+        2512,
+        57236,
+        6881,
+        600,
+        511,
+        4766,
+        511,
+        535,
+        13884,
+        597,
+        1878,
+        527,
+        570,
+        7,
+        602,
+        602
+      ],
+      "main_sha256_u32le": "293b01444edd571d2f8cba81aa278da52a4dd7db90d8d005c9916bdc53a36844",
+      "argument_token_range": [
+        179,
+        191
+      ],
+      "argument_json_for_assembly_check_only": "{\"value\":[\"x\",2]}",
+      "learned_main_targets": [
+        {
+          "position": 183,
+          "token_id": 13884
+        },
+        {
+          "position": 184,
+          "token_id": 597
+        },
+        {
+          "position": 185,
+          "token_id": 1878
+        },
+        {
+          "position": 186,
+          "token_id": 527
+        },
+        {
+          "position": 187,
+          "token_id": 570
+        },
+        {
+          "position": 188,
+          "token_id": 7
+        }
+      ],
+      "learned_probe_targets": [],
+      "learned_argument_token_count": 6,
+      "routing": {
+        "suffix_segments": [
+          {
+            "text": null,
+            "special_id": 6,
+            "token_ids": [
+              6
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "assistant\n",
+            "special_id": null,
+            "token_ids": [
+              64015,
+              708
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "minifield.route/1\n",
+            "special_id": null,
+            "token_ids": [
+              1915,
+              888,
+              1769,
+              523,
+              33113,
+              524,
+              526,
+              708
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "{\"available\":true,\"description\":\"Select the requested finite value.\",\"name\":\"select_value\"}",
+            "special_id": null,
+            "token_ids": [
+              38685,
+              28423,
+              6881,
+              10567,
+              2512,
+              19522,
+              42066,
+              15534,
+              779,
+              21968,
+              16065,
+              2536,
+              523,
+              25475,
+              3055,
+              42066,
+              14714,
+              19495,
+              511,
+              602
+            ],
+            "ownership": "fixed",
+            "label": ""
+          },
+          {
+            "text": "\nShould this be the next action? Answer true or false.\n",
+            "special_id": null,
+            "token_ids": [
+              708,
+              31928,
+              1033,
+              874,
+              779,
+              3280,
+              4272,
+              540,
+              42275,
+              3347,
+              933,
+              4831,
+              819
+            ],
+            "ownership": "fixed",
+            "label": ""
+          }
+        ],
+        "prefix_token_ids": [
+          1,
+          6,
+          24131,
+          708,
+          38685,
+          34306,
+          852,
+          6881,
+          24373,
+          2512,
+          10681,
+          3687,
+          42066,
+          6200,
+          785,
+          779,
+          5676,
+          7951,
+          2536,
+          523,
+          25475,
+          6383,
+          42066,
+          24131,
+          511,
+          602,
+          7,
+          708,
+          6,
+          6423,
+          708,
+          38685,
+          8416,
+          42066,
+          14875,
+          779,
+          2997,
+          16065,
+          2536,
+          523,
+          25475,
+          6383,
+          42066,
+          6423,
+          511,
+          602,
+          7,
+          708,
+          6,
+          64015,
+          708,
+          1915,
+          888,
+          1769,
+          523,
+          33113,
+          524,
+          526,
+          708,
+          38685,
+          28423,
+          6881,
+          10567,
+          2512,
+          19522,
+          42066,
+          15534,
+          779,
+          21968,
+          16065,
+          2536,
+          523,
+          25475,
+          3055,
+          42066,
+          14714,
+          19495,
+          511,
+          602,
+          708,
+          31928,
+          1033,
+          874,
+          779,
+          3280,
+          4272,
+          540,
+          42275,
+          3347,
+          933,
+          4831,
+          819
+        ],
+        "candidates": [
+          {
+            "label": "true",
+            "token_ids": [
+              10567,
+              7
+            ],
+            "prediction_positions": [
+              91,
+              92
+            ]
+          },
+          {
+            "label": "false",
+            "token_ids": [
+              13890,
+              7
+            ],
+            "prediction_positions": [
+              91,
+              92
+            ]
+          }
+        ]
+      },
+      "teacher_arguments": {
+        "value": [
+          "x",
+          2
+        ]
+      }
+    }
+  }
+]

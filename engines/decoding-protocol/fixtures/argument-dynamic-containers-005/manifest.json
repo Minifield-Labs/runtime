@@ -1,0 +1,18 @@
+{
+  "scope": "Independent Python-vs-Rust trace oracle for wholly dynamic versus explicitly typed arrays, including manual probe paths and atomic value ownership assertions. No model execution.",
+  "sources": {
+    "training/src/minifield_training/sft/argument_trace.py": "997d4a2f4640b58c7b876004f0ce8f8d8100a5d12bf308badef16573c76c325a",
+    "training/src/minifield_training/sft/protocol.py": "71ded146b60ce657d198af6f1b18d2c46bbcd45aa50bdda8ad86179dd9319288"
+  },
+  "tokenizer_sha256": "df1d8d5ec5d091b460562ffd545e4a5e91d17d4a0db7ebe733be34ed374377bd",
+  "generator_sha256": "6580b4e9adc42c93ee4b7674d1a68ad1f4a7f7816422d1a47ef5b2ca15998a2c",
+  "case_count": 6,
+  "segments": 39,
+  "artifacts": {
+    "manual-assertions.json": "5c0460fe935dbe8fe1a521df9fc71aa3f814423d1bec543cd9626b3b1b571742",
+    "expected.json": "dbd58b36ab28d776451404432d2625b799022d1841438cafb3770ed0ab26295e",
+    "cases.json": "bb2c44dc976f1caab8fe6a9d1df8a27161ec752eac90171f49d5268011726d91",
+    "token-policy.json": "ae776f7c6fcff6195db5cc9e7af7dfc6b6249b0a9ba152afb68adf357dc7a718",
+    "segments.jsonl": "4a69e46535d3b94d5719381305534b1e87f3d5bee401e812ab8194ac5f8b170c"
+  }
+}

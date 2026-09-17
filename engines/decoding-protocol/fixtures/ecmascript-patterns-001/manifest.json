@@ -1,0 +1,417 @@
+{
+  "status": "independent_Node_oracle_not_Rust_parity",
+  "scope": "all13inputpatternforms;source_catalog_only;noacceptancecases",
+  "source_catalog_sha256": "8f3284c68d6b4f1b304f99b2d7d2edea8ab6d96c73cad7444518678ae252fbc1",
+  "node": "v21.6.1",
+  "v8": "11.8.172.17-node.19",
+  "flags": "",
+  "patterns": {
+    "^tool_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$": [
+      "/1/input_schema/properties/identifier/pattern",
+      "/3/input_schema/properties/query/properties/tool_id/pattern",
+      "/4/input_schema/properties/query/properties/tool_id/pattern",
+      "/6/input_schema/properties/identifier/pattern",
+      "/7/input_schema/properties/query/properties/tool_id/pattern",
+      "/11/input_schema/properties/query/properties/tool_id/pattern"
+    ],
+    "^tool_version_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$": [
+      "/1/input_schema/properties/query/properties/version_id/pattern",
+      "/2/input_schema/$defs/ToolVersionId/pattern",
+      "/6/input_schema/properties/arguments/oneOf/2/properties/restore_version_id/pattern",
+      "/9/input_schema/properties/arguments/oneOf/1/properties/tool_version_ids/items/pattern",
+      "/9/input_schema/properties/arguments/oneOf/2/properties/tool_version_ids/items/pattern",
+      "/9/input_schema/$defs/ToolVersionId/pattern",
+      "/10/input_schema/$defs/ToolVersionId/pattern",
+      "/13/input_schema/$defs/ToolVersionId/pattern"
+    ],
+    "^[a-zA-Z0-9_.-]{1,128}$": [
+      "/2/input_schema/properties/arguments/oneOf/0/properties/candidate/properties/name/pattern",
+      "/5/input_schema/properties/arguments/properties/name/pattern",
+      "/6/input_schema/properties/arguments/oneOf/0/properties/name/pattern"
+    ],
+    "^[0-9]{1,20}$": [
+      "/2/input_schema/properties/arguments/oneOf/1/properties/candidate/properties/seed/pattern",
+      "/9/input_schema/properties/arguments/oneOf/1/properties/document/properties/seed/pattern",
+      "/13/input_schema/properties/arguments/oneOf/0/properties/seed/pattern",
+      "/13/input_schema/properties/arguments/oneOf/1/properties/seed/pattern",
+      "/18/input_schema/$defs/Selection/properties/seed/pattern"
+    ],
+    "^trajectory_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$": [
+      "/3/input_schema/properties/query/properties/trajectory_id/pattern",
+      "/4/input_schema/properties/query/properties/trajectory_id/pattern",
+      "/7/input_schema/properties/query/properties/trajectory_id/pattern",
+      "/8/input_schema/properties/identifier/pattern",
+      "/10/input_schema/properties/identifier/pattern",
+      "/11/input_schema/properties/query/properties/trajectory_id/pattern",
+      "/13/input_schema/properties/arguments/oneOf/1/properties/identifier/pattern"
+    ],
+    "^[A-Za-z0-9_]+$": [
+      "/9/input_schema/properties/arguments/oneOf/1/properties/document/properties/steps/items/properties/id/pattern",
+      "/9/input_schema/properties/arguments/oneOf/1/properties/document/properties/follow_ups/items/properties/steps/items/properties/id/pattern"
+    ],
+    "^[A-Za-z_][A-Za-z0-9_]*$": [
+      "/9/input_schema/properties/arguments/oneOf/1/properties/document/properties/variables/items/properties/name/pattern"
+    ],
+    "^trajectory_version_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$": [
+      "/9/input_schema/properties/arguments/oneOf/2/properties/source_version_id/pattern",
+      "/10/input_schema/properties/arguments/oneOf/2/properties/restore_version_id/pattern",
+      "/12/input_schema/properties/version_id/pattern",
+      "/14/input_schema/properties/version_id/pattern",
+      "/15/input_schema/properties/version_id/pattern",
+      "/18/input_schema/$defs/TrajectoryVersionId/pattern"
+    ],
+    "^run_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$": [
+      "/17/input_schema/properties/identifier/pattern",
+      "/19/input_schema/properties/identifier/pattern"
+    ],
+    "^(?:[0-9a-f]{40}|[0-9a-f]{64}|sha256:[0-9a-f]{64})$": [
+      "/18/input_schema/properties/arguments/properties/model_revision/pattern"
+    ],
+    "^.+@sha256:[0-9a-f]{64}$": [
+      "/18/input_schema/properties/arguments/properties/worker_image/pattern"
+    ],
+    "^wording_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$": [
+      "/18/input_schema/$defs/WordingId/pattern"
+    ],
+    "^artifact_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$": [
+      "/19/input_schema/$defs/ArtifactId/pattern"
+    ]
+  },
+  "case_count": 694,
+  "passed_truth_count": 72,
+  "command": [
+    "node",
+    "oracle.cjs"
+  ],
+  "stdin_file": "inputs.json",
+  "files": {
+    "inputs.json": "754cf1a21d2870721ce87298b315165e6dec289c0cb240a2d3964de038fcc787",
+    "oracle.cjs": "a6c1cb244de4ba8ab443a50401faf5460d21566127cab6cd056fb33b9aecd04b",
+    "expected.json": "ddd701e5c31dcb9effe4b905d74385b6f8a6b429d966d47fbfa325a61b1dee13"
+  },
+  "python_re_disagreement_count": 46,
+  "python_re_disagreements": [
+    {
+      "id": "pattern_0016",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64}|sha256:[0-9a-f]{64})$",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0034",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64}|sha256:[0-9a-f]{64})$",
+      "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0052",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64}|sha256:[0-9a-f]{64})$",
+      "value": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0080",
+      "pattern": "^.+@sha256:[0-9a-f]{64}$",
+      "value": "image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0086",
+      "pattern": "^.+@sha256:[0-9a-f]{64}$",
+      "value": "\rimage@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0088",
+      "pattern": "^.+@sha256:[0-9a-f]{64}$",
+      "value": "i\rmage@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0089",
+      "pattern": "^.+@sha256:[0-9a-f]{64}$",
+      "value": "i mage@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0090",
+      "pattern": "^.+@sha256:[0-9a-f]{64}$",
+      "value": "i mage@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0098",
+      "pattern": "^.+@sha256:[0-9a-f]{64}$",
+      "value": "registry/path:v1@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0104",
+      "pattern": "^.+@sha256:[0-9a-f]{64}$",
+      "value": "\rregistry/path:v1@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0106",
+      "pattern": "^.+@sha256:[0-9a-f]{64}$",
+      "value": "r\registry/path:v1@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0107",
+      "pattern": "^.+@sha256:[0-9a-f]{64}$",
+      "value": "r egistry/path:v1@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0108",
+      "pattern": "^.+@sha256:[0-9a-f]{64}$",
+      "value": "r egistry/path:v1@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0116",
+      "pattern": "^.+@sha256:[0-9a-f]{64}$",
+      "value": "💻@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0122",
+      "pattern": "^.+@sha256:[0-9a-f]{64}$",
+      "value": "\r💻@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0124",
+      "pattern": "^.+@sha256:[0-9a-f]{64}$",
+      "value": "💻\r@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0125",
+      "pattern": "^.+@sha256:[0-9a-f]{64}$",
+      "value": "💻 @sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0126",
+      "pattern": "^.+@sha256:[0-9a-f]{64}$",
+      "value": "💻 @sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0131",
+      "pattern": "^.+@sha256:[0-9a-f]{64}$",
+      "value": "a\r@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0132",
+      "pattern": "^.+@sha256:[0-9a-f]{64}$",
+      "value": "a @sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0149",
+      "pattern": "^[0-9]{1,20}$",
+      "value": "0\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0163",
+      "pattern": "^[0-9]{1,20}$",
+      "value": "123\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0180",
+      "pattern": "^[0-9]{1,20}$",
+      "value": "99999999999999999999\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0206",
+      "pattern": "^[A-Za-z0-9_]+$",
+      "value": "0\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0220",
+      "pattern": "^[A-Za-z0-9_]+$",
+      "value": "a_0\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0239",
+      "pattern": "^[A-Za-z0-9_]+$",
+      "value": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0265",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "value": "_\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0278",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "value": "a_0\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0297",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "value": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0323",
+      "pattern": "^[a-zA-Z0-9_.-]{1,128}$",
+      "value": "a\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0337",
+      "pattern": "^[a-zA-Z0-9_.-]{1,128}$",
+      "value": "A_.-9\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0353",
+      "pattern": "^[a-zA-Z0-9_.-]{1,128}$",
+      "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0381",
+      "pattern": "^artifact_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$",
+      "value": "artifact_00000000000000000000000000\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0400",
+      "pattern": "^artifact_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$",
+      "value": "artifact_7zzzzzzzzzzzzzzzzzzzzzzzzz\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0428",
+      "pattern": "^run_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$",
+      "value": "run_00000000000000000000000000\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0447",
+      "pattern": "^run_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$",
+      "value": "run_7zzzzzzzzzzzzzzzzzzzzzzzzz\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0475",
+      "pattern": "^tool_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$",
+      "value": "tool_00000000000000000000000000\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0494",
+      "pattern": "^tool_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$",
+      "value": "tool_7zzzzzzzzzzzzzzzzzzzzzzzzz\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0522",
+      "pattern": "^tool_version_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$",
+      "value": "tool_version_00000000000000000000000000\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0541",
+      "pattern": "^tool_version_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$",
+      "value": "tool_version_7zzzzzzzzzzzzzzzzzzzzzzzzz\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0569",
+      "pattern": "^trajectory_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$",
+      "value": "trajectory_00000000000000000000000000\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0588",
+      "pattern": "^trajectory_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$",
+      "value": "trajectory_7zzzzzzzzzzzzzzzzzzzzzzzzz\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0616",
+      "pattern": "^trajectory_version_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$",
+      "value": "trajectory_version_00000000000000000000000000\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0635",
+      "pattern": "^trajectory_version_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$",
+      "value": "trajectory_version_7zzzzzzzzzzzzzzzzzzzzzzzzz\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0663",
+      "pattern": "^wording_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$",
+      "value": "wording_00000000000000000000000000\n",
+      "node": false,
+      "python_re": true
+    },
+    {
+      "id": "pattern_0682",
+      "pattern": "^wording_[0-7][0123456789abcdefghjkmnpqrstvwxyz]{25}$",
+      "value": "wording_7zzzzzzzzzzzzzzzzzzzzzzzzz\n",
+      "node": false,
+      "python_re": true
+    }
+  ]
+}

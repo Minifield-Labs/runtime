@@ -1,0 +1,18 @@
+{
+  "scope": "Independent Python-vs-Rust trace oracle for per-array-index union selections, including manual expected path/index assertions. No model execution.",
+  "sources": {
+    "training/src/minifield_training/sft/argument_trace.py": "997d4a2f4640b58c7b876004f0ce8f8d8100a5d12bf308badef16573c76c325a",
+    "training/src/minifield_training/sft/protocol.py": "71ded146b60ce657d198af6f1b18d2c46bbcd45aa50bdda8ad86179dd9319288"
+  },
+  "tokenizer_sha256": "df1d8d5ec5d091b460562ffd545e4a5e91d17d4a0db7ebe733be34ed374377bd",
+  "generator_sha256": "2a47a95da9e929336517e4911334e1cd7d067487fa8a7f095082a89de4899713",
+  "case_count": 5,
+  "segments": 76,
+  "artifacts": {
+    "manual-assertions.json": "c15aac153ca986e55e84edb06c1873880acc6b71d8ec0746474ab9182a73bdb7",
+    "expected.json": "7b1bd82959cadbf5e2d186db44eee6b8f66fedd48de798705fc31af7467568ce",
+    "cases.json": "15c3c039378e7761580382b9fa59ab98430c1eb73891657b6b6331e9ad60749c",
+    "token-policy.json": "ae776f7c6fcff6195db5cc9e7af7dfc6b6249b0a9ba152afb68adf357dc7a718",
+    "segments.jsonl": "fde7f93498a3b756b8ce6f4cc766786f7f5454054860b0eba79054b8a824215c"
+  }
+}

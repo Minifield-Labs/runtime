@@ -1,0 +1,874 @@
+[
+  "a",
+  "b",
+  "x",
+  {
+    "type": "system",
+    "policy": "Use only the observed synthetic interface.",
+    "observation": {
+      "ids": [
+        "alpha",
+        "beta"
+      ]
+    }
+  },
+  {
+    "type": "user",
+    "content": "Inspect the fixture."
+  },
+  {
+    "type": "tool_call",
+    "tool_call_id": "call_0",
+    "tool": "synthetic.inspect",
+    "arguments": {}
+  },
+  {
+    "type": "tool_result",
+    "tool_call_id": "call_0",
+    "result": {
+      "ok": true,
+      "ids": [
+        "alpha",
+        "beta"
+      ]
+    }
+  },
+  {
+    "type": "assistant_text",
+    "content": "The fixture is ready."
+  },
+  {
+    "type": "user",
+    "content": "Apply the synthetic change; preserve literal <im_end> text."
+  },
+  {
+    "name": "synthetic.successive_choices",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "a": {
+          "type": "string"
+        },
+        "b": {
+          "type": "string"
+        },
+        "c": {
+          "type": "string"
+        },
+        "x": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "a",
+        "x"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "required": [
+                "b"
+              ]
+            },
+            {
+              "required": [
+                "c"
+              ]
+            }
+          ]
+        },
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "x": {
+                  "const": "left"
+                }
+              }
+            },
+            {
+              "properties": {
+                "x": {
+                  "const": "right"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "property_order": [
+      {
+        "schema_path": "",
+        "properties": [
+          "a",
+          "b",
+          "c",
+          "x"
+        ]
+      },
+      {
+        "schema_path": "/allOf/1/oneOf/0",
+        "properties": [
+          "x"
+        ]
+      },
+      {
+        "schema_path": "/allOf/1/oneOf/1",
+        "properties": [
+          "x"
+        ]
+      }
+    ]
+  },
+  "synthetic.successive_choices",
+  {
+    "operation": "union",
+    "path": "",
+    "alternatives": [
+      {
+        "label": "branch:0",
+        "schema_path": "/allOf/0/anyOf/0",
+        "schema": {
+          "allOf": [
+            {
+              "type": "object",
+              "properties": {
+                "a": {
+                  "type": "string"
+                },
+                "b": {
+                  "type": "string"
+                },
+                "c": {
+                  "type": "string"
+                },
+                "x": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "a",
+                "x"
+              ],
+              "additionalProperties": false,
+              "allOf": [
+                {},
+                {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "x": {
+                          "const": "left"
+                        }
+                      }
+                    },
+                    {
+                      "properties": {
+                        "x": {
+                          "const": "right"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "required": [
+                "b"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "label": "branch:1",
+        "schema_path": "/allOf/0/anyOf/1",
+        "schema": {
+          "allOf": [
+            {
+              "type": "object",
+              "properties": {
+                "a": {
+                  "type": "string"
+                },
+                "b": {
+                  "type": "string"
+                },
+                "c": {
+                  "type": "string"
+                },
+                "x": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "a",
+                "x"
+              ],
+              "additionalProperties": false,
+              "allOf": [
+                {},
+                {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "x": {
+                          "const": "left"
+                        }
+                      }
+                    },
+                    {
+                      "properties": {
+                        "x": {
+                          "const": "right"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "required": [
+                "c"
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "operation": "union",
+    "path": "",
+    "alternatives": [
+      {
+        "label": "branch:0",
+        "schema_path": "/allOf/1/oneOf/0",
+        "schema": {
+          "allOf": [
+            {
+              "allOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "a": {
+                      "type": "string"
+                    },
+                    "b": {
+                      "type": "string"
+                    },
+                    "c": {
+                      "type": "string"
+                    },
+                    "x": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "a",
+                    "x"
+                  ],
+                  "additionalProperties": false,
+                  "allOf": [
+                    {},
+                    {}
+                  ]
+                },
+                {
+                  "required": [
+                    "b"
+                  ]
+                }
+              ]
+            },
+            {
+              "properties": {
+                "x": {
+                  "const": "left"
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "label": "branch:1",
+        "schema_path": "/allOf/1/oneOf/1",
+        "schema": {
+          "allOf": [
+            {
+              "allOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "a": {
+                      "type": "string"
+                    },
+                    "b": {
+                      "type": "string"
+                    },
+                    "c": {
+                      "type": "string"
+                    },
+                    "x": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "a",
+                    "x"
+                  ],
+                  "additionalProperties": false,
+                  "allOf": [
+                    {},
+                    {}
+                  ]
+                },
+                {
+                  "required": [
+                    "b"
+                  ]
+                }
+              ]
+            },
+            {
+              "properties": {
+                "x": {
+                  "const": "right"
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "value",
+  "required",
+  {
+    "operation": "presence",
+    "path": "/c",
+    "alternatives": [
+      {
+        "label": "present"
+      },
+      {
+        "label": "absent"
+      }
+    ]
+  },
+  "left",
+  {
+    "name": "synthetic.successive_choices",
+    "description": "Synthetic trace fixture action.",
+    "available": true
+  },
+  {
+    "type": "system",
+    "policy": "Use only the observed synthetic interface.",
+    "observation": {
+      "ids": [
+        "alpha",
+        "beta"
+      ]
+    }
+  },
+  {
+    "type": "user",
+    "content": "Inspect the fixture."
+  },
+  {
+    "type": "tool_call",
+    "tool_call_id": "call_0",
+    "tool": "synthetic.inspect",
+    "arguments": {}
+  },
+  {
+    "type": "tool_result",
+    "tool_call_id": "call_0",
+    "result": {
+      "ok": true,
+      "ids": [
+        "alpha",
+        "beta"
+      ]
+    }
+  },
+  {
+    "type": "assistant_text",
+    "content": "The fixture is ready."
+  },
+  {
+    "type": "user",
+    "content": "Apply the synthetic change; preserve literal <im_end> text."
+  },
+  {
+    "name": "synthetic.forbidden_optional_omission",
+    "parameters": {
+      "type": "object",
+      "allOf": [
+        {
+          "properties": {
+            "a": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "b": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "property_order": [
+      {
+        "schema_path": "/allOf/0",
+        "properties": [
+          "a"
+        ]
+      },
+      {
+        "schema_path": "/allOf/1",
+        "properties": [
+          "b"
+        ]
+      }
+    ]
+  },
+  "synthetic.forbidden_optional_omission",
+  {
+    "name": "synthetic.forbidden_optional_omission",
+    "description": "Synthetic trace fixture action.",
+    "available": true
+  },
+  "x",
+  {
+    "type": "system",
+    "policy": "Use only the observed synthetic interface.",
+    "observation": {
+      "ids": [
+        "alpha",
+        "beta"
+      ]
+    }
+  },
+  {
+    "type": "user",
+    "content": "Inspect the fixture."
+  },
+  {
+    "type": "tool_call",
+    "tool_call_id": "call_0",
+    "tool": "synthetic.inspect",
+    "arguments": {}
+  },
+  {
+    "type": "tool_result",
+    "tool_call_id": "call_0",
+    "result": {
+      "ok": true,
+      "ids": [
+        "alpha",
+        "beta"
+      ]
+    }
+  },
+  {
+    "type": "assistant_text",
+    "content": "The fixture is ready."
+  },
+  {
+    "type": "user",
+    "content": "Apply the synthetic change; preserve literal <im_end> text."
+  },
+  {
+    "name": "synthetic.nullable_enum_null",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "enum": [
+            null,
+            "x"
+          ]
+        }
+      },
+      "required": [
+        "x"
+      ],
+      "additionalProperties": false
+    },
+    "property_order": [
+      {
+        "schema_path": "",
+        "properties": [
+          "x"
+        ]
+      }
+    ]
+  },
+  "synthetic.nullable_enum_null",
+  null,
+  "x",
+  null,
+  {
+    "name": "synthetic.nullable_enum_null",
+    "description": "Synthetic trace fixture action.",
+    "available": true
+  },
+  "x",
+  {
+    "type": "system",
+    "policy": "Use only the observed synthetic interface.",
+    "observation": {
+      "ids": [
+        "alpha",
+        "beta"
+      ]
+    }
+  },
+  {
+    "type": "user",
+    "content": "Inspect the fixture."
+  },
+  {
+    "type": "tool_call",
+    "tool_call_id": "call_0",
+    "tool": "synthetic.inspect",
+    "arguments": {}
+  },
+  {
+    "type": "tool_result",
+    "tool_call_id": "call_0",
+    "result": {
+      "ok": true,
+      "ids": [
+        "alpha",
+        "beta"
+      ]
+    }
+  },
+  {
+    "type": "assistant_text",
+    "content": "The fixture is ready."
+  },
+  {
+    "type": "user",
+    "content": "Apply the synthetic change; preserve literal <im_end> text."
+  },
+  {
+    "name": "synthetic.nullable_enum_string",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "enum": [
+            null,
+            "x"
+          ]
+        }
+      },
+      "required": [
+        "x"
+      ],
+      "additionalProperties": false
+    },
+    "property_order": [
+      {
+        "schema_path": "",
+        "properties": [
+          "x"
+        ]
+      }
+    ]
+  },
+  "synthetic.nullable_enum_string",
+  null,
+  "x",
+  "x",
+  {
+    "name": "synthetic.nullable_enum_string",
+    "description": "Synthetic trace fixture action.",
+    "available": true
+  },
+  "x",
+  {
+    "type": "system",
+    "policy": "Use only the observed synthetic interface.",
+    "observation": {
+      "ids": [
+        "alpha",
+        "beta"
+      ]
+    }
+  },
+  {
+    "type": "user",
+    "content": "Inspect the fixture."
+  },
+  {
+    "type": "tool_call",
+    "tool_call_id": "call_0",
+    "tool": "synthetic.inspect",
+    "arguments": {}
+  },
+  {
+    "type": "tool_result",
+    "tool_call_id": "call_0",
+    "result": {
+      "ok": true,
+      "ids": [
+        "alpha",
+        "beta"
+      ]
+    }
+  },
+  {
+    "type": "assistant_text",
+    "content": "The fixture is ready."
+  },
+  {
+    "type": "user",
+    "content": "Apply the synthetic change; preserve literal <im_end> text."
+  },
+  {
+    "name": "synthetic.integer_number_intersection",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "allOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "required": [
+        "x"
+      ],
+      "additionalProperties": false
+    },
+    "property_order": [
+      {
+        "schema_path": "",
+        "properties": [
+          "x"
+        ]
+      }
+    ]
+  },
+  "synthetic.integer_number_intersection",
+  2,
+  {
+    "name": "synthetic.integer_number_intersection",
+    "description": "Synthetic trace fixture action.",
+    "available": true
+  },
+  "enabled",
+  {
+    "type": "system",
+    "policy": "Use only the observed synthetic interface.",
+    "observation": {
+      "ids": [
+        "alpha",
+        "beta"
+      ]
+    }
+  },
+  {
+    "type": "user",
+    "content": "Inspect the fixture."
+  },
+  {
+    "type": "tool_call",
+    "tool_call_id": "call_0",
+    "tool": "synthetic.inspect",
+    "arguments": {}
+  },
+  {
+    "type": "tool_result",
+    "tool_call_id": "call_0",
+    "result": {
+      "ok": true,
+      "ids": [
+        "alpha",
+        "beta"
+      ]
+    }
+  },
+  {
+    "type": "assistant_text",
+    "content": "The fixture is ready."
+  },
+  {
+    "type": "user",
+    "content": "Apply the synthetic change; preserve literal <im_end> text."
+  },
+  {
+    "name": "synthetic.boolean_remaining_singleton",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "oneOf": [
+            {
+              "const": false
+            },
+            {
+              "type": "boolean"
+            }
+          ]
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "additionalProperties": false
+    },
+    "property_order": [
+      {
+        "schema_path": "",
+        "properties": [
+          "enabled"
+        ]
+      }
+    ]
+  },
+  "synthetic.boolean_remaining_singleton",
+  {
+    "operation": "union",
+    "path": "/enabled",
+    "alternatives": [
+      {
+        "label": "branch:0",
+        "schema_path": "/properties/enabled/oneOf/0",
+        "schema": {
+          "allOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "const": false
+            }
+          ]
+        }
+      },
+      {
+        "label": "branch:1",
+        "schema_path": "/properties/enabled/oneOf/1",
+        "schema": {
+          "allOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "boolean"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  true,
+  {
+    "name": "synthetic.boolean_remaining_singleton",
+    "description": "Synthetic trace fixture action.",
+    "available": true
+  },
+  "x",
+  {
+    "type": "system",
+    "policy": "Use only the observed synthetic interface.",
+    "observation": {
+      "ids": [
+        "alpha",
+        "beta"
+      ]
+    }
+  },
+  {
+    "type": "user",
+    "content": "Inspect the fixture."
+  },
+  {
+    "type": "tool_call",
+    "tool_call_id": "call_0",
+    "tool": "synthetic.inspect",
+    "arguments": {}
+  },
+  {
+    "type": "tool_result",
+    "tool_call_id": "call_0",
+    "result": {
+      "ok": true,
+      "ids": [
+        "alpha",
+        "beta"
+      ]
+    }
+  },
+  {
+    "type": "assistant_text",
+    "content": "The fixture is ready."
+  },
+  {
+    "type": "user",
+    "content": "Apply the synthetic change; preserve literal <im_end> text."
+  },
+  {
+    "name": "synthetic.finite_precedence_full_oneof",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "enum": [
+            1,
+            2
+          ],
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "const": 1
+            }
+          ]
+        }
+      },
+      "required": [
+        "x"
+      ],
+      "additionalProperties": false
+    },
+    "property_order": [
+      {
+        "schema_path": "",
+        "properties": [
+          "x"
+        ]
+      }
+    ]
+  },
+  "synthetic.finite_precedence_full_oneof",
+  2,
+  {
+    "name": "synthetic.finite_precedence_full_oneof",
+    "description": "Synthetic trace fixture action.",
+    "available": true
+  }
+]

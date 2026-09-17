@@ -3,6 +3,7 @@ members = [
     "engines/engine-api",
     "crates/backend-cpu",
     "crates/executor-core",
+    "crates/text-tokenizer",
     "engines/decoding-protocol",
 ]
 exclude = [

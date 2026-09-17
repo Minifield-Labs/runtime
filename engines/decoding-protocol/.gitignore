@@ -1,0 +1,14 @@
+# Immutable, independently generated qualification oracles remain local/external.
+# Set MINIFIELD_DECODING_PROTOCOL_BULK_FIXTURE_ROOT and run ignored tests to use them.
+/fixtures/jcs-binary64-001/
+/fixtures/ecmascript-patterns-001/
+/fixtures/ecmascript-semantics-002/
+/fixtures/argument-traces-001/
+/fixtures/argument-traces-002/
+/fixtures/argument-traces-003/
+/fixtures/argument-array-unions-004/
+/fixtures/argument-dynamic-containers-005/
+/fixtures/argument-finite-containers-006/
+
+# Transient local review artifact with a CR-suffixed filename.
+/tests/__bridge_probe*

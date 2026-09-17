@@ -1,16 +1,28 @@
-# Two-stage decoding protocol
+# Draft-5 decoding protocol
 
-This separate Rust crate implements the draft-5 JSON, schema, framing, and argument teacher-trace rules. It retains earlier immutable protocol fixtures for compatibility checks.
+This isolated crate implements pure-Rust strict JSON admission, binary64 and
+raw-integer checks, RFC 8785 SafeJSON, schema normalization and original
+instance validation, trace planning, ECMAScript-pattern admission, and
+independently tokenized segments. It owns no model, tokenizer implementation,
+tool execution, or product effects.
 
-Safe JSON serializes typed semantic values with RFC 8785 ordering and binary64 numeric rules, then escapes literal UTF-8 angle brackets. Raw JSON validation preserves source property order and numeric spelling where the protocol requires it. Payload segments are tokenized independently; reserved marker IDs are rejected outside explicit framing.
+The draft artifact is fixtures/decoding-protocol.draft-5.json with SHA-256
+e78b6ecfa07a71cf21203ae697aec7b92a19768bbc02e320be58ad1452150fde.
 
-The schema implementation handles supported assertions, references, effective branches, finite values, presence choices, typed arrays, and atomic dynamic containers. Teacher planning validates the original instance before compiling argument traces.
+## Default checks
 
-The crate accepts an injected segment tokenizer. It does not load a language model or execute tools. Public route candidates, forced-operation records, globally interleaved operation order, and global probe indices remain pending work. Available-field corpus parity does not qualify those missing interfaces.
+cargo test -p minifield-decoding-protocol --locked uses compact source and
+fixture checks for SafeJSON, numeric boundaries, schema assertions, trace
+ownership, finite domains, and representative ECMAScript semantics.
 
-Run its standalone synthetic checks from the workspace:
+## Opt-in full oracle qualification
 
-    cargo +1.89.0 test -p minifield-decoding-protocol --locked
-    cargo +1.89.0 clippy -p minifield-decoding-protocol --all-targets --locked -- -D warnings
+Large independently generated JCS, V8-pattern, and exact trace oracles stay
+outside Git. Preserve their original bundle directories under an absolute root,
+set MINIFIELD_DECODING_PROTOCOL_BULK_FIXTURE_ROOT to that root, then run:
 
-The opt-in corpus bridge reads explicit external input paths. Private corpus rows and bridge output do not belong in this repository.
+cargo test -p minifield-decoding-protocol --locked -- --ignored
+
+Each ignored test requires the root, rejects relative or missing paths, pins the
+bundle manifest.json SHA-256, and verifies every manifest-listed payload hash
+before reading expected values. A bad root or modified oracle fails the test.

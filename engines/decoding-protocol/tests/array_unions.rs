@@ -1,5 +1,6 @@
 #![allow(clippy::too_many_lines)]
-// One fixture test compares every pinned oracle field in one causal traversal.
+// External fixture tests compare every pinned oracle field in one causal traversal.
+mod support;
 use minifield_decoding_protocol::{
     PublicEvent, RawJson, RawJsonLimits, SchemaLimits, SegmentTokenizer, TeacherTraceBuilder,
     TeacherTraceInput, TokenId, TokenPolicy, TraceOwnership, normalize_schema, parse_json_document,
@@ -16,17 +17,16 @@ fn raw(value: &Value) -> Result<RawJson, Box<dyn Error>> {
 }
 
 #[test]
+#[ignore = "requires MINIFIELD_DECODING_PROTOCOL_BULK_FIXTURE_ROOT"]
 fn array_items_keep_independent_union_selections() -> Result<(), Box<dyn Error>> {
-    let cases: Value = serde_json::from_slice(include_bytes!(
-        "../fixtures/argument-array-unions-004/cases.json"
-    ))?;
-    let assertions: Value = serde_json::from_slice(include_bytes!(
-        "../fixtures/argument-array-unions-004/manual-assertions.json"
-    ))?;
-    let expected: Value = serde_json::from_slice(include_bytes!(
-        "../fixtures/argument-array-unions-004/expected.json"
-    ))?;
-    let tokenizer = array_union_tokenizer()?;
+    let bundle = support::required_bundle(
+        "argument-array-unions-004",
+        "63e5a8aa683543d721cf7e800a58871811a2b5b075590cb51e2e093d45429cf8",
+    )?;
+    let cases: Value = serde_json::from_slice(&bundle.read("cases.json")?)?;
+    let assertions: Value = serde_json::from_slice(&bundle.read("manual-assertions.json")?)?;
+    let expected: Value = serde_json::from_slice(&bundle.read("expected.json")?)?;
+    let tokenizer = array_union_tokenizer(&bundle)?;
     let policy = TokenPolicy::draft5()?;
     for (case, assertion) in cases
         .as_array()
@@ -169,16 +169,14 @@ fn tokenizer_from_segments(lines: &str) -> Result<FixtureTokenizer, Box<dyn Erro
     Ok(FixtureTokenizer(segments))
 }
 
-fn fixture_tokenizer() -> Result<FixtureTokenizer, Box<dyn Error>> {
-    tokenizer_from_segments(include_str!(
-        "../fixtures/argument-dynamic-containers-005/segments.jsonl"
-    ))
+fn fixture_tokenizer(bundle: &support::Bundle) -> Result<FixtureTokenizer, Box<dyn Error>> {
+    let lines = String::from_utf8(bundle.read("segments.jsonl")?)?;
+    tokenizer_from_segments(&lines)
 }
 
-fn array_union_tokenizer() -> Result<FixtureTokenizer, Box<dyn Error>> {
-    tokenizer_from_segments(include_str!(
-        "../fixtures/argument-array-unions-004/segments.jsonl"
-    ))
+fn array_union_tokenizer(bundle: &support::Bundle) -> Result<FixtureTokenizer, Box<dyn Error>> {
+    let lines = String::from_utf8(bundle.read("segments.jsonl")?)?;
+    tokenizer_from_segments(&lines)
 }
 
 fn fixture_event(value: &Value) -> Result<PublicEvent, Box<dyn Error>> {
@@ -198,17 +196,16 @@ fn fixture_event(value: &Value) -> Result<PublicEvent, Box<dyn Error>> {
 }
 
 #[test]
+#[ignore = "requires MINIFIELD_DECODING_PROTOCOL_BULK_FIXTURE_ROOT"]
 fn dynamic_container_fixture_keeps_dynamic_arrays_atomic() -> Result<(), Box<dyn Error>> {
-    let cases: Value = serde_json::from_slice(include_bytes!(
-        "../fixtures/argument-dynamic-containers-005/cases.json"
-    ))?;
-    let assertions: Value = serde_json::from_slice(include_bytes!(
-        "../fixtures/argument-dynamic-containers-005/manual-assertions.json"
-    ))?;
-    let expected: Value = serde_json::from_slice(include_bytes!(
-        "../fixtures/argument-dynamic-containers-005/expected.json"
-    ))?;
-    let tokenizer = fixture_tokenizer()?;
+    let bundle = support::required_bundle(
+        "argument-dynamic-containers-005",
+        "9d9d2183526bab15906326ebbe36dd1ff11785acd49ddbda830479b1fba8bb14",
+    )?;
+    let cases: Value = serde_json::from_slice(&bundle.read("cases.json")?)?;
+    let assertions: Value = serde_json::from_slice(&bundle.read("manual-assertions.json")?)?;
+    let expected: Value = serde_json::from_slice(&bundle.read("expected.json")?)?;
+    let tokenizer = fixture_tokenizer(&bundle)?;
     let policy = TokenPolicy::draft5()?;
     for (case, assertion) in cases
         .as_array()

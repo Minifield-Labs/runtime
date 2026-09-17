@@ -16,6 +16,8 @@ The prior CPU/operator foundation passed independent operator and rounding fixtu
 
 The separate protocol package passed 45 tests, formatting, all-target strict Clippy, and documentation checks. Its opt-in local corpus bridge matched all 4,134 rows for fields currently exposed. Routing candidate records, forced operations, globally interleaved operation order, and probe global operation indices are still missing from that bridge.
 
+Bulk generated protocol traces, pattern oracles, and binary64 oracle dumps are excluded from Git. Small default regressions remain in the standalone suite; complete oracle qualification uses an explicitly supplied local artifact directory, documented in engines/decoding-protocol/README.md. Historical test counts above describe the original full local fixture run.
+
 The committed 24 KiB numerical weight fixture is synthetic random test data for a two-layer, 16-hidden model. It is not a pretrained or trained model checkpoint. Actual model assets and private corpus inputs stay outside Git.
 
 ## Remaining

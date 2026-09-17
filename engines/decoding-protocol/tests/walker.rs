@@ -8,6 +8,7 @@
     clippy::unwrap_used
 )]
 // Fixture assertions use explicit failure messages and retain literal wire fragments.
+mod support;
 use minifield_decoding_protocol::{
     ProtocolError, PublicEvent, RawJson, RawJsonLimits, SchemaLimits, SegmentTokenizer,
     TeacherLexicalValue, TeacherTraceBuilder, TeacherTraceInput, TokenByteMap, TokenId,
@@ -78,11 +79,14 @@ fn event(value: &Value) -> Result<PublicEvent, Box<dyn Error>> {
 }
 
 #[test]
+#[ignore = "requires MINIFIELD_DECODING_PROTOCOL_BULK_FIXTURE_ROOT"]
 fn nested_choice_trace_is_schema_derived_and_keeps_child_source_path() -> Result<(), Box<dyn Error>>
 {
-    let fixture: Value = serde_json::from_slice(include_bytes!(
-        "../fixtures/argument-traces-003/expected.json"
-    ))?;
+    let bundle = support::required_bundle(
+        "argument-traces-003",
+        "ee288219c30a62406bc4e6a7107ab27ada6a2374e9eef47b6bc1dc77d5f630ac",
+    )?;
+    let fixture: Value = serde_json::from_slice(&bundle.read("expected.json")?)?;
     let case = &fixture["cases"][0];
     let events = case["public_events"]
         .as_array()
@@ -336,17 +340,24 @@ fn run_fixture_smoke(bytes: &[u8]) -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+#[ignore = "requires MINIFIELD_DECODING_PROTOCOL_BULK_FIXTURE_ROOT"]
 fn all_nonlexical_teacher_synthetic_cases_reach_schema_driven_trace_planning()
 -> Result<(), Box<dyn Error>> {
-    run_fixture_smoke(include_bytes!(
-        "../fixtures/argument-traces-001/expected.json"
-    ))?;
-    run_fixture_smoke(include_bytes!(
-        "../fixtures/argument-traces-002/expected.json"
-    ))?;
-    run_fixture_smoke(include_bytes!(
-        "../fixtures/argument-traces-003/expected.json"
-    ))
+    let first = support::required_bundle(
+        "argument-traces-001",
+        "5941d00753a879b9dd614fa0f2a8769e7fa07ee14058c1cad0a18dd4c1df9f39",
+    )?;
+    let second = support::required_bundle(
+        "argument-traces-002",
+        "dfaaa2ab15d938224d3a75568085223549aea025641d1b437ba714ee2b430266",
+    )?;
+    let third = support::required_bundle(
+        "argument-traces-003",
+        "ee288219c30a62406bc4e6a7107ab27ada6a2374e9eef47b6bc1dc77d5f630ac",
+    )?;
+    run_fixture_smoke(&first.read("expected.json")?)?;
+    run_fixture_smoke(&second.read("expected.json")?)?;
+    run_fixture_smoke(&third.read("expected.json")?)
 }
 use std::collections::BTreeMap;
 
@@ -714,17 +725,24 @@ fn run_fixture_parity(bytes: &[u8]) -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+#[ignore = "requires MINIFIELD_DECODING_PROTOCOL_BULK_FIXTURE_ROOT"]
 fn all_synthetic_teacher_goldens_replay_through_injected_segment_oracle()
 -> Result<(), Box<dyn Error>> {
-    run_fixture_parity(include_bytes!(
-        "../fixtures/argument-traces-001/expected.json"
-    ))?;
-    run_fixture_parity(include_bytes!(
-        "../fixtures/argument-traces-002/expected.json"
-    ))?;
-    run_fixture_parity(include_bytes!(
-        "../fixtures/argument-traces-003/expected.json"
-    ))
+    let first = support::required_bundle(
+        "argument-traces-001",
+        "5941d00753a879b9dd614fa0f2a8769e7fa07ee14058c1cad0a18dd4c1df9f39",
+    )?;
+    let second = support::required_bundle(
+        "argument-traces-002",
+        "dfaaa2ab15d938224d3a75568085223549aea025641d1b437ba714ee2b430266",
+    )?;
+    let third = support::required_bundle(
+        "argument-traces-003",
+        "ee288219c30a62406bc4e6a7107ab27ada6a2374e9eef47b6bc1dc77d5f630ac",
+    )?;
+    run_fixture_parity(&first.read("expected.json")?)?;
+    run_fixture_parity(&second.read("expected.json")?)?;
+    run_fixture_parity(&third.read("expected.json")?)
 }
 
 #[test]

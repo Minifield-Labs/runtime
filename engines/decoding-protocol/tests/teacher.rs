@@ -15,16 +15,26 @@ fn raw(value: &Value) -> Result<RawJson, Box<dyn Error>> {
 #[test]
 fn nested_union_discovery_validates_full_effective_root_and_preserves_source_paths()
 -> Result<(), Box<dyn Error>> {
-    let fixture: Value = serde_json::from_slice(include_bytes!(
-        "../fixtures/argument-traces-003/expected.json"
-    ))?;
-    let case = &fixture["cases"][0];
+    let schema = raw(&serde_json::json!({
+        "type": "object",
+        "properties": {
+            "x": {
+                "anyOf": [{"type": "string"}, {"type": "null"}]
+            }
+        },
+        "required": ["x"],
+        "additionalProperties": false,
+        "anyOf": [
+            {"required": ["x"]},
+            {"properties": {"x": {"type": "null"}}}
+        ]
+    }))?;
+    let arguments = raw(&serde_json::json!({"x": "v"}))?;
     let plan = normalize_schema(
         "synthetic.nested_choice_source_path",
-        raw(&case["original_schema"])?,
+        schema,
         SchemaLimits::default(),
     )?;
-    let arguments = raw(&case["teacher_arguments"])?;
     let choices = discover_teacher_unions(&plan, &arguments)?;
 
     assert_eq!(choices.len(), 2);

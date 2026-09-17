@@ -1,3 +1,5 @@
+mod support;
+
 use minifield_decoding_protocol::{
     BranchAppend, MainAppend, PublicEvent, RawJson, RawJsonLimits, SchemaLimits, SegmentTokenizer,
     TeacherTrace, TeacherTraceBuilder, TeacherTraceInput, TokenId, TokenPolicy, TraceOwnership,
@@ -111,9 +113,10 @@ fn fixture_events(value: &Value) -> TestResult<Vec<PublicEvent>> {
         .collect()
 }
 
-fn fixture_tokenizer() -> TestResult<FixtureTokenizer> {
+fn fixture_tokenizer(bundle: &support::Bundle) -> TestResult<FixtureTokenizer> {
     let mut segments = HashMap::new();
-    for line in include_str!("../fixtures/argument-finite-containers-006/segments.jsonl").lines() {
+    let lines = String::from_utf8(bundle.read("segments.jsonl")?)?;
+    for line in lines.lines() {
         let entry: Value = serde_json::from_str(line)?;
         segments.insert(
             entry["source"].as_str().ok_or("fixture source")?.to_owned(),
@@ -300,17 +303,16 @@ fn assert_fixture_case(
 }
 
 #[test]
+#[ignore = "requires MINIFIELD_DECODING_PROTOCOL_BULK_FIXTURE_ROOT"]
 fn finite_containers_consume_descendant_unions_against_oracle_006() -> TestResult {
-    let cases: Value = serde_json::from_slice(include_bytes!(
-        "../fixtures/argument-finite-containers-006/cases.json"
-    ))?;
-    let assertions: Value = serde_json::from_slice(include_bytes!(
-        "../fixtures/argument-finite-containers-006/manual-assertions.json"
-    ))?;
-    let expected: Value = serde_json::from_slice(include_bytes!(
-        "../fixtures/argument-finite-containers-006/expected.json"
-    ))?;
-    let tokenizer = fixture_tokenizer()?;
+    let bundle = support::required_bundle(
+        "argument-finite-containers-006",
+        "0d50059d7b559a0a67e2ccf03b9f986b6ee093148c11ab1326b709729e543da6",
+    )?;
+    let cases: Value = serde_json::from_slice(&bundle.read("cases.json")?)?;
+    let assertions: Value = serde_json::from_slice(&bundle.read("manual-assertions.json")?)?;
+    let expected: Value = serde_json::from_slice(&bundle.read("expected.json")?)?;
+    let tokenizer = fixture_tokenizer(&bundle)?;
     let policy = TokenPolicy::draft5()?;
     for ((case, assertion), expected_row) in fixture_array(&cases, "finite cases")?
         .iter()
@@ -331,21 +333,48 @@ fn finite_containers_consume_descendant_unions_against_oracle_006() -> TestResul
 
 #[test]
 fn finite_containers_do_not_bypass_original_instance_validation() -> TestResult {
-    let cases: Value = serde_json::from_slice(include_bytes!(
-        "../fixtures/argument-finite-containers-006/negative-cases.json"
-    ))?;
-    for case in fixture_array(&cases, "finite negative cases")? {
-        let plan = normalize_schema(
-            case["name"].as_str().ok_or("negative case name")?,
-            raw(&case["schema"])?,
-            SchemaLimits::default(),
-        )?;
-        let arguments = raw(&case["arguments"])?;
-        assert!(
-            plan_teacher(&plan, &arguments).is_err(),
-            "{} must reject its invalid complete original instance",
-            case["name"]
-        );
+    let cases = [
+        (
+            "constant_does_not_bypass_original_item_constraint",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "value": {
+                        "type": "array",
+                        "const": ["x", 2],
+                        "items": {"type": "integer"}
+                    }
+                },
+                "required": ["value"],
+                "additionalProperties": false
+            }),
+            serde_json::json!({"value": ["x", 2]}),
+        ),
+        (
+            "enum_does_not_bypass_original_object_assertion",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "value": {
+                        "type": "object",
+                        "properties": {
+                            "x": {"oneOf": [{"type": "string"}, {"type": "integer"}]}
+                        },
+                        "required": ["x"],
+                        "additionalProperties": false,
+                        "enum": [{"x": "a"}, {"x": 2}],
+                        "allOf": [{"properties": {"x": {"type": "integer"}}}]
+                    }
+                },
+                "required": ["value"],
+                "additionalProperties": false
+            }),
+            serde_json::json!({"value": {"x": "a"}}),
+        ),
+    ];
+    for (name, schema, arguments) in cases {
+        let plan = normalize_schema(name, raw(&schema)?, SchemaLimits::default())?;
+        assert!(plan_teacher(&plan, &raw(&arguments)?).is_err(), "{name}");
     }
     Ok(())
 }

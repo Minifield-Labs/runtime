@@ -12,10 +12,10 @@ use std::{cell::RefCell, rc::Rc};
 
 use minifield_engine_api::{
     AllocationClass, BackendCapabilities, BackendIdentity, BackendKind, BackendLease, BufferAccess,
-    BufferDescriptor, CompletionPoll, DType, DTypeSet, ExecutorError, GatedShortConvSpec, GqaSpec,
-    InferenceCompletion, InferenceOps, OperationKind, OperationSet, PackedHeadSpec,
-    PrecisionPolicy, RectCopy2d, ResourceLimits, ResourceReport, Result, RotarySpec, Shape,
-    TensorLayout,
+    BufferDescriptor, CompletionPoll, DType, DTypeSet, ExecutorError, FenceRetirement,
+    GatedShortConvSpec, GqaSpec, InferenceCompletion, InferenceOps, OperationKind, OperationSet,
+    PackedHeadSpec, PrecisionPolicy, RectCopy2d, ResourceLimits, ResourceReport, Result,
+    RetirementRejection, RotarySpec, Shape, TensorLayout,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -137,7 +137,203 @@ impl Drop for CpuBuffer {
 #[derive(Debug)]
 pub struct CpuBackend {
     tracker: Rc<RefCell<Tracker>>,
+    retirement: Rc<CpuFenceRetirement>,
     capabilities: BackendCapabilities,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RetirementAccounting {
+    bytes: u64,
+    by_class: ClassBytes,
+}
+
+#[derive(Debug)]
+struct RetiredCpuFence {
+    fence: CpuCompletion<()>,
+    _retained: Vec<CpuBuffer>,
+    accounting: Option<RetirementAccounting>,
+}
+
+/// CPU-owned quarantine for fences whose original loader task was abandoned.
+///
+/// The queue retains buffers until the fence reports a terminal result. It is advanced explicitly
+/// through the portable backend contract and does not create threads or synchronize globally.
+#[derive(Debug)]
+pub struct CpuFenceRetirement {
+    tracker: Rc<RefCell<Tracker>>,
+    retired: RefCell<Vec<RetiredCpuFence>>,
+}
+
+impl CpuFenceRetirement {
+    fn actual_fence_owner(&self, fence: &CpuCompletion<()>) -> bool {
+        fence
+            .tracker
+            .as_ref()
+            .is_some_and(|tracker| Rc::ptr_eq(tracker, &self.tracker))
+    }
+
+    fn retained_accounting(&self, retained: &[CpuBuffer]) -> Result<RetirementAccounting> {
+        let mut by_class = ClassBytes::default();
+        for buffer in retained {
+            if !Rc::ptr_eq(&buffer.tracker, &self.tracker) {
+                return Err(ExecutorError::WrongBackend);
+            }
+            by_class.checked_add(buffer.class, buffer.byte_len())?;
+        }
+        Ok(RetirementAccounting {
+            bytes: by_class.total()?,
+            by_class,
+        })
+    }
+
+    fn preflight_charge(&self, accounting: RetirementAccounting) -> Result<()> {
+        let tracker = self.tracker.borrow();
+        let next_total = tracker
+            .pending_retained_bytes
+            .checked_add(accounting.bytes)
+            .ok_or(ExecutorError::Overflow(
+                "retired CPU buffer bytes overflow pending accounting",
+            ))?;
+        let next_weight = tracker
+            .pending_retained_by_class
+            .weight
+            .checked_add(accounting.by_class.weight)
+            .ok_or(ExecutorError::Overflow(
+                "retired CPU weight bytes overflow pending accounting",
+            ))?;
+        let next_cache = tracker
+            .pending_retained_by_class
+            .cache
+            .checked_add(accounting.by_class.cache)
+            .ok_or(ExecutorError::Overflow(
+                "retired CPU cache bytes overflow pending accounting",
+            ))?;
+        let next_scratch = tracker
+            .pending_retained_by_class
+            .scratch
+            .checked_add(accounting.by_class.scratch)
+            .ok_or(ExecutorError::Overflow(
+                "retired CPU scratch bytes overflow pending accounting",
+            ))?;
+        let next_branch = tracker
+            .pending_retained_by_class
+            .branch
+            .checked_add(accounting.by_class.branch)
+            .ok_or(ExecutorError::Overflow(
+                "retired CPU branch bytes overflow pending accounting",
+            ))?;
+        if next_total > tracker.live_bytes
+            || next_weight > tracker.live_by_class.weight
+            || next_cache > tracker.live_by_class.cache
+            || next_scratch > tracker.live_by_class.scratch
+            || next_branch > tracker.live_by_class.branch
+        {
+            return Err(ExecutorError::BackendFailure(
+                "retired CPU buffers exceed actual backend live ownership",
+            ));
+        }
+        Ok(())
+    }
+
+    fn charge(&self, accounting: RetirementAccounting) {
+        let mut tracker = self.tracker.borrow_mut();
+        // preflight_charge established that every addition fits and that these buffers are a
+        // subset of this actual backend's current live ownership.
+        tracker.pending_retained_bytes = tracker
+            .pending_retained_bytes
+            .saturating_add(accounting.bytes);
+        tracker.pending_retained_by_class.weight = tracker
+            .pending_retained_by_class
+            .weight
+            .saturating_add(accounting.by_class.weight);
+        tracker.pending_retained_by_class.cache = tracker
+            .pending_retained_by_class
+            .cache
+            .saturating_add(accounting.by_class.cache);
+        tracker.pending_retained_by_class.scratch = tracker
+            .pending_retained_by_class
+            .scratch
+            .saturating_add(accounting.by_class.scratch);
+        tracker.pending_retained_by_class.branch = tracker
+            .pending_retained_by_class
+            .branch
+            .saturating_add(accounting.by_class.branch);
+    }
+
+    fn release_accounting(&self, accounting: RetirementAccounting) {
+        let mut tracker = self.tracker.borrow_mut();
+        tracker.pending_retained_bytes = tracker
+            .pending_retained_bytes
+            .saturating_sub(accounting.bytes);
+        tracker
+            .pending_retained_by_class
+            .saturating_sub(AllocationClass::Weight, accounting.by_class.weight);
+        tracker
+            .pending_retained_by_class
+            .saturating_sub(AllocationClass::Cache, accounting.by_class.cache);
+        tracker
+            .pending_retained_by_class
+            .saturating_sub(AllocationClass::Scratch, accounting.by_class.scratch);
+        tracker
+            .pending_retained_by_class
+            .saturating_sub(AllocationClass::Branch, accounting.by_class.branch);
+    }
+}
+
+impl FenceRetirement<CpuCompletion<()>, CpuBuffer> for CpuFenceRetirement {
+    fn retire(
+        &self,
+        fence: CpuCompletion<()>,
+        retained: Vec<CpuBuffer>,
+    ) -> core::result::Result<(), RetirementRejection<CpuCompletion<()>, CpuBuffer>> {
+        if !self.actual_fence_owner(&fence) {
+            return Err(RetirementRejection::new(
+                ExecutorError::WrongBackend,
+                fence,
+                retained,
+            ));
+        }
+        let accounting = match self.retained_accounting(&retained) {
+            Ok(accounting) => accounting,
+            Err(cause) => return Err(RetirementRejection::new(cause, fence, retained)),
+        };
+        if let Err(cause) = self.preflight_charge(accounting) {
+            return Err(RetirementRejection::new(cause, fence, retained));
+        }
+        self.charge(accounting);
+        self.retired.borrow_mut().push(RetiredCpuFence {
+            fence,
+            _retained: retained,
+            accounting: Some(accounting),
+        });
+        Ok(())
+    }
+
+    fn quarantine_rejected(&self, rejected: RetirementRejection<CpuCompletion<()>, CpuBuffer>) {
+        let (_, fence, retained) = rejected.into_parts();
+        self.retired.borrow_mut().push(RetiredCpuFence {
+            fence,
+            _retained: retained,
+            accounting: None,
+        });
+    }
+
+    fn poll_retired(&self) {
+        let mut retired = core::mem::take(&mut *self.retired.borrow_mut());
+        let mut pending = Vec::new();
+        for mut entry in retired.drain(..) {
+            match entry.fence.poll_step() {
+                CompletionPoll::Pending => pending.push(entry),
+                CompletionPoll::Ready(_) => {
+                    if let Some(accounting) = entry.accounting {
+                        self.release_accounting(accounting);
+                    }
+                    drop(entry);
+                }
+            }
+        }
+        self.retired.borrow_mut().extend(pending);
+    }
 }
 
 impl CpuBackend {
@@ -175,20 +371,26 @@ impl CpuBackend {
             max_allocation_bytes: limits.max_allocation_bytes,
             supports_nonblocking_completion: true,
         };
+        let tracker = Rc::new(RefCell::new(Tracker {
+            identity,
+            lease: BackendLease::new(identity),
+            limits,
+            next_allocation: 1,
+            live_bytes: 0,
+            live_by_class: ClassBytes::default(),
+            pending_retained_bytes: 0,
+            pending_retained_by_class: ClassBytes::default(),
+            pending_result_bytes: 0,
+            pending_operations: 0,
+            cancellation_requested: false,
+        }));
+        let retirement = Rc::new(CpuFenceRetirement {
+            tracker: Rc::clone(&tracker),
+            retired: RefCell::new(Vec::new()),
+        });
         Self {
-            tracker: Rc::new(RefCell::new(Tracker {
-                identity,
-                lease: BackendLease::new(identity),
-                limits,
-                next_allocation: 1,
-                live_bytes: 0,
-                live_by_class: ClassBytes::default(),
-                pending_retained_bytes: 0,
-                pending_retained_by_class: ClassBytes::default(),
-                pending_result_bytes: 0,
-                pending_operations: 0,
-                cancellation_requested: false,
-            })),
+            tracker,
+            retirement,
             capabilities,
         }
     }
@@ -1333,6 +1535,7 @@ impl InferenceOps for CpuBackend {
     type Buffer = CpuBuffer;
     type Fence = CpuCompletion<()>;
     type Readback = CpuCompletion<Vec<f32>>;
+    type FenceRetirement = CpuFenceRetirement;
 
     fn identity(&self) -> BackendIdentity {
         CpuBackend::identity(self)
@@ -1340,6 +1543,15 @@ impl InferenceOps for CpuBackend {
 
     fn lease(&self) -> BackendLease {
         CpuBackend::lease(self)
+    }
+
+    fn fence_retirement(&self) -> Rc<Self::FenceRetirement> {
+        Rc::clone(&self.retirement)
+    }
+
+    fn poll_retired_fences(&self) -> Result<()> {
+        self.retirement.poll_retired();
+        Ok(())
     }
 
     fn capabilities(&self) -> BackendCapabilities {
@@ -1742,6 +1954,152 @@ mod tests {
                 .expect("total"),
             0
         );
+    }
+
+    #[test]
+    fn abandoned_fence_retirement_keeps_buffers_accounted_until_terminal_poll() {
+        let mut backend = CpuBackend::new(7, limits());
+        let buffer = backend
+            .upload_f32_classified(
+                Shape::new(&[2]).expect("shape"),
+                &[1.0, 2.0],
+                AllocationClass::Weight,
+            )
+            .expect("buffer");
+        let fence =
+            CpuCompletion::deferred_for_test(Rc::clone(&backend.tracker), Ok(()), Vec::new(), 0)
+                .expect("deferred fence");
+        backend
+            .fence_retirement()
+            .retire(fence, vec![buffer])
+            .expect("same-instance retirement");
+        assert_eq!(backend.resource_report().resident_weight_bytes, 0);
+        assert_eq!(backend.resource_report().pending_operation_bytes, 8);
+        assert_eq!(backend.resource_report().pending_operations, 1);
+
+        backend
+            .poll_retired_fences()
+            .expect("pending retirement poll");
+        assert_eq!(backend.resource_report().pending_operation_bytes, 8);
+        backend
+            .poll_retired_fences()
+            .expect("terminal retirement poll");
+        assert_eq!(backend.resource_report().total_owned_bytes(), Ok(0));
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn retirement_admission_rejects_foreign_or_mixed_payloads_without_losing_inputs() {
+        let mut owner = CpuBackend::new(
+            0xCAFE,
+            ResourceLimits {
+                max_allocation_bytes: 8,
+                max_total_bytes: 8,
+                max_pending_operations: 4,
+            },
+        );
+        let mut foreign = CpuBackend::new(
+            0xCAFE,
+            ResourceLimits {
+                max_allocation_bytes: 8,
+                max_total_bytes: 8,
+                max_pending_operations: 4,
+            },
+        );
+        assert_eq!(owner.identity(), foreign.identity());
+
+        let foreign_buffer = foreign
+            .upload_f32_classified(
+                Shape::new(&[2]).expect("shape"),
+                &[1.0, 2.0],
+                AllocationClass::Weight,
+            )
+            .expect("foreign buffer");
+        let owner_fence = owner.fence().expect("owner fence");
+        let rejected = owner
+            .fence_retirement()
+            .retire(owner_fence, vec![foreign_buffer])
+            .expect_err("foreign buffer must not enter owner accounting");
+        assert_eq!(rejected.cause(), &ExecutorError::WrongBackend);
+        assert_eq!(owner.resource_report().total_owned_bytes(), Ok(0));
+        assert_eq!(foreign.resource_report().total_owned_bytes(), Ok(8));
+        let (_, owner_fence, foreign_buffers) = rejected.into_parts();
+        assert_eq!(foreign_buffers.len(), 1);
+        drop(owner_fence);
+        drop(foreign_buffers);
+        assert_eq!(owner.resource_report().total_owned_bytes(), Ok(0));
+        assert_eq!(foreign.resource_report().total_owned_bytes(), Ok(0));
+
+        let owner_buffer = owner
+            .upload_f32_classified(
+                Shape::new(&[2]).expect("shape"),
+                &[3.0, 4.0],
+                AllocationClass::Weight,
+            )
+            .expect("owner buffer");
+        let foreign_fence = foreign.fence().expect("foreign fence");
+        let rejected = owner
+            .fence_retirement()
+            .retire(foreign_fence, vec![owner_buffer])
+            .expect_err("foreign fence must not enter owner queue");
+        assert_eq!(rejected.cause(), &ExecutorError::WrongBackend);
+        let (_, foreign_fence, owner_buffers) = rejected.into_parts();
+        assert_eq!(owner_buffers.len(), 1);
+        drop(foreign_fence);
+        drop(owner_buffers);
+        assert_eq!(owner.resource_report().total_owned_bytes(), Ok(0));
+        assert_eq!(foreign.resource_report().total_owned_bytes(), Ok(0));
+
+        let owner_buffer = owner
+            .upload_f32_classified(
+                Shape::new(&[1]).expect("shape"),
+                &[5.0],
+                AllocationClass::Weight,
+            )
+            .expect("owner mixed buffer");
+        let foreign_buffer = foreign
+            .upload_f32_classified(
+                Shape::new(&[1]).expect("shape"),
+                &[6.0],
+                AllocationClass::Weight,
+            )
+            .expect("foreign mixed buffer");
+        let owner_fence = owner.fence().expect("mixed fence");
+        let rejected = owner
+            .fence_retirement()
+            .retire(owner_fence, vec![owner_buffer, foreign_buffer])
+            .expect_err("mixed retained set must not partially enter owner queue");
+        assert_eq!(rejected.cause(), &ExecutorError::WrongBackend);
+        assert_eq!(owner.resource_report().total_owned_bytes(), Ok(4));
+        assert_eq!(foreign.resource_report().total_owned_bytes(), Ok(4));
+        let (_, owner_fence, mut mixed) = rejected.into_parts();
+        let owner_buffer = mixed.remove(0);
+        let foreign_buffer = mixed.remove(0);
+        owner
+            .fence_retirement()
+            .retire(owner_fence, vec![owner_buffer])
+            .expect("returned owner payload admits without a foreign element");
+        drop(foreign_buffer);
+        owner.poll_retired_fences().expect("owner terminal poll");
+        assert_eq!(owner.resource_report().total_owned_bytes(), Ok(0));
+        assert_eq!(foreign.resource_report().total_owned_bytes(), Ok(0));
+
+        let stale_buffer = owner
+            .upload_f32_classified(
+                Shape::new(&[2]).expect("shape"),
+                &[7.0, 8.0],
+                AllocationClass::Weight,
+            )
+            .expect("stale generation buffer");
+        let stale_fence = owner.fence().expect("stale generation fence");
+        owner.advance_generation().expect("generation advance");
+        owner
+            .fence_retirement()
+            .retire(stale_fence, vec![stale_buffer])
+            .expect("same actual instance accepts an older generation");
+        assert_eq!(owner.resource_report().pending_operation_bytes, 8);
+        owner.poll_retired_fences().expect("stale terminal poll");
+        assert_eq!(owner.resource_report().total_owned_bytes(), Ok(0));
     }
 
     #[test]

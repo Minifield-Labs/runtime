@@ -898,6 +898,69 @@ pub trait InferenceCompletion {
     fn cancel(&mut self) -> Result<()>;
 }
 
+/// A retirement admission rejection that preserves the complete unresolved payload.
+///
+/// A queue must return this value before changing any ownership or accounting when the fence or
+/// any retained buffer belongs to another actual backend instance. The caller can inspect the
+/// cause and route or retain the original fence and buffers without dropping them.
+#[derive(Debug)]
+pub struct RetirementRejection<Fence, Buffer> {
+    cause: ExecutorError,
+    fence: Fence,
+    retained: Vec<Buffer>,
+}
+
+impl<Fence, Buffer> RetirementRejection<Fence, Buffer> {
+    /// Build an ownership-preserving rejection before retirement admission mutates state.
+    #[must_use]
+    pub const fn new(cause: ExecutorError, fence: Fence, retained: Vec<Buffer>) -> Self {
+        Self {
+            cause,
+            fence,
+            retained,
+        }
+    }
+
+    #[must_use]
+    pub const fn cause(&self) -> &ExecutorError {
+        &self.cause
+    }
+
+    /// Recover the cause and every input exactly as supplied to retirement admission.
+    #[must_use]
+    pub fn into_parts(self) -> (ExecutorError, Fence, Vec<Buffer>) {
+        (self.cause, self.fence, self.retained)
+    }
+}
+
+/// Backend-owned quarantine for an unresolved submission fence and the buffers the submission
+/// still references.
+///
+/// A caller may abandon a higher-level task after cancellation cannot be confirmed. In that
+/// case, the task transfers the fence and buffers here instead of dropping either one. The
+/// backend keeps them alive until `poll_retired` observes a terminal completion result. This
+/// trait deliberately does not require threads, Send, or Sync.
+pub trait FenceRetirement<Fence, Buffer> {
+    /// Admit one unresolved fence and every buffer retained by that submission.
+    ///
+    /// Admission checks actual backend ownership before changing accounting. A rejection returns
+    /// every consumed input so a normal caller can route it safely.
+    fn retire(
+        &self,
+        fence: Fence,
+        retained: Vec<Buffer>,
+    ) -> core::result::Result<(), RetirementRejection<Fence, Buffer>>;
+
+    /// Conservatively retain a payload that a task cannot return because it is being dropped.
+    ///
+    /// The payload must have come from this queue's `retire` rejection. Implementations retain it
+    /// without cross-instance accounting and release it only after the carried fence is terminal.
+    fn quarantine_rejected(&self, rejected: RetirementRejection<Fence, Buffer>);
+
+    /// Advance all abandoned fences once. A ready success or error releases its retained buffers.
+    fn poll_retired(&self);
+}
+
 /// Finite, backend-neutral inference operation contract.
 ///
 /// Implementors own buffer storage and expose pollable fence/readback completion types.
@@ -910,11 +973,16 @@ pub trait InferenceOps {
     type Buffer;
     type Fence: InferenceCompletion<Output = ()>;
     type Readback: InferenceCompletion<Output = Vec<f32>>;
+    type FenceRetirement: FenceRetirement<Self::Fence, Self::Buffer> + 'static;
 
     fn identity(&self) -> BackendIdentity;
 
     /// Return this backend's non-forgeable actual-instance lease and current generation.
     fn lease(&self) -> BackendLease;
+    /// Return the backend-owned retirement queue for unresolved submission fences.
+    fn fence_retirement(&self) -> Rc<Self::FenceRetirement>;
+    /// Advance backend-owned abandoned fence retirement without a blocking synchronization.
+    fn poll_retired_fences(&self) -> Result<()>;
     fn capabilities(&self) -> BackendCapabilities;
     fn resource_report(&self) -> ResourceReport;
     fn advance_generation(&mut self) -> Result<()>;

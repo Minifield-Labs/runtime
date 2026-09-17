@@ -1,18 +1,20 @@
 #![allow(clippy::expect_used, clippy::too_many_lines)]
 
+use std::{cell::RefCell, rc::Rc};
+
 use minifield_backend_cpu::{CpuBackend, CpuBuffer, CpuCompletion};
 use minifield_engine_api::{
     AllocationClass, AssetProvider, BackendCapabilities, BackendIdentity, BackendLease,
-    CompletionPoll, ExecutorError, GatedShortConvSpec, GqaSpec, InferenceCompletion, InferenceOps,
-    MemoryAssetProvider, MemoryAssetRead, PackedHeadSpec, RectCopy2d, ResourceLimits,
-    ResourceReport, Result, RotarySpec, Shape,
+    CompletionPoll, ExecutorError, FenceRetirement, GatedShortConvSpec, GqaSpec,
+    InferenceCompletion, InferenceOps, MemoryAssetProvider, MemoryAssetRead, PackedHeadSpec,
+    RectCopy2d, ResourceLimits, ResourceReport, Result, RetirementRejection, RotarySpec, Shape,
 };
 use minifield_executor_core::{
     Lfm2LoadRequest, Lfm2TypedWeights, Lfm2WeightLoadTask, Lfm2WeightPlan, Lfm2WeightRole,
     LoadRequest, LoaderLimits, LoaderPoll, LoaderStage, StorageDType, WeightLayout, WeightLoadTask,
     WeightPlan, WeightRequirement, parse_lfm2_config, parse_safetensors_header,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 const CASES: &str = include_str!("fixtures/asset-format-001/cases.json");
@@ -1087,10 +1089,25 @@ fn loader_rejects_colliding_backend_identity_after_first_upload_without_mixing_w
     assert_eq!(second.resource_report().total_owned_bytes(), Ok(0));
 }
 
+#[derive(Debug, Default)]
+struct DeferredFenceState {
+    cancel_calls: u32,
+    dropped_unready: u32,
+}
+
 #[derive(Debug)]
 struct DeferredFence {
     pending: u8,
     fail_cancel: bool,
+    state: Rc<RefCell<DeferredFenceState>>,
+}
+
+impl Drop for DeferredFence {
+    fn drop(&mut self) {
+        if self.pending != 0 {
+            self.state.borrow_mut().dropped_unready += 1;
+        }
+    }
 }
 
 impl InferenceCompletion for DeferredFence {
@@ -1106,13 +1123,60 @@ impl InferenceCompletion for DeferredFence {
     }
 
     fn cancel(&mut self) -> Result<()> {
+        self.state.borrow_mut().cancel_calls += 1;
         if self.fail_cancel {
             Err(ExecutorError::BackendFailure(
                 "queued fence cancellation is not yet confirmed",
             ))
         } else {
+            self.pending = 0;
             Ok(())
         }
+    }
+}
+
+#[derive(Debug)]
+struct RetiredDeferredFence {
+    fence: DeferredFence,
+    _retained: Vec<CpuBuffer>,
+}
+
+#[derive(Debug, Default)]
+struct DeferredFenceRetirement {
+    retired: RefCell<Vec<RetiredDeferredFence>>,
+}
+
+impl FenceRetirement<DeferredFence, CpuBuffer> for DeferredFenceRetirement {
+    fn retire(
+        &self,
+        fence: DeferredFence,
+        retained: Vec<CpuBuffer>,
+    ) -> core::result::Result<(), RetirementRejection<DeferredFence, CpuBuffer>> {
+        self.retired.borrow_mut().push(RetiredDeferredFence {
+            fence,
+            _retained: retained,
+        });
+        Ok(())
+    }
+
+    fn quarantine_rejected(&self, rejected: RetirementRejection<DeferredFence, CpuBuffer>) {
+        let (_, fence, retained) = rejected.into_parts();
+        self.retired.borrow_mut().push(RetiredDeferredFence {
+            fence,
+            _retained: retained,
+        });
+    }
+
+    fn poll_retired(&self) {
+        let mut retired = core::mem::take(&mut *self.retired.borrow_mut());
+        let mut pending = Vec::new();
+        for mut entry in retired.drain(..) {
+            match entry.fence.poll_step() {
+                CompletionPoll::Pending => pending.push(entry),
+                CompletionPoll::Ready(_) => drop(entry),
+            }
+        }
+        self.retired.borrow_mut().extend(pending);
     }
 }
 
@@ -1122,6 +1186,8 @@ struct DeferredFenceBackend {
     cpu: CpuBackend,
     pending_fence_polls: u8,
     fail_fence_cancel: bool,
+    state: Rc<RefCell<DeferredFenceState>>,
+    retirement: Rc<DeferredFenceRetirement>,
 }
 
 impl DeferredFenceBackend {
@@ -1130,6 +1196,8 @@ impl DeferredFenceBackend {
             cpu: backend(total),
             pending_fence_polls,
             fail_fence_cancel,
+            state: Rc::new(RefCell::new(DeferredFenceState::default())),
+            retirement: Rc::new(DeferredFenceRetirement::default()),
         }
     }
 }
@@ -1138,12 +1206,20 @@ impl InferenceOps for DeferredFenceBackend {
     type Buffer = CpuBuffer;
     type Fence = DeferredFence;
     type Readback = CpuCompletion<Vec<f32>>;
+    type FenceRetirement = DeferredFenceRetirement;
 
     fn identity(&self) -> BackendIdentity {
         self.cpu.identity()
     }
     fn lease(&self) -> BackendLease {
         self.cpu.lease()
+    }
+    fn fence_retirement(&self) -> Rc<Self::FenceRetirement> {
+        Rc::clone(&self.retirement)
+    }
+    fn poll_retired_fences(&self) -> Result<()> {
+        self.retirement.poll_retired();
+        Ok(())
     }
     fn capabilities(&self) -> BackendCapabilities {
         self.cpu.capabilities()
@@ -1173,6 +1249,7 @@ impl InferenceOps for DeferredFenceBackend {
         Ok(DeferredFence {
             pending: self.pending_fence_polls,
             fail_cancel: self.fail_fence_cancel,
+            state: Rc::clone(&self.state),
         })
     }
     fn read_f32_async(&self, buffer: &CpuBuffer) -> Result<CpuCompletion<Vec<f32>>> {
@@ -1343,6 +1420,209 @@ fn deferred_fence_withholds_lfm_publication_and_unconfirmed_cancel_drains_staged
         Ok(0),
         "draining releases known-complete staged CPU buffers"
     );
+}
+
+#[test]
+fn late_backend_and_generation_rejection_drain_original_fence_before_releasing_staged_weights() {
+    let mut owner = DeferredFenceBackend::new(64 * 1024, 2, true);
+    let mut foreign = DeferredFenceBackend::new(64 * 1024, 2, true);
+    let mut provider = MemoryAssetProvider::new(TINY_WEIGHTS.to_vec(), 64 * 1024);
+    let mut task = WeightLoadTask::<MemoryAssetRead, DeferredFence, CpuBuffer>::begin(request(
+        "lfm2",
+        TINY_CONFIG,
+        TINY_WEIGHTS,
+        tiny_plan(),
+        limits(),
+    ))
+    .expect("task");
+    for _ in 0..47 {
+        assert!(matches!(
+            task.poll_step(&mut provider, &mut owner),
+            LoaderPoll::Pending
+        ));
+    }
+    assert!(matches!(
+        task.poll_step(&mut provider, &mut owner),
+        LoaderPoll::Pending
+    ));
+    let staged_bytes = owner
+        .resource_report()
+        .total_owned_bytes()
+        .expect("staged bytes");
+    assert_eq!(staged_bytes, 22_048);
+
+    assert!(matches!(
+        task.poll_step(&mut provider, &mut foreign),
+        LoaderPoll::Pending
+    ));
+    assert_eq!(owner.state.borrow().cancel_calls, 1);
+    assert_eq!(
+        owner.resource_report().total_owned_bytes(),
+        Ok(staged_bytes),
+        "late foreign backend rejection retains every staged weight"
+    );
+    assert!(matches!(
+        task.poll_step(&mut provider, &mut owner),
+        LoaderPoll::Pending
+    ));
+    assert!(matches!(
+        task.poll_step(&mut provider, &mut owner),
+        LoaderPoll::Pending
+    ));
+    match task.poll_step(&mut provider, &mut owner) {
+        LoaderPoll::Ready(Err(error)) => {
+            assert_eq!(error.stage, LoaderStage::Backend);
+            assert_eq!(error.cause, ExecutorError::WrongBackend);
+        }
+        _ => panic!("foreign backend rejection did not drain to its original error"),
+    }
+    assert_eq!(owner.resource_report().total_owned_bytes(), Ok(0));
+
+    let mut generation_owner = DeferredFenceBackend::new(64 * 1024, 2, true);
+    let mut generation_provider = MemoryAssetProvider::new(TINY_WEIGHTS.to_vec(), 64 * 1024);
+    let mut generation_task = WeightLoadTask::<MemoryAssetRead, DeferredFence, CpuBuffer>::begin(
+        request("lfm2", TINY_CONFIG, TINY_WEIGHTS, tiny_plan(), limits()),
+    )
+    .expect("generation task");
+    for _ in 0..47 {
+        assert!(matches!(
+            generation_task.poll_step(&mut generation_provider, &mut generation_owner),
+            LoaderPoll::Pending
+        ));
+    }
+    assert!(matches!(
+        generation_task.poll_step(&mut generation_provider, &mut generation_owner),
+        LoaderPoll::Pending
+    ));
+    let staged_bytes = generation_owner
+        .resource_report()
+        .total_owned_bytes()
+        .expect("generation staged bytes");
+    generation_owner
+        .advance_generation()
+        .expect("generation change");
+    assert!(matches!(
+        generation_task.poll_step(&mut generation_provider, &mut generation_owner),
+        LoaderPoll::Pending
+    ));
+    assert_eq!(generation_owner.state.borrow().cancel_calls, 1);
+    assert_eq!(
+        generation_owner.resource_report().total_owned_bytes(),
+        Ok(staged_bytes),
+        "late generation rejection retains every staged weight"
+    );
+    assert!(matches!(
+        generation_task.poll_step(&mut generation_provider, &mut generation_owner),
+        LoaderPoll::Pending
+    ));
+    assert!(matches!(
+        generation_task.poll_step(&mut generation_provider, &mut generation_owner),
+        LoaderPoll::Pending
+    ));
+    match generation_task.poll_step(&mut generation_provider, &mut generation_owner) {
+        LoaderPoll::Ready(Err(error)) => {
+            assert_eq!(error.stage, LoaderStage::Backend);
+            assert_eq!(error.cause, ExecutorError::StaleBuffer);
+        }
+        _ => panic!("generation rejection did not drain to its original error"),
+    }
+    assert_eq!(
+        generation_owner.resource_report().total_owned_bytes(),
+        Ok(0)
+    );
+}
+
+#[test]
+fn dropping_after_unconfirmed_cancel_transfers_fence_and_staged_weights_to_backend_retirement() {
+    let mut runtime = DeferredFenceBackend::new(64 * 1024, 2, true);
+    let state = Rc::clone(&runtime.state);
+    let mut provider = MemoryAssetProvider::new(TINY_WEIGHTS.to_vec(), 64 * 1024);
+    let mut task = WeightLoadTask::<MemoryAssetRead, DeferredFence, CpuBuffer>::begin(request(
+        "lfm2",
+        TINY_CONFIG,
+        TINY_WEIGHTS,
+        tiny_plan(),
+        limits(),
+    ))
+    .expect("task");
+    for _ in 0..47 {
+        assert!(matches!(
+            task.poll_step(&mut provider, &mut runtime),
+            LoaderPoll::Pending
+        ));
+    }
+    assert!(matches!(
+        task.poll_step(&mut provider, &mut runtime),
+        LoaderPoll::Pending
+    ));
+    let staged_bytes = runtime
+        .resource_report()
+        .total_owned_bytes()
+        .expect("staged bytes");
+    assert_eq!(staged_bytes, 22_048);
+    assert!(task.cancel().is_err());
+    assert_eq!(state.borrow().cancel_calls, 1);
+
+    drop(task);
+    assert_eq!(
+        runtime.resource_report().total_owned_bytes(),
+        Ok(staged_bytes),
+        "task drop transfers unresolved work to backend retirement"
+    );
+    assert_eq!(
+        state.borrow().dropped_unready,
+        0,
+        "retired fence is not dropped before a terminal poll"
+    );
+    runtime.poll_retired_fences().expect("first retired poll");
+    assert_eq!(
+        runtime.resource_report().total_owned_bytes(),
+        Ok(staged_bytes)
+    );
+    runtime.poll_retired_fences().expect("second retired poll");
+    assert_eq!(
+        runtime.resource_report().total_owned_bytes(),
+        Ok(staged_bytes)
+    );
+    runtime
+        .poll_retired_fences()
+        .expect("terminal retired poll");
+    assert_eq!(runtime.resource_report().total_owned_bytes(), Ok(0));
+    assert_eq!(state.borrow().dropped_unready, 0);
+}
+
+#[test]
+fn present_nonstring_lfm_dtype_rejects_before_asset_read_or_weight_publication() {
+    let malformed = [
+        Value::Null,
+        Value::Bool(false),
+        json!(123),
+        json!({"nested": "value"}),
+        json!([]),
+    ];
+    for dtype in malformed {
+        let mut config: Value = serde_json::from_slice(TINY_CONFIG).expect("tiny config");
+        config["dtype"] = dtype;
+        let config_bytes = serde_json::to_vec(&config).expect("malformed config bytes");
+        assert_eq!(
+            Lfm2LoadRequest::new(
+                config_bytes.clone(),
+                hash(&config_bytes),
+                TINY_WEIGHTS.len() as u64,
+                hash(TINY_WEIGHTS),
+                limits(),
+            ),
+            Err(ExecutorError::InvalidArgument(
+                "LFM2 config dtype must be a supported string"
+            ))
+        );
+        let runtime = backend(64 * 1024);
+        assert_eq!(
+            runtime.resource_report().total_owned_bytes(),
+            Ok(0),
+            "config rejection precedes asset provider reads and all uploads"
+        );
+    }
 }
 
 #[test]

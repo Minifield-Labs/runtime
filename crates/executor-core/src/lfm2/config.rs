@@ -195,11 +195,17 @@ fn optional_bool(object: &Map<String, Value>, name: &'static str) -> Result<Opti
 }
 
 fn parse_weight_storage_dtype(object: &Map<String, Value>) -> Result<Lfm2StorageDType> {
-    match object.get("dtype").and_then(Value::as_str) {
-        None | Some("float32" | "f32") => Ok(Lfm2StorageDType::F32),
-        Some("bfloat16" | "bf16") => Ok(Lfm2StorageDType::BF16),
-        Some(_) => Err(ExecutorError::Unsupported(
-            "configured LFM2 source storage dtype is unsupported",
+    match object.get("dtype") {
+        None => Ok(Lfm2StorageDType::F32),
+        Some(Value::String(text)) => match text.as_str() {
+            "float32" | "f32" => Ok(Lfm2StorageDType::F32),
+            "bfloat16" | "bf16" => Ok(Lfm2StorageDType::BF16),
+            _ => Err(ExecutorError::Unsupported(
+                "configured LFM2 source storage dtype is unsupported",
+            )),
+        },
+        Some(_) => Err(ExecutorError::InvalidArgument(
+            "LFM2 config dtype must be a supported string",
         )),
     }
 }

@@ -11,8 +11,8 @@ use std::{
 
 use minifield_engine_api::{
     AllocationClass, AssetBytes, AssetManifest, AssetProvider, BackendIdentity, BackendLease,
-    ByteRange, CompletionPoll, DType, ExecutorError, InferenceCompletion, InferenceOps, Result,
-    Shape, TensorBinding, TensorRecord, TensorRequirement,
+    ByteRange, CompletionPoll, DType, ExecutorError, FenceRetirement, InferenceCompletion,
+    InferenceOps, Result, Shape, TensorBinding, TensorRecord, TensorRequirement,
 };
 use serde::{
     Deserializer as _,
@@ -797,6 +797,8 @@ pub struct WeightLoadTask<Read, Fence, Buffer> {
     staged: Vec<StagedWeight<Buffer>>,
     report: LoaderResourceReport,
     backend: Option<BackendLease>,
+    retirement: Option<Rc<dyn FenceRetirement<Fence, Buffer>>>,
+    terminal_error: Option<LoaderError>,
     marker: PhantomData<Buffer>,
 }
 
@@ -862,6 +864,8 @@ where
                 ..LoaderResourceReport::default()
             },
             backend: None,
+            retirement: None,
+            terminal_error: None,
             marker: PhantomData,
         })
     }
@@ -885,7 +889,9 @@ where
         let observed = backend.lease();
         match &self.backend {
             None => {
+                let retirement: Rc<dyn FenceRetirement<Fence, Buffer>> = backend.fence_retirement();
                 self.backend = Some(observed);
+                self.retirement = Some(retirement);
                 Ok(())
             }
             Some(bound) if !bound.same_actual_instance(&observed) => {
@@ -910,6 +916,10 @@ where
                     // The backend could still own queued work. Keep every staged buffer until the
                     // same fence becomes ready through the normal poll path.
                     self.phase = LoadPhase::DrainingFence(fence);
+                    self.terminal_error = Some(LoaderError {
+                        stage: LoaderStage::Cancelled,
+                        cause: ExecutorError::Cancelled,
+                    });
                     Err(LoaderError {
                         stage: LoaderStage::Cancelled,
                         cause,
@@ -954,6 +964,37 @@ where
         }
     }
 
+    fn finish_error_after_fence(&mut self, error: LoaderError) -> LoaderPoll<TypedWeights<Buffer>> {
+        let phase = core::mem::replace(&mut self.phase, LoadPhase::Failed);
+        match phase {
+            LoadPhase::Fence(mut fence) => match fence.cancel() {
+                Ok(()) | Err(ExecutorError::CompletionConsumed) => {
+                    self.release_transient_host();
+                    LoaderPoll::Ready(Err(error))
+                }
+                Err(_) => {
+                    // A late backend or generation rejection must not drop staged buffers while
+                    // this fence could still reference them. Preserve the original failure until
+                    // normal polling establishes that the submission is terminal.
+                    self.phase = LoadPhase::DrainingFence(fence);
+                    self.terminal_error = Some(error);
+                    LoaderPoll::Pending
+                }
+            },
+            LoadPhase::DrainingFence(fence) => {
+                self.phase = LoadPhase::DrainingFence(fence);
+                if self.terminal_error.is_none() {
+                    self.terminal_error = Some(error);
+                }
+                LoaderPoll::Pending
+            }
+            _ => {
+                self.release_transient_host();
+                LoaderPoll::Ready(Err(error))
+            }
+        }
+    }
+
     pub fn poll_step<P, Backend>(
         &mut self,
         provider: &mut P,
@@ -966,20 +1007,19 @@ where
         let result = if matches!(self.phase, LoadPhase::DrainingFence(_)) {
             self.step_inner(provider, backend)
         } else {
-            self.bind_backend(backend)
-                .map_err(|cause| LoaderError {
-                    stage: LoaderStage::Backend,
-                    cause,
-                })
-                .and_then(|()| self.step_inner(provider, backend))
+            match self.bind_backend(backend) {
+                Ok(()) => self.step_inner(provider, backend),
+                Err(cause) => {
+                    return self.finish_error_after_fence(LoaderError {
+                        stage: LoaderStage::Backend,
+                        cause,
+                    });
+                }
+            }
         };
         match result {
             Ok(poll) => poll,
-            Err(error) => {
-                self.release_transient_host();
-                self.phase = LoadPhase::Failed;
-                LoaderPoll::Ready(Err(error))
-            }
+            Err(error) => self.finish_error_after_fence(error),
         }
     }
 
@@ -1358,10 +1398,13 @@ where
                 CompletionPoll::Ready(_) => {
                     self.release_transient_host();
                     self.phase = LoadPhase::Failed;
-                    Ok(LoaderPoll::Ready(Err(LoaderError {
-                        stage: LoaderStage::Cancelled,
-                        cause: ExecutorError::Cancelled,
-                    })))
+                    Ok(LoaderPoll::Ready(Err(self
+                        .terminal_error
+                        .take()
+                        .unwrap_or(LoaderError {
+                            stage: LoaderStage::Cancelled,
+                            cause: ExecutorError::Cancelled,
+                        }))))
                 }
             },
             LoadPhase::Fence(fence) => match fence.poll_step() {
@@ -1477,6 +1520,27 @@ where
                 stage: LoaderStage::FinalFence,
                 cause: ExecutorError::CompletionConsumed,
             }),
+        }
+    }
+}
+
+impl<Read, Fence, Buffer> Drop for WeightLoadTask<Read, Fence, Buffer> {
+    fn drop(&mut self) {
+        let phase = core::mem::replace(&mut self.phase, LoadPhase::Failed);
+        let (LoadPhase::Fence(fence) | LoadPhase::DrainingFence(fence)) = phase else {
+            return;
+        };
+        let retained = core::mem::take(&mut self.staged)
+            .into_iter()
+            .map(|staged| staged.tensor.buffer)
+            .collect();
+        if let Some(retirement) = self.retirement.take()
+            && let Err(rejected) = retirement.retire(fence, retained)
+        {
+            // Loader staging is bound to this exact backend before a fence can exist. If a
+            // backend nevertheless rejects during Drop, the task cannot return ownership, so
+            // retain the complete payload conservatively until its carried fence is terminal.
+            retirement.quarantine_rejected(rejected);
         }
     }
 }

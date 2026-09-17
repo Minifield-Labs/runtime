@@ -22,13 +22,13 @@ The committed 24 KiB numerical weight fixture is synthetic random test data for 
 
 The owned tokenizer passed ten compact tests and two external oracle suites. Coverage includes 1,145 exact encode/BOS/decode cases, streaming and byte handling, all 1,112,064 Unicode scalar classifications, strict malformed-asset checks, and native/wasm32 compilation. Tokenizer assets remain caller supplied.
 
-The portable Rust generation library and native `minifield-infer` binary are implemented. The binary reads bounded UTF-8 stdin, preserves prompt whitespace, applies only the explicit BOS choice, and writes generated plaintext without an envelope. Twelve compact tests pass, and all six hash-verified trained-tiny cases match both library token IDs/text and actual binary stdin/stdout bytes. Independent coordinator checks cover Unicode output, malformed UTF-8 and duplicate options. Strict Clippy, formatting, docs and the generation library wasm32 compile check pass. Actual browser execution is the next separate gate.
+The portable Rust generation library and native `minifield-infer` binary are implemented. The binary reads bounded UTF-8 stdin, preserves prompt whitespace, applies only the explicit BOS choice, and writes generated plaintext without an envelope. Twelve compact tests pass, and all six hash-verified trained-tiny cases match both library token IDs/text and actual binary stdin/stdout bytes. Independent coordinator checks cover Unicode output, malformed UTF-8 and duplicate options. Strict Clippy, formatting, docs and the generation library wasm32 compile check pass. An external raw-WASM test bridge also ran all six cases exactly in real Chrome 153 headless, using caller-supplied model/tokenizer bytes and the same Rust implementation. Source, binary and input hashes were checked. This verifies the debug scalar implementation in a browser; it is not an optimized release or throughput benchmark.
 
 ## Remaining
 
 - Quantized model execution and useful-model qualification beyond the tiny diagnostic.
 - Owned CUDA and Metal backends, quantized kernels, artifact integration, and cross-backend qualification.
-- Browser delivery testing; wasm32 compilation alone does not establish browser correctness or performance.
+- Browser release optimization, persistent-session/cancellation integration and performance testing beyond the six-case debug qualification.
 
 Historical JavaScript and excluded engine prototypes are not the new Rust executor. The trained tiny diagnostic establishes CPU numerical integration only. Actual asynchronous device ownership, low-precision execution, useful model quality, and backend performance remain unqualified.
 

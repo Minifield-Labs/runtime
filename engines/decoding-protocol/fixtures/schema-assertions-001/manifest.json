@@ -1,0 +1,13 @@
+{
+  "schema": "minifield.experiment.schema-assertions-fixture/1",
+  "case_count": 81,
+  "cases_sha256": "05c4e3f73ac6697d7b92c73b80e210516c710613f3def21863ac87e8071ec8ca",
+  "generator_sha256": "070ce015174c10ff70419c7daf051c520ac94abbfea340c60e3bea5614e0f71f",
+  "node": "v21.6.1",
+  "v8": "11.8.172.17-node.19",
+  "python": "3.12.13",
+  "jsonschema": "4.25.1",
+  "decimal_precision": 2048,
+  "production_imports": [],
+  "note": "Node JSON.parse/stringify determines binary64 interpretation; independent jsonschema validates full original structure using integral int/exact Decimal canonical numbers. Additional raw-integer rule is manually predeclared and intentionally not claimed to be native JSON Schema semantics."
+}

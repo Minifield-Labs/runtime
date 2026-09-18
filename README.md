@@ -1,63 +1,43 @@
 # Minifield Runtime
 
-Run a delivered product specialist and connect its supported actions to the host application.
+Minifield Runtime is an inference-only Rust component for executing delivered models locally. It is intended to embed in native applications and browser/WASM callers, with a thin executable accepting plaintext input and returning plaintext output. Product policy, tool execution, UI, network services, jobs, training, and artifact distribution belong to callers.
 
+The active Rust workspace owns its execution and kernels. It has no third-party tensor or inference framework. CPU/WASM is the portable baseline; CUDA and Metal are planned low-level backends.
 This independent repository includes audited scalar Q4/Q8 matrix references,
 serialized model ownership, WASM memory checks, token validation, bounded
 sequence buckets, and a native mistral.rs adapter for complete LFM2 training
 model exports. Browser Worker hosting and product integration remain to be
 implemented.
 
-Read the [detailed procedure and success criteria](docs/procedure.md) for implementation order, required artifacts, validation, failure handling, and the first milestone.
+## Current implementation
 
-The [ordered experiment plan](experiments/README.md) contains individual protocols for the decoder baseline, prefix reuse, memory, packed execution, action syntax, and conditional KV compression/speculative decoding.
+- engines/engine-api: backend-neutral tensor, resource, completion, asset, token, and finite inference-operation contracts.
+- crates/backend-cpu: owned scalar FP32 storage and arithmetic, linear, normalization, convolution, rotary-position, and attention kernels.
+- crates/executor-core: checked configuration and bounded typed weight loading, full LFM2 execution, prefix caches, append/fork operations, and complete candidate scoring.
+- crates/text-tokenizer: owned bounded tokenizer asset parsing, byte-level BPE, Unicode pretokenization, and incremental UTF-8 decoding.
+- crates/text-generation: backend-neutral bounded greedy plaintext generation over a caller-provided tokenizer and token executor.
+- crates/infer-cli: native bounded local-bundle loader and plaintext stdin/stdout executable with explicit BOS and capacity options.
+- engines/decoding-protocol: separate pure Rust schema/argument framing and teacher-trace component for caller integration.
 
-The [Wires transfer audit](docs/wires-audit.md) records source provenance, repaired lifecycle/input issues, benchmark limits, and the remaining browser work.
+The model executor, tokenizer, bounded greedy generation loop, and plaintext binary now run the trained tiny diagnostic model through owned Rust APIs. Quantized execution and device backends remain implementation work. Read [implementation status](docs/two-stage-implementation-status.md) for exact validation and remaining gaps.
 
-## Ownership
-
-- src/inference/: model loading, tokenizer/template application, and decoding interface.
-- src/context/: authorized observations, product policy, history, and context limits.
-- src/tools/: schema validation, tool dispatch, results, and error handling.
-- src/sessions/: the model/action loop, cancellation, budgets, and undo boundaries.
-- engines/: backend-specific implementations and compatibility tests.
-- products/: host integrations and supported-action mappings.
-- configs/: reviewed configuration templates.
-
-The current foundation uses portable JavaScript modules and a dependency-free Rust reference crate. The deployed decoder/backend will be selected during the deployment proof. Python supports development-time contract checks.
-
-Platform owns the product UI/API, job history, artifact registry, and release controls from the first version. Runtime consumes registered bundles and returns validation evidence tied to bundle, engine, product, and device versions. Core inference remains Rust with a thin browser integration layer.
-
-## Input contract
-
-Load self-contained model bundles matching the pinned schema in contracts/model-bundle/. Check checksums, supported engine/format, product version, and memory/context constraints before starting a session. Refuse unknown versions and fixtures in a real loader.
-
-The host app enforces permissions and confirmation rules. Keep private training metadata and judgments outside model-visible context. Logging and any cloud fallback need an explicit data-flow decision consistent with local AI processing.
-
-See [bundle rules](contracts/model-bundle/v0.1.0/README.md). Model packing belongs to the training repository; this repository owns evidence that the delivered artifact runs correctly on the target device.
+Historical JavaScript helpers and excluded engine prototypes are not part of the new Rust execution core. The scalar CPU implementation provides a correctness baseline; it makes no throughput claim.
 
 ## Local checks
 
-Use Python 3.11 or newer for the contract checks:
+Use Rust 1.89 with the wasm32 target installed:
 
-```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python scripts/check_contracts.py
-```
+    cargo +1.89.0 fmt --all --check
+    cargo +1.89.0 test --workspace --locked
+    cargo +1.89.0 clippy --workspace --all-targets --locked -- -D warnings
+    cargo +1.89.0 check --workspace --target wasm32-unknown-unknown --locked
 
-The check validates schemas, pinned snapshots, example hashes, and handoff consistency. It also checks that malformed records are rejected. It doesn't run a teacher, a trainer, or model inference.
+Opt-in checks requiring external model assets or private corpus inputs are documented in their test sources and are separate from the standalone synthetic suite. A wasm32 compile check is not browser execution qualification.
 
-Run the audited JavaScript and scalar kernel tests with Node 22+ and Rust 1.85+:
+## Boundaries
 
-```sh
-npm test
-cargo test --manifest-path engines/quant-reference/Cargo.toml --offline
-cargo clippy --manifest-path engines/quant-reference/Cargo.toml --offline --all-targets -- -D warnings
-```
+Backend-neutral Rust owns model loading and execution policy within a caller-supplied resource budget. Backends own storage, finite kernels, and device completion. Opaque ownership and generation checks prevent foreign or stale tensors from being reused.
 
-See the [reference crate](engines/quant-reference/README.md) for WASM compilation and cross-language matrix checks. The tiny MFQ8 fixture is a kernel contract, separate from complete model bundles.
+Only synthetic test fixtures live with source. Actual model weights, private corpus records, training output, and run logs remain outside Git. The tiny numerical loader fixture contains generated random values and is retained solely for standalone tests.
 
-## First implementation
-
-Choose one reference device and engine. Load an intact candidate, round-trip a tool call, and measure downloaded bytes, cold load, peak memory, and complete-task latency. Integrate a trained product bundle after this path works.
+This repository must work as a standalone clone and cannot import sibling repositories by filesystem path.

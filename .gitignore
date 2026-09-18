@@ -26,3 +26,6 @@ tmp/
 *.ckpt
 *.pt
 *.pth
+
+# Synthetic two-layer numerical test fixture required by standalone loader tests.
+!/crates/executor-core/tests/fixtures/numerical-lfm-001-weights.safetensors

@@ -1,0 +1,25 @@
+{
+  "schema": "minifield.fixture-manifest/draft-1",
+  "purpose": "Independent tiny operator oracle for original Rust CPU/WASM/CUDA/Metal kernels; not full-model qualification",
+  "case_count": 12,
+  "numpy_version": "2.2.6",
+  "cases_sha256": "03e5795ee0ec385e8bf889f74bf8d992f5c1b414c2332b30f767d543d6db5ebc",
+  "generator_sha256": "b8d73df551e1cd7899b970f39c8fe51311104d12bda77fcf82ded11b39df839c",
+  "source": "runs/coordinator-inference-ops-001/generate.py",
+  "declared_scope": [
+    "linear",
+    "rms_norm",
+    "embedding",
+    "swiglu",
+    "add",
+    "multiply"
+  ],
+  "outside_scope": [
+    "FP16/BF16/INT8",
+    "GQA",
+    "RoPE",
+    "short convolution",
+    "model execution",
+    "device lifecycle"
+  ]
+}

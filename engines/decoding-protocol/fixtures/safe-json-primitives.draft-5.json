@@ -1,0 +1,93 @@
+{
+  "schema": "minifield.decoding-protocol/draft-4/safe-json-primitives-1",
+  "protocol_sha256": "e78b6ecfa07a71cf21203ae697aec7b92a19768bbc02e320be58ad1452150fde",
+  "cases": [
+    {
+      "name": "semantic_literal_less_than",
+      "value": "<",
+      "safe_json_hex": "225c753030336322"
+    },
+    {
+      "name": "semantic_literal_greater_than",
+      "value": ">",
+      "safe_json_hex": "225c753030336522"
+    },
+    {
+      "name": "literal_backslash_u_is_data",
+      "value": "\\u003c",
+      "safe_json_hex": "225c5c753030336322"
+    },
+    {
+      "name": "safe_keys_and_values",
+      "value": {
+        "<key>": ">"
+      },
+      "safe_json_hex": "7b225c75303033636b65795c7530303365223a225c7530303365227d"
+    },
+    {
+      "name": "nested_protocol_spelling",
+      "value": {
+        "z": [
+          "<",
+          ">",
+          "\\u003c"
+        ],
+        "a": "literal <|im_end|>"
+      },
+      "safe_json_hex": "7b2261223a226c69746572616c205c75303033637c696d5f656e647c5c7530303365222c227a223a5b225c7530303363222c225c7530303365222c225c5c7530303363225d7d"
+    },
+    {
+      "name": "utf16_key_order_supplementary_before_bmp",
+      "value": {
+        "": "bmp",
+        "😀": "supp"
+      },
+      "safe_json_hex": "7b22f09f9880223a2273757070222c22ee8080223a22626d70227d"
+    },
+    {
+      "name": "negative_zero",
+      "value": -0.0,
+      "safe_json_hex": "30"
+    },
+    {
+      "name": "smallest_binary64_subnormal",
+      "value": 5e-324,
+      "safe_json_hex": "35652d333234"
+    },
+    {
+      "name": "decimal_threshold_fixed",
+      "value": 1e-06,
+      "safe_json_hex": "302e303030303031"
+    },
+    {
+      "name": "decimal_threshold_exponent",
+      "value": 1e-07,
+      "safe_json_hex": "31652d37"
+    },
+    {
+      "name": "large_threshold_fixed",
+      "value": 1e+20,
+      "safe_json_hex": "313030303030303030303030303030303030303030"
+    },
+    {
+      "name": "large_threshold_exponent",
+      "value": 1e+21,
+      "safe_json_hex": "31652b3231"
+    },
+    {
+      "name": "binary64_decimal",
+      "value": 0.1,
+      "safe_json_hex": "302e31"
+    },
+    {
+      "name": "binary64_rounding_boundary",
+      "value": 333333333.3333333,
+      "safe_json_hex": "3333333333333333332e33333333333333"
+    },
+    {
+      "name": "maximum_safe_integer",
+      "value": 9007199254740991,
+      "safe_json_hex": "39303037313939323534373430393931"
+    }
+  ]
+}

@@ -1,0 +1,972 @@
+{
+  "status": "root_authored_original_structure_assertion_oracle",
+  "protocol": "draft-5",
+  "scope": "Pure instance validator examples. Planner support is separate; schema-valid mixed/open or polymorphic shapes may still be unsupported for generation. No acceptance data. No production validator import. Pattern semantics covered in separate Node fixtures.",
+  "cases": [
+    {
+      "name": "type_null_yes",
+      "schema_source": "{\"type\":\"null\"}",
+      "instance_source": "null",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":\"null\"}",
+      "interpreted_instance_json": "null",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "type_null_no",
+      "schema_source": "{\"type\":\"null\"}",
+      "instance_source": "false",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"null\"}",
+      "interpreted_instance_json": "false",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "type"
+      ]
+    },
+    {
+      "name": "type_boolean_yes",
+      "schema_source": "{\"type\":\"boolean\"}",
+      "instance_source": "true",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":\"boolean\"}",
+      "interpreted_instance_json": "true",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "type_boolean_no",
+      "schema_source": "{\"type\":\"boolean\"}",
+      "instance_source": "1",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"boolean\"}",
+      "interpreted_instance_json": "1",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "type"
+      ]
+    },
+    {
+      "name": "type_integer_yes",
+      "schema_source": "{\"type\":\"integer\"}",
+      "instance_source": "2",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":\"integer\"}",
+      "interpreted_instance_json": "2",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "type_integer_no",
+      "schema_source": "{\"type\":\"integer\"}",
+      "instance_source": "2.5",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"integer\"}",
+      "interpreted_instance_json": "2.5",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "type"
+      ]
+    },
+    {
+      "name": "type_number_yes",
+      "schema_source": "{\"type\":\"number\"}",
+      "instance_source": "2.5",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":\"number\"}",
+      "interpreted_instance_json": "2.5",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "type_number_no",
+      "schema_source": "{\"type\":\"number\"}",
+      "instance_source": "true",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"number\"}",
+      "interpreted_instance_json": "true",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "type"
+      ]
+    },
+    {
+      "name": "type_string_yes",
+      "schema_source": "{\"type\":\"string\"}",
+      "instance_source": "\"a\"",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":\"string\"}",
+      "interpreted_instance_json": "\"a\"",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "type_string_no",
+      "schema_source": "{\"type\":\"string\"}",
+      "instance_source": "1",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"string\"}",
+      "interpreted_instance_json": "1",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "type"
+      ]
+    },
+    {
+      "name": "type_array_yes",
+      "schema_source": "{\"type\":\"array\"}",
+      "instance_source": "[]",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":\"array\"}",
+      "interpreted_instance_json": "[]",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "type_array_no",
+      "schema_source": "{\"type\":\"array\"}",
+      "instance_source": "{}",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"array\"}",
+      "interpreted_instance_json": "{}",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "type"
+      ]
+    },
+    {
+      "name": "type_object_yes",
+      "schema_source": "{\"type\":\"object\"}",
+      "instance_source": "{}",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":\"object\"}",
+      "interpreted_instance_json": "{}",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "type_object_no",
+      "schema_source": "{\"type\":\"object\"}",
+      "instance_source": "[]",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"object\"}",
+      "interpreted_instance_json": "[]",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "type"
+      ]
+    },
+    {
+      "name": "multiple_exact_tenths",
+      "schema_source": "{\"type\":\"number\",\"multipleOf\":0.1}",
+      "instance_source": "0.3",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":\"number\",\"multipleOf\":0.1}",
+      "interpreted_instance_json": "0.3",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "multiple_binary_nearby",
+      "schema_source": "{\"type\":\"number\",\"multipleOf\":0.1}",
+      "instance_source": "0.30000000000000004",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"number\",\"multipleOf\":0.1}",
+      "interpreted_instance_json": "0.30000000000000004",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "multipleOf"
+      ]
+    },
+    {
+      "name": "multiple_negative_exact",
+      "schema_source": "{\"type\":\"number\",\"multipleOf\":0.1}",
+      "instance_source": "-0.3",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":\"number\",\"multipleOf\":0.1}",
+      "interpreted_instance_json": "-0.3",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "multiple_negative_nearby",
+      "schema_source": "{\"type\":\"number\",\"multipleOf\":0.1}",
+      "instance_source": "-0.30000000000000004",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"number\",\"multipleOf\":0.1}",
+      "interpreted_instance_json": "-0.30000000000000004",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "multipleOf"
+      ]
+    },
+    {
+      "name": "multiple_zero",
+      "schema_source": "{\"type\":\"number\",\"multipleOf\":0.1}",
+      "instance_source": "0",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":\"number\",\"multipleOf\":0.1}",
+      "interpreted_instance_json": "0",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "multiple_hundredths",
+      "schema_source": "{\"multipleOf\":0.01}",
+      "instance_source": "0.07",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"multipleOf\":0.01}",
+      "interpreted_instance_json": "0.07",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "multiple_conjunct_yes",
+      "schema_source": "{\"allOf\":[{\"multipleOf\":0.1},{\"multipleOf\":0.15}]}",
+      "instance_source": "0.3",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"allOf\":[{\"multipleOf\":0.1},{\"multipleOf\":0.15}]}",
+      "interpreted_instance_json": "0.3",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "multiple_conjunct_no",
+      "schema_source": "{\"allOf\":[{\"multipleOf\":0.1},{\"multipleOf\":0.15}]}",
+      "instance_source": "0.2",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"allOf\":[{\"multipleOf\":0.1},{\"multipleOf\":0.15}]}",
+      "interpreted_instance_json": "0.2",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "multipleOf"
+      ]
+    },
+    {
+      "name": "converted_minimum",
+      "schema_source": "{\"minimum\":1.0000000000000001}",
+      "instance_source": "1",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"minimum\":1}",
+      "interpreted_instance_json": "1",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "converted_const",
+      "schema_source": "{\"const\":1.0000000000000001}",
+      "instance_source": "1",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"const\":1}",
+      "interpreted_instance_json": "1",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "subnormal_multiple",
+      "schema_source": "{\"multipleOf\":5e-324}",
+      "instance_source": "1e-323",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"multipleOf\":5e-324}",
+      "interpreted_instance_json": "1e-323",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "subnormal_not_multiple",
+      "schema_source": "{\"multipleOf\":1e-323}",
+      "instance_source": "5e-324",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"multipleOf\":1e-323}",
+      "interpreted_instance_json": "5e-324",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "multipleOf"
+      ]
+    },
+    {
+      "name": "minimum_0",
+      "schema_source": "{\"minimum\":0.3}",
+      "instance_source": "0.3",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"minimum\":0.3}",
+      "interpreted_instance_json": "0.3",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "minimum_1",
+      "schema_source": "{\"minimum\":0.3}",
+      "instance_source": "0.29999999999999993",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"minimum\":0.3}",
+      "interpreted_instance_json": "0.29999999999999993",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "minimum"
+      ]
+    },
+    {
+      "name": "maximum_0",
+      "schema_source": "{\"maximum\":0.3}",
+      "instance_source": "0.3",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"maximum\":0.3}",
+      "interpreted_instance_json": "0.3",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "maximum_1",
+      "schema_source": "{\"maximum\":0.3}",
+      "instance_source": "0.30000000000000004",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"maximum\":0.3}",
+      "interpreted_instance_json": "0.30000000000000004",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "maximum"
+      ]
+    },
+    {
+      "name": "exclusiveMinimum_0",
+      "schema_source": "{\"exclusiveMinimum\":0.3}",
+      "instance_source": "0.3",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"exclusiveMinimum\":0.3}",
+      "interpreted_instance_json": "0.3",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "exclusiveMinimum"
+      ]
+    },
+    {
+      "name": "exclusiveMinimum_1",
+      "schema_source": "{\"exclusiveMinimum\":0.3}",
+      "instance_source": "0.30000000000000004",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"exclusiveMinimum\":0.3}",
+      "interpreted_instance_json": "0.30000000000000004",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "exclusiveMaximum_0",
+      "schema_source": "{\"exclusiveMaximum\":0.3}",
+      "instance_source": "0.3",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"exclusiveMaximum\":0.3}",
+      "interpreted_instance_json": "0.3",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "exclusiveMaximum"
+      ]
+    },
+    {
+      "name": "exclusiveMaximum_1",
+      "schema_source": "{\"exclusiveMaximum\":0.3}",
+      "instance_source": "0.29999999999999993",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"exclusiveMaximum\":0.3}",
+      "interpreted_instance_json": "0.29999999999999993",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "integer_number_intersection",
+      "schema_source": "{\"allOf\":[{\"type\":\"integer\"},{\"type\":\"number\"}]}",
+      "instance_source": "2",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"allOf\":[{\"type\":\"integer\"},{\"type\":\"number\"}]}",
+      "interpreted_instance_json": "2",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "integer_number_fraction_rejected",
+      "schema_source": "{\"allOf\":[{\"type\":\"integer\"},{\"type\":\"number\"}]}",
+      "instance_source": "2.5",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"allOf\":[{\"type\":\"integer\"},{\"type\":\"number\"}]}",
+      "interpreted_instance_json": "2.5",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "type"
+      ]
+    },
+    {
+      "name": "const_bool_not_number",
+      "schema_source": "{\"const\":true}",
+      "instance_source": "1",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"const\":true}",
+      "interpreted_instance_json": "1",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "const"
+      ]
+    },
+    {
+      "name": "const_number_not_bool",
+      "schema_source": "{\"const\":1}",
+      "instance_source": "true",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"const\":1}",
+      "interpreted_instance_json": "true",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "const"
+      ]
+    },
+    {
+      "name": "enum_null_first",
+      "schema_source": "{\"enum\":[null,\"x\"]}",
+      "instance_source": "null",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"enum\":[null,\"x\"]}",
+      "interpreted_instance_json": "null",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "enum_null_last",
+      "schema_source": "{\"enum\":[\"x\",null]}",
+      "instance_source": "\"x\"",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"enum\":[\"x\",null]}",
+      "interpreted_instance_json": "\"x\"",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "enum_boolean_numeric_distinct",
+      "schema_source": "{\"enum\":[true,1]}",
+      "instance_source": "1",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"enum\":[true,1]}",
+      "interpreted_instance_json": "1",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "enum_object_key_order",
+      "schema_source": "{\"enum\":[{\"b\":2,\"a\":1}]}",
+      "instance_source": "{\"a\":1,\"b\":2}",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"enum\":[{\"b\":2,\"a\":1}]}",
+      "interpreted_instance_json": "{\"a\":1,\"b\":2}",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "enum_array_order",
+      "schema_source": "{\"enum\":[[1,2]]}",
+      "instance_source": "[2,1]",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"enum\":[[1,2]]}",
+      "interpreted_instance_json": "[2,1]",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "enum"
+      ]
+    },
+    {
+      "name": "finite_complete_oneof",
+      "schema_source": "{\"enum\":[1,2],\"oneOf\":[{\"type\":\"integer\"},{\"const\":1}]}",
+      "instance_source": "1",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"enum\":[1,2],\"oneOf\":[{\"type\":\"integer\"},{\"const\":1}]}",
+      "interpreted_instance_json": "1",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "oneOf"
+      ]
+    },
+    {
+      "name": "finite_complete_oneof_other",
+      "schema_source": "{\"enum\":[1,2],\"oneOf\":[{\"type\":\"integer\"},{\"const\":1}]}",
+      "instance_source": "2",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"enum\":[1,2],\"oneOf\":[{\"type\":\"integer\"},{\"const\":1}]}",
+      "interpreted_instance_json": "2",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "unique_bool_number",
+      "schema_source": "{\"type\":\"array\",\"uniqueItems\":true}",
+      "instance_source": "[true,1]",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":\"array\",\"uniqueItems\":true}",
+      "interpreted_instance_json": "[true,1]",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "unique_numeric_alias",
+      "schema_source": "{\"type\":\"array\",\"uniqueItems\":true}",
+      "instance_source": "[1,1.0]",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"array\",\"uniqueItems\":true}",
+      "interpreted_instance_json": "[1,1]",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "uniqueItems"
+      ]
+    },
+    {
+      "name": "unique_object_key_order",
+      "schema_source": "{\"type\":\"array\",\"uniqueItems\":true}",
+      "instance_source": "[{\"a\":1,\"b\":2},{\"b\":2,\"a\":1}]",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"array\",\"uniqueItems\":true}",
+      "interpreted_instance_json": "[{\"a\":1,\"b\":2},{\"b\":2,\"a\":1}]",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "uniqueItems"
+      ]
+    },
+    {
+      "name": "unique_array_order",
+      "schema_source": "{\"type\":\"array\",\"uniqueItems\":true}",
+      "instance_source": "[[1,2],[2,1]]",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":\"array\",\"uniqueItems\":true}",
+      "interpreted_instance_json": "[[1,2],[2,1]]",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "unicode_scalar_one",
+      "schema_source": "{\"type\":\"string\",\"minLength\":1,\"maxLength\":1}",
+      "instance_source": "\"😀\"",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":\"string\",\"minLength\":1,\"maxLength\":1}",
+      "interpreted_instance_json": "\"😀\"",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "unicode_scalar_two",
+      "schema_source": "{\"type\":\"string\",\"maxLength\":1}",
+      "instance_source": "\"é\"",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"string\",\"maxLength\":1}",
+      "interpreted_instance_json": "\"é\"",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "maxLength"
+      ]
+    },
+    {
+      "name": "items_false_empty",
+      "schema_source": "{\"type\":\"array\",\"items\":false}",
+      "instance_source": "[]",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":\"array\",\"items\":false}",
+      "interpreted_instance_json": "[]",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "items_false_nonempty",
+      "schema_source": "{\"type\":\"array\",\"items\":false}",
+      "instance_source": "[null]",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"array\",\"items\":false}",
+      "interpreted_instance_json": "[null]",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "items"
+      ]
+    },
+    {
+      "name": "items_conjuncts_yes",
+      "schema_source": "{\"type\":\"array\",\"allOf\":[{\"items\":{\"type\":\"number\"}},{\"items\":{\"minimum\":2}}]}",
+      "instance_source": "[2,3]",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":\"array\",\"allOf\":[{\"items\":{\"type\":\"number\"}},{\"items\":{\"minimum\":2}}]}",
+      "interpreted_instance_json": "[2,3]",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "items_conjuncts_no",
+      "schema_source": "{\"type\":\"array\",\"allOf\":[{\"items\":{\"type\":\"number\"}},{\"items\":{\"minimum\":2}}]}",
+      "instance_source": "[1,3]",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"array\",\"allOf\":[{\"items\":{\"type\":\"number\"}},{\"items\":{\"minimum\":2}}]}",
+      "interpreted_instance_json": "[1,3]",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "minimum"
+      ]
+    },
+    {
+      "name": "array_intersect_bounds_yes",
+      "schema_source": "{\"type\":\"array\",\"allOf\":[{\"minItems\":1,\"maxItems\":3},{\"minItems\":2,\"maxItems\":4}]}",
+      "instance_source": "[1,2]",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":\"array\",\"allOf\":[{\"minItems\":1,\"maxItems\":3},{\"minItems\":2,\"maxItems\":4}]}",
+      "interpreted_instance_json": "[1,2]",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "array_intersect_bounds_no",
+      "schema_source": "{\"type\":\"array\",\"allOf\":[{\"minItems\":1,\"maxItems\":3},{\"minItems\":2,\"maxItems\":4}]}",
+      "instance_source": "[1]",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"array\",\"allOf\":[{\"minItems\":1,\"maxItems\":3},{\"minItems\":2,\"maxItems\":4}]}",
+      "interpreted_instance_json": "[1]",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "minItems"
+      ]
+    },
+    {
+      "name": "array_contradiction",
+      "schema_source": "{\"type\":\"array\",\"minItems\":2,\"maxItems\":1}",
+      "instance_source": "[]",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"array\",\"minItems\":2,\"maxItems\":1}",
+      "interpreted_instance_json": "[]",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "minItems"
+      ]
+    },
+    {
+      "name": "additional_declared_elsewhere_not_exempt",
+      "schema_source": "{\"type\":\"object\",\"allOf\":[{\"properties\":{\"a\":{}},\"additionalProperties\":false},{\"properties\":{\"b\":{}},\"additionalProperties\":false}]}",
+      "instance_source": "{\"a\":1}",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"object\",\"allOf\":[{\"properties\":{\"a\":{}},\"additionalProperties\":false},{\"properties\":{\"b\":{}},\"additionalProperties\":false}]}",
+      "interpreted_instance_json": "{\"a\":1}",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "additionalProperties"
+      ]
+    },
+    {
+      "name": "closed_intersection_empty",
+      "schema_source": "{\"type\":\"object\",\"allOf\":[{\"properties\":{\"a\":{}},\"additionalProperties\":false},{\"properties\":{\"b\":{}},\"additionalProperties\":false}]}",
+      "instance_source": "{}",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":\"object\",\"allOf\":[{\"properties\":{\"a\":{}},\"additionalProperties\":false},{\"properties\":{\"b\":{}},\"additionalProperties\":false}]}",
+      "interpreted_instance_json": "{}",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "required_forbidden",
+      "schema_source": "{\"type\":\"object\",\"allOf\":[{\"required\":[\"b\"]},{\"properties\":{\"a\":{}},\"additionalProperties\":false}]}",
+      "instance_source": "{\"b\":1}",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"object\",\"allOf\":[{\"required\":[\"b\"]},{\"properties\":{\"a\":{}},\"additionalProperties\":false}]}",
+      "interpreted_instance_json": "{\"b\":1}",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "additionalProperties"
+      ]
+    },
+    {
+      "name": "required_undeclared_allowed",
+      "schema_source": "{\"type\":\"object\",\"required\":[\"x\"],\"additionalProperties\":{\"type\":\"string\"}}",
+      "instance_source": "{\"x\":\"yes\"}",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":\"object\",\"required\":[\"x\"],\"additionalProperties\":{\"type\":\"string\"}}",
+      "interpreted_instance_json": "{\"x\":\"yes\"}",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "required_undeclared_type",
+      "schema_source": "{\"type\":\"object\",\"required\":[\"x\"],\"additionalProperties\":{\"type\":\"string\"}}",
+      "instance_source": "{\"x\":1}",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"object\",\"required\":[\"x\"],\"additionalProperties\":{\"type\":\"string\"}}",
+      "interpreted_instance_json": "{\"x\":1}",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "type"
+      ]
+    },
+    {
+      "name": "additional_schema_applies_conjunct",
+      "schema_source": "{\"type\":\"object\",\"allOf\":[{\"properties\":{\"x\":{\"type\":\"integer\"}}},{\"additionalProperties\":{\"minimum\":2}}]}",
+      "instance_source": "{\"x\":1}",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"object\",\"allOf\":[{\"properties\":{\"x\":{\"type\":\"integer\"}}},{\"additionalProperties\":{\"minimum\":2}}]}",
+      "interpreted_instance_json": "{\"x\":1}",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "minimum"
+      ]
+    },
+    {
+      "name": "missing_required",
+      "schema_source": "{\"type\":\"object\",\"properties\":{\"x\":{}},\"required\":[\"x\"],\"additionalProperties\":false}",
+      "instance_source": "{}",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":\"object\",\"properties\":{\"x\":{}},\"required\":[\"x\"],\"additionalProperties\":false}",
+      "interpreted_instance_json": "{}",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "required"
+      ]
+    },
+    {
+      "name": "annotation_default_no_output",
+      "schema_source": "{\"type\":\"object\",\"properties\":{\"x\":{\"type\":\"string\",\"default\":\"abc\"}},\"additionalProperties\":false}",
+      "instance_source": "{}",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":\"object\",\"properties\":{\"x\":{\"type\":\"string\",\"default\":\"abc\"}},\"additionalProperties\":false}",
+      "interpreted_instance_json": "{}",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "properties_do_not_imply_object",
+      "schema_source": "{\"properties\":{\"x\":false}}",
+      "instance_source": "\"still legal\"",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"properties\":{\"x\":false}}",
+      "interpreted_instance_json": "\"still legal\"",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "required_does_not_imply_object",
+      "schema_source": "{\"required\":[\"x\"]}",
+      "instance_source": "null",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"required\":[\"x\"]}",
+      "interpreted_instance_json": "null",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "anyof_overlap",
+      "schema_source": "{\"anyOf\":[{\"type\":\"number\"},{\"minimum\":0}]}",
+      "instance_source": "2",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"anyOf\":[{\"type\":\"number\"},{\"minimum\":0}]}",
+      "interpreted_instance_json": "2",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "oneof_overlap",
+      "schema_source": "{\"oneOf\":[{\"type\":\"number\"},{\"minimum\":0}]}",
+      "instance_source": "2",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"oneOf\":[{\"type\":\"number\"},{\"minimum\":0}]}",
+      "interpreted_instance_json": "2",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "oneOf"
+      ]
+    },
+    {
+      "name": "oneof_single",
+      "schema_source": "{\"oneOf\":[{\"type\":\"number\"},{\"type\":\"string\"}]}",
+      "instance_source": "2",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"oneOf\":[{\"type\":\"number\"},{\"type\":\"string\"}]}",
+      "interpreted_instance_json": "2",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "type_array_null",
+      "schema_source": "{\"type\":[\"string\",\"null\"]}",
+      "instance_source": "null",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"type\":[\"string\",\"null\"]}",
+      "interpreted_instance_json": "null",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "type_array_reject_bool",
+      "schema_source": "{\"type\":[\"number\",\"null\"]}",
+      "instance_source": "true",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"type\":[\"number\",\"null\"]}",
+      "interpreted_instance_json": "true",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "type"
+      ]
+    },
+    {
+      "name": "allof_false",
+      "schema_source": "{\"allOf\":[{},false]}",
+      "instance_source": "null",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"allOf\":[{},false]}",
+      "interpreted_instance_json": "null",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "None"
+      ]
+    },
+    {
+      "name": "anyof_false_true",
+      "schema_source": "{\"anyOf\":[false,true]}",
+      "instance_source": "null",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"anyOf\":[false,true]}",
+      "interpreted_instance_json": "null",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "oneof_false_true",
+      "schema_source": "{\"oneOf\":[false,true]}",
+      "instance_source": "null",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"oneOf\":[false,true]}",
+      "interpreted_instance_json": "null",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "ref_sibling_enforced",
+      "schema_source": "{\"$defs\":{\"x\":{\"type\":\"integer\"}},\"$ref\":\"#/$defs/x\",\"minimum\":2}",
+      "instance_source": "1",
+      "expected_original_valid": false,
+      "interpreted_schema_json": "{\"$defs\":{\"x\":{\"type\":\"integer\"}},\"$ref\":\"#/$defs/x\",\"minimum\":2}",
+      "interpreted_instance_json": "1",
+      "oracle_valid": false,
+      "expected_protocol_valid": false,
+      "oracle_error_validators": [
+        "minimum"
+      ]
+    },
+    {
+      "name": "ref_sibling_passes",
+      "schema_source": "{\"$defs\":{\"x\":{\"type\":\"integer\"}},\"$ref\":\"#/$defs/x\",\"minimum\":2}",
+      "instance_source": "2",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"$defs\":{\"x\":{\"type\":\"integer\"}},\"$ref\":\"#/$defs/x\",\"minimum\":2}",
+      "interpreted_instance_json": "2",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "ref_escaped_empty",
+      "schema_source": "{\"$defs\":{\"\":{\"const\":\"empty\"},\"a/b~c\":{\"const\":\"other\"}},\"$ref\":\"#/$defs/\"}",
+      "instance_source": "\"empty\"",
+      "expected_original_valid": true,
+      "interpreted_schema_json": "{\"$defs\":{\"\":{\"const\":\"empty\"},\"a/b~c\":{\"const\":\"other\"}},\"$ref\":\"#/$defs/\"}",
+      "interpreted_instance_json": "\"empty\"",
+      "oracle_valid": true,
+      "expected_protocol_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "raw_integer_rounding_rejected",
+      "schema_source": "{\"type\":\"integer\"}",
+      "instance_source": "1.0000000000000001",
+      "expected_original_valid": true,
+      "expected_protocol_valid": false,
+      "extra_rule": "raw decimal integrality",
+      "interpreted_schema_json": "{\"type\":\"integer\"}",
+      "interpreted_instance_json": "1",
+      "oracle_valid": true,
+      "oracle_error_validators": []
+    },
+    {
+      "name": "raw_integer_exact_exponent",
+      "schema_source": "{\"type\":\"integer\"}",
+      "instance_source": "1.0e+0",
+      "expected_original_valid": true,
+      "expected_protocol_valid": true,
+      "extra_rule": "raw decimal integrality",
+      "interpreted_schema_json": "{\"type\":\"integer\"}",
+      "interpreted_instance_json": "1",
+      "oracle_valid": true,
+      "oracle_error_validators": []
+    }
+  ]
+}

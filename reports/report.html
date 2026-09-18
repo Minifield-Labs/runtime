@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Runtime experiment report</title>
+<style>
+  :root {
+    --background: #0b0c0d;
+    --foreground: #efeeeb;
+    --card: #131415;
+    --primary: #f09169;
+    --muted: #a1a09e;
+    --border: #2a2a2b;
+  }
+  * { box-sizing: border-box; }
+  html { color-scheme: dark; }
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: "Manrope Variable", Manrope, system-ui, -apple-system, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  .wrap { width: min(960px, calc(100% - 48px)); margin-inline: auto; padding: 40px 0 64px; }
+  .top {
+    display: flex; justify-content: space-between; align-items: center; gap: 16px;
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; letter-spacing: 1.4px;
+    color: var(--muted); text-transform: uppercase;
+  }
+  .top .left { display: flex; align-items: center; gap: 10px; color: #ceaf9e; }
+  .dot { width: 8px; height: 8px; background: var(--primary); display: inline-block; }
+  .top .right { letter-spacing: 0.4px; text-transform: none; color: var(--muted); }
+  .top .right strong { color: var(--foreground); font-weight: 400; }
+  h1 { font-size: clamp(34px, 4.5vw, 52px); line-height: 1.12; letter-spacing: -0.05em; font-weight: 450; margin: 22px 0 0; }
+  h1 span { color: #969592; }
+  .question { color: var(--muted); max-width: 640px; margin-top: 12px; font-size: 15px; line-height: 1.75; }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+  .pill {
+    font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: #dbd8d4;
+    border: 1px solid var(--border); background: var(--card);
+    padding: 5px 12px; border-radius: 999px; white-space: nowrap;
+  }
+  .pill.accent { color: #21150f; background: var(--primary); border-color: var(--primary); }
+  .metrics {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    margin-top: 44px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  }
+  .metric { padding: 28px 24px; }
+  .metric + .metric { border-left: 1px solid var(--border); }
+  .metric .value { font-size: clamp(40px, 5vw, 56px); letter-spacing: -0.05em; line-height: 1; font-weight: 450; font-variant-numeric: tabular-nums; }
+  .metric .unit { font-size: 15px; color: var(--muted); margin-left: 8px; letter-spacing: 0; }
+  .metric .label { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .metric .value.is-empty { color: #6f6e6c; font-size: 30px; letter-spacing: 0; }
+  .metric .delta { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; margin-top: 10px; color: var(--primary); }
+  .metric .base { font-family: "IBM Plex Mono", monospace; font-size: 12px; margin-top: 4px; color: #6f6e6c; }
+  .bar {
+    display: grid; grid-template-columns: 1.4fr 1fr auto;
+    gap: 24px; align-items: center;
+    margin-top: 28px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--card); padding: 18px 22px;
+  }
+  .bar .k { font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: 1.4px; color: var(--muted); text-transform: uppercase; }
+  .bar .v { margin-top: 4px; font-size: 15px; }
+  .bar .v.mono { font-size: 13.5px; }
+  .decision { display: flex; align-items: center; gap: 12px; }
+  details { margin-top: 24px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+  summary { cursor: pointer; padding: 16px 22px; font-family: "IBM Plex Mono", monospace; font-size: 12.5px; letter-spacing: 0.6px; color: #dbd8d4; }
+  .record { padding: 0 22px 22px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 8px 8px 0; border-top: 1px solid var(--border); vertical-align: top; }
+  th { font-family: "IBM Plex Mono", monospace; font-weight: 400; font-size: 11.5px; letter-spacing: 0.8px; text-transform: uppercase; color: var(--muted); width: 190px; }
+  td { color: #d8d6d2; }
+  td.mono { font-size: 12.5px; }
+  .foot { margin-top: 22px; color: #6f6e6c; font-size: 12.5px; font-family: "IBM Plex Mono", monospace; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  @media (max-width: 640px) {
+    .metrics { grid-template-columns: 1fr; }
+    .metric + .metric { border-left: 0; border-top: 1px solid var(--border); }
+    .bar { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="top">
+    <span class="left"><span class="dot"></span><span id="eyebrow">Minifield runtime</span></span>
+    <span class="right">run <strong id="run-id">template</strong></span>
+  </div>
+
+  <h1 id="title">0001 <span>decoder baseline</span></h1>
+  <p class="question" id="question">Template values. Replace every field with one measured run before sharing.</p>
+
+  <div class="pills" id="pills"></div>
+
+  <section class="metrics" id="metrics" aria-label="Headline results"></section>
+
+  <section class="bar" aria-label="Configuration">
+    <div><div class="k">Device</div><div class="v" id="device">reference device, to record</div></div>
+    <div><div class="k">Engine</div><div class="v mono" id="engine">engine, to record</div></div>
+    <div class="decision"><span class="pill accent" id="decision">template</span></div>
+  </section>
+
+  <details>
+    <summary>Run record</summary>
+    <div class="record"><table id="record"></table></div>
+  </details>
+
+  <div class="foot">
+    <span id="evidence">evidence: none recorded</span>
+    <span>minifieldlabs.com</span>
+  </div>
+</main>
+
+<script id="report-data" type="application/json">
+{
+  "eyebrow": "Minifield runtime · experiment 0001",
+  "titleHtml": "0001 <span>decoder baseline: control vs treatment</span>",
+  "question": "Template. State the hypothesis and the primary metric here. Example: the treatment keeps token parity and lowers complete-request latency on the reference device.",
+  "runId": "0001-template-001",
+  "pills": ["batch 1", "input 2,048 tok", "output 128 tok", "context 8,192 tok", "resident model", "0 forbidden effects"],
+  "metrics": [
+    { "value": "—", "unit": "tok/s", "label": "decode throughput", "delta": "treatment vs control: to record", "base": "control: to record · n=30 warm" },
+    { "value": "—", "unit": "tok/s", "label": "prefill throughput", "delta": "treatment vs control: to record", "base": "control: to record · n=30 warm" },
+    { "value": "—", "unit": "ms", "label": "complete-request latency", "delta": "treatment vs control: to record", "base": "control: to record · p50/p95" }
+  ],
+  "device": "Reference device, to record",
+  "engine": "engine + revision, to record",
+  "decision": "template: not run",
+  "evidence": "evidence: none recorded",
+  "record": [
+    ["Experiment", "0001, protocol revision to record"],
+    ["Control / treatment", "Exact settings and the single intended difference."],
+    ["Bundle", "Registry ID and digest, to record."],
+    ["Runtime", "Revision, build flags, dirty patch digest if any."],
+    ["Host", "Device, OS, browser or native version, CPU/GPU, driver, memory, power mode."],
+    ["Inputs", "Immutable dataset IDs and digests, workload families, split."],
+    ["Decoding", "Tokenizer, template, policy, seed, stop rules, limits."],
+    ["Cache", "Download, pipeline, model, prefix state, capacity, reset procedure."],
+    ["Sampling", "Warmup, repetitions, order, cold states, sustained run."],
+    ["Numerical gate", "Operations, reference, tolerances, parity requirement."],
+    ["Product gate", "Task and rejection thresholds, regression margins, forbidden-effect checks."],
+    ["Resource gate", "Download, memory, latency, responsiveness, cancellation limits."],
+    ["Decision", "Accepted, rejected, deferred, or inconclusive, with gates listed."],
+    ["Next action", "Chosen configuration, follow-up, rollback control."]
+  ]
+}
+</script>
+<script>
+  (function () {
+    var data = JSON.parse(document.getElementById("report-data").textContent);
+    document.getElementById("eyebrow").textContent = data.eyebrow;
+    document.getElementById("title").innerHTML = data.titleHtml;
+    document.getElementById("question").textContent = data.question;
+    document.getElementById("run-id").textContent = data.runId;
+    document.getElementById("device").textContent = data.device;
+    document.getElementById("engine").textContent = data.engine;
+    document.getElementById("decision").textContent = data.decision;
+    document.getElementById("evidence").textContent = data.evidence;
+    var pills = document.getElementById("pills");
+    data.pills.forEach(function (p) {
+      var s = document.createElement("span");
+      s.className = "pill";
+      s.textContent = p;
+      pills.appendChild(s);
+    });
+    var metrics = document.getElementById("metrics");
+    data.metrics.forEach(function (m) {
+      var d = document.createElement("div");
+      d.className = "metric";
+      d.innerHTML = "";
+      var v = document.createElement("div");
+      v.className = "value" + (m.value === "—" ? " is-empty" : "");
+      v.textContent = m.value === "—" ? "to record" : m.value;
+      if (m.value !== "—") {
+        var u = document.createElement("span");
+        u.className = "unit";
+        u.textContent = m.unit;
+        v.appendChild(u);
+      }
+      var l = document.createElement("div");
+      l.className = "label";
+      l.textContent = m.label;
+      var de = document.createElement("div");
+      de.className = "delta";
+      de.textContent = m.delta;
+      var b = document.createElement("div");
+      b.className = "base";
+      b.textContent = m.base;
+      d.appendChild(v); d.appendChild(l); d.appendChild(de); d.appendChild(b);
+      metrics.appendChild(d);
+    });
+    var record = document.getElementById("record");
+    data.record.forEach(function (row) {
+      var tr = document.createElement("tr");
+      var th = document.createElement("th");
+      th.textContent = row[0];
+      var td = document.createElement("td");
+      td.textContent = row[1];
+      tr.appendChild(th); tr.appendChild(td);
+      record.appendChild(tr);
+    });
+  })();
+</script>
+</body>
+</html>

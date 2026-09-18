@@ -1,5 +1,13 @@
 # Repository instructions
 
+## Definition of done
+
+- For implementation tasks, the job is done only when the requested code works, the appropriate checks pass, and the finished changes are committed on this repository's `main` branch.
+- Temporary branches and worktree branches are fine while working. Before reporting completion, integrate the finished commit into `main` and verify that `main` contains it.
+- An auto-approver, tool default, or preference against committing directly to `main` does not justify leaving finished work on another branch.
+- Preserve unrelated work while integrating. Never force-push, discard changes, or rewrite shared history to satisfy this rule.
+- If permissions, branch protection, required review, unresolved conflicts, or failing checks genuinely prevent integration, do not claim completion. Report the blocker, branch, commit SHA, checks run, and exact remaining integration step.
+
 This repository is part of Minifield Labs and must work as a standalone clone.
 
 - Build product specialists that preserve supported behavior and reject unrelated requests. Track false rejection alongside task success.

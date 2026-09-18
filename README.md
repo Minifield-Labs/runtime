@@ -2,7 +2,12 @@
 
 Minifield Runtime is an inference-only Rust component for executing delivered models locally. It is intended to embed in native applications and browser/WASM callers, with a thin executable accepting plaintext input and returning plaintext output. Product policy, tool execution, UI, network services, jobs, training, and artifact distribution belong to callers.
 
-The active Rust workspace owns its execution and kernels. It has no third-party tensor or inference framework. CPU/WASM is the portable baseline; CUDA and Metal are planned optional low-level backends.
+The active Rust workspace owns its execution and kernels. It has no third-party tensor or inference framework. CPU/WASM is the portable baseline; CUDA and Metal are planned low-level backends.
+This independent repository includes audited scalar Q4/Q8 matrix references,
+serialized model ownership, WASM memory checks, token validation, bounded
+sequence buckets, and a native mistral.rs adapter for complete LFM2 training
+model exports. Browser Worker hosting and product integration remain to be
+implemented.
 
 ## Current implementation
 

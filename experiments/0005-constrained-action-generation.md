@@ -2,11 +2,28 @@
 
 Status: planned. Owner: runtime tools and sessions; training supplies the matching output format.
 
+The [2026-09-15 research and incremental plan](../docs/constrained-decoding-research.md) supplies library evidence, compiler boundaries, repository-specific serializer findings, and proposed measurement gates. It doesn't establish an accepted implementation or measured performance.
+
 ## Description and hypothesis
 
 Constrain generated tokens to a supported response/action grammar and measure the complete request, including parsing and repair cycles. Keep valid paths for actions, clarification, scope rejection, permission limits, and ordinary responses.
 
 Hypothesis: preventing malformed output reduces repair cycles enough to improve successful task completion and latency after grammar compilation and masking costs are included.
+
+## Compiler boundary and increments
+
+Compile versioned public function names and argument schemas together with the exact assistant response/stop format. Pair each name with its own argument schema. Keep a zero-call response available. Tool descriptions and observations remain public context; execution-time permissions remain with the host.
+
+Authored trajectories supply training and evaluation cases. Their order, sampled parameter grids, fixture IDs and simulated results mustn't restrict the runtime grammar. The model can compose supported calls across successive actual observations, within explicit application rules and session budgets.
+
+1. Freeze the decoding profile, serializer fixtures, unsupported-keyword report and stop behavior.
+2. Compare pinned LLGuidance and current XGrammar using the exact tokenizer, native and WASM execution, valid/invalid sequences and independent schema validation. These first 2 increments can proceed before a complete decoder exists.
+3. Once 0001 works, compare validation/repair alone, response-format masking, and function-schema masking. Hold model, response format, call-count policy and repair policy fixed.
+4. Package and cache the chosen grammar implementation, with version checks and cold-load/memory evidence.
+5. Evaluate unseen compositions in a real test host or simulator. Then test a name-first serializer with matching training as a separate change.
+6. Trial token skipping and dynamic constraints only when profiles justify them. Qualify the selected combination through the deployed product path.
+
+The current Falcon training serializer alphabetizes JSON keys, placing arguments before the function name. Preserve this for the initial comparison; a name-first format needs a new serializer version and matching training. Current authored replay requires exact expected call sequences, so it can't establish success for alternative valid trajectories. See the research note for inspected source locations.
 
 ## Prerequisites
 
@@ -25,7 +42,7 @@ Hypothesis: preventing malformed output reduces repair cycles enough to improve 
 
 ## Measurements
 
-Record malformed calls, wrong syntactically valid calls, retries, generated tokens, grammar compile time/size, cache hits, mask time, transfers, first-action latency, and complete-request latency. Include complete task success, false rejection, correct rejection, clarification, and forbidden effects by request family.
+Record malformed calls, wrong syntactically valid calls, retries, generated tokens, grammar compile time/size, cache hits, mask time, transfers, first-action latency, and complete-request latency. Include complete task success, false rejection, correct rejection, clarification, and forbidden effects by request family. Report repaired and regressed tasks as paired outcomes. Hold out workflow combinations before augmentation, and score their actual final state separately from authored replay.
 
 Token/logit equality with unconstrained generation isn't the hypothesis here because masking deliberately changes allowed outputs. Verify mask correctness and evaluate behavior against the fixed product expectations.
 

@@ -754,7 +754,12 @@ impl WgpuBackend {
         let result = self.device.dispatch(
             Kernel::Gather,
             &[&source, &id_buffer, &destination],
-            &params(&[param32(id_count)?, param32(columns)?, param32(rows)?]),
+            &params(&[
+                param32(id_count)?,
+                param32(columns)?,
+                param32(rows)?,
+                f32::NAN.to_bits(),
+            ]),
             flat_grid(groups)?,
         );
         if let Some(scratch) = staged {
@@ -1021,7 +1026,12 @@ impl WgpuBackend {
         let result = self.device.dispatch(
             Kernel::PackedGather,
             &[&destination, &id_buffer, &c, &s],
-            &params(&[param32(id_count)?, param32(inner)?, param32(rows)?]),
+            &params(&[
+                param32(id_count)?,
+                param32(inner)?,
+                param32(rows)?,
+                f32::NAN.to_bits(),
+            ]),
             flat_grid(groups)?,
         );
         if let Some(scratch) = staged {
@@ -1060,7 +1070,7 @@ impl WgpuBackend {
             return self.device.dispatch(
                 Kernel::Argmax,
                 &[&destination, &source],
-                &params(&[param32(rows)?, param32(columns)?]),
+                &params(&[param32(rows)?, param32(columns)?, 0, f32::NAN.to_bits()]),
                 flat_grid(rows)?,
             );
         }
@@ -1078,7 +1088,12 @@ impl WgpuBackend {
         let result = self.device.dispatch(
             Kernel::ArgmaxBlocks,
             &[&partials.buffer, &source],
-            &params(&[param32(rows)?, param32(columns)?, param32(blocks)?]),
+            &params(&[
+                param32(rows)?,
+                param32(columns)?,
+                param32(blocks)?,
+                f32::NAN.to_bits(),
+            ]),
             flat_grid(
                 rows.checked_mul(blocks)
                     .ok_or(ExecutorError::Overflow("argmax block count overflows u64"))?,
@@ -1091,7 +1106,12 @@ impl WgpuBackend {
         let result = self.device.dispatch(
             Kernel::ArgmaxFinal,
             &[&destination, &partials.buffer],
-            &params(&[param32(rows)?, param32(columns)?, param32(blocks)?]),
+            &params(&[
+                param32(rows)?,
+                param32(columns)?,
+                param32(blocks)?,
+                f32::NAN.to_bits(),
+            ]),
             flat_grid(rows)?,
         );
         self.device.defer_free(partials);

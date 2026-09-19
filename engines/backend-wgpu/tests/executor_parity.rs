@@ -273,4 +273,18 @@ fn wgpu_packed_executor_matches_cpu_on_real_model() {
         max_delta <= LOGIT_TOLERANCE,
         "logit divergence {max_delta} exceeds {LOGIT_TOLERANCE}"
     );
+
+    // Greedy decode loop: the real generation path (storage reuse,
+    // device-resident sample, single 4-byte readback per token).
+    let mut prefill = gpu_exec
+        .prefill(TokenChunk::all(&tokens[..1]))
+        .expect("prefill");
+    let mut prefix = ready(&mut prefill);
+    let decode_start = std::time::Instant::now();
+    for _ in 0..12 {
+        let mut task = gpu_exec.append_argmax(prefix).expect("append_argmax");
+        prefix = ready(&mut task);
+    }
+    let decode = decode_start.elapsed();
+    println!("wgpu packed append_argmax loop: 12 tokens in {decode:?}");
 }

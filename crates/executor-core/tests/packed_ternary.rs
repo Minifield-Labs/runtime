@@ -658,7 +658,9 @@ fn append_argmax_extends_prefix_with_resolved_greedy_token() {
 
         // append_argmax must produce the same state as append_known of the
         // same token: identical history and bitwise-identical next logits.
-        let mut greedy = executor.append_argmax(&prefix).expect("greedy append");
+        let mut greedy = executor
+            .append_argmax(prefix.clone())
+            .expect("greedy append");
         let greedy_prefix = ready(&mut greedy);
         let mut known = executor
             .append_known(&prefix, TokenChunk::all(&[expected]))

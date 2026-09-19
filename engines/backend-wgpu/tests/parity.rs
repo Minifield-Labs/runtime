@@ -1032,3 +1032,78 @@ fn qk_norm_rope_matches_cpu() {
     assert_close(&read(&backend, &gpu_qo), cpu_qo.as_slice(), 1e-5, 1e-5);
     assert_close(&read(&backend, &gpu_ko), cpu_ko.as_slice(), 1e-5, 1e-5);
 }
+
+/// Scratch latency probe (dev tool, not a gate): measures submit->confirm wall
+/// time for empty and dispatch-only batches to split sync latency from GPU
+/// execution. Run with `--nocapture`.
+#[test]
+fn sync_floor_probe() {
+    let Some(mut backend) = gpu() else {
+        eprintln!("no wgpu adapter; skipping probe");
+        return;
+    };
+    let shape = Shape::new(&[1, 256]).expect("shape");
+    let a = backend
+        .upload_f32(shape, &values(11, 256))
+        .expect("upload a");
+    let b = backend
+        .upload_f32(shape, &values(12, 256))
+        .expect("upload b");
+    let mut out = backend.allocate_f32(shape).expect("out");
+
+    let fence_ready = |f: &mut minifield_backend_wgpu::WgpuFence| {
+        let mut polls = 0_u64;
+        loop {
+            match f.poll_step() {
+                CompletionPoll::Pending => polls += 1,
+                CompletionPoll::Ready(r) => {
+                    r.expect("fence");
+                    return polls;
+                }
+            }
+        }
+    };
+
+    // Warmup: pipelines, pools, first-submission paths.
+    for _ in 0..4 {
+        backend.multiply(&mut out, &a, &b).expect("warmup op");
+        let mut f = backend.fence().expect("warmup fence");
+        fence_ready(&mut f);
+    }
+
+    for n in [0_u32, 1, 16, 64, 128, 256] {
+        let start = std::time::Instant::now();
+        for _ in 0..n {
+            backend.multiply(&mut out, &a, &b).expect("op");
+        }
+        let encoded = start.elapsed();
+        let mut f = backend.fence().expect("fence");
+        let polls = fence_ready(&mut f);
+        let total = start.elapsed();
+        eprintln!(
+            "n={n:>4}: encode={:.3}ms confirm={:.3}ms polls={polls}",
+            encoded.as_secs_f64() * 1e3,
+            total.saturating_sub(encoded).as_secs_f64() * 1e3,
+        );
+    }
+
+    // Readback latency floor: 4B copy + map in an otherwise-idle batch.
+    for _ in 0..3 {
+        let start = std::time::Instant::now();
+        let mut rb = backend.read_f32_async(&a).expect("readback");
+        let mut polls = 0_u64;
+        loop {
+            match rb.poll_step() {
+                CompletionPoll::Pending => polls += 1,
+                CompletionPoll::Ready(r) => {
+                    r.expect("readback");
+                    break;
+                }
+            }
+        }
+        eprintln!(
+            "1KB readback: {:.3}ms polls={polls}",
+            start.elapsed().as_secs_f64() * 1e3
+        );
+    }
+}

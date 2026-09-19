@@ -36,6 +36,8 @@ use crate::{
 pub struct WgpuFence {
     pub(crate) device: Rc<DeviceInner>,
     pub(crate) serial: u64,
+    /// Submit-time stamp for `MINIFIELD_WGPU_STATS` wait-latency accounting.
+    created: Option<std::time::Instant>,
     terminal: Option<Result<()>>,
     consumed: bool,
     charged: bool,
@@ -43,9 +45,11 @@ pub struct WgpuFence {
 
 impl WgpuFence {
     pub(crate) fn new(device: Rc<DeviceInner>, serial: u64) -> Self {
+        let created = device.stats_timing().then(std::time::Instant::now);
         Self {
             device,
             serial,
+            created,
             terminal: None,
             consumed: false,
             charged: true,
@@ -86,6 +90,12 @@ impl InferenceCompletion for WgpuFence {
             Some(result) => {
                 self.consumed = true;
                 self.release_charge();
+                let mut stats = self.device.stats.borrow_mut();
+                stats.fences += 1;
+                if let Some(created) = self.created {
+                    stats.fence_wait_ns +=
+                        u64::try_from(created.elapsed().as_nanos()).unwrap_or(u64::MAX);
+                }
                 CompletionPoll::Ready(result)
             }
             None => CompletionPoll::Pending,
@@ -113,6 +123,8 @@ pub struct WgpuReadback {
     flag: Arc<AtomicBool>,
     outcome: Arc<std::sync::Mutex<Option<bool>>>,
     bytes: u64,
+    /// Submit-time stamp for `MINIFIELD_WGPU_STATS` wait-latency accounting.
+    created: Option<std::time::Instant>,
     terminal: Option<Result<Vec<f32>>>,
     consumed: bool,
     charged: bool,
@@ -126,12 +138,14 @@ impl WgpuReadback {
         outcome: Arc<std::sync::Mutex<Option<bool>>>,
         bytes: u64,
     ) -> Self {
+        let created = device.stats_timing().then(std::time::Instant::now);
         Self {
             device,
             staging: Some(staging),
             flag,
             outcome,
             bytes,
+            created,
             terminal: None,
             consumed: false,
             charged: true,
@@ -231,6 +245,12 @@ impl InferenceCompletion for WgpuReadback {
             Some(result) => {
                 self.consumed = true;
                 self.release_charge();
+                let mut stats = self.device.stats.borrow_mut();
+                stats.readbacks += 1;
+                if let Some(created) = self.created {
+                    stats.readback_wait_ns +=
+                        u64::try_from(created.elapsed().as_nanos()).unwrap_or(u64::MAX);
+                }
                 CompletionPoll::Ready(result)
             }
             None => CompletionPoll::Pending,

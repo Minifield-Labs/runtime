@@ -229,7 +229,7 @@ where
         if cancellation.is_cancelled() {
             return Err(GenerationError::Cancelled);
         }
-        let mut append_task = executor.append_argmax(&prefix)?;
+        let mut append_task = executor.append_argmax(prefix)?;
         let candidate_prefix = complete(&mut append_task, cancellation)?;
         prefix = candidate_prefix;
         decoded = candidate_decoder;

@@ -90,7 +90,7 @@ impl TokenExecutor for FakeExecutor {
         Ok(Some(best_id))
     }
 
-    fn append_argmax(&mut self, prefix: &Self::Prefix) -> ExecutorResult<Self::Append> {
+    fn append_argmax(&mut self, prefix: Self::Prefix) -> ExecutorResult<Self::Append> {
         if self.fail_append {
             return Ok(ReadyCompletion::new(Err(ExecutorError::BackendFailure(
                 "test append failure",

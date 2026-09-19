@@ -1,11 +1,13 @@
 //! Device, pooling, batching, and parameter plumbing for the wgpu backend.
 //!
-//! All portable op calls record into one pending [`wgpu::CommandEncoder`]. The
-//! encoder is submitted only when a fence or readback completion needs a
-//! submission boundary, or when the uniform-parameter ring wraps inside a
-//! single batch. Submitted work is tracked by monotonically increasing local
-//! serials; `on_submitted_work_done` callbacks advance a shared confirmation
-//! counter that drives pooled-buffer recycling.
+//! All portable op calls record into a pending [`PendingOp`] list. The list is
+//! replayed into a fresh [`wgpu::CommandEncoder`] only when a fence or readback
+//! completion needs a submission boundary, or when the uniform-parameter ring
+//! wraps inside a single batch. Consecutive dispatches merge into one compute
+//! pass and uniform params land in a single `Queue::write_buffer`. Submitted
+//! work is tracked by monotonically increasing local serials;
+//! `on_submitted_work_done` callbacks advance a shared confirmation counter
+//! that drives pooled-buffer recycling.
 //!
 //! The buffer pool is safe because a dropped [`wgpu::Buffer`] cannot be
 //! referenced by any submission made after its drop. Freed buffers therefore
@@ -30,7 +32,7 @@ pub const WORKGROUP_SIZE: u32 = 256;
 /// Uniform-parameter slots available before a ring wrap forces a submission.
 const UNIFORM_RING_SLOTS: u64 = 4096;
 /// Maximum storage-buffer bindings behind the uniform params binding.
-pub const MAX_STORAGE_BINDINGS: u32 = 7;
+pub const MAX_STORAGE_BINDINGS: u32 = 8;
 
 /// A pooled device buffer plus its size class.
 pub struct PooledBuf {
@@ -133,6 +135,36 @@ pub enum PendingOp {
 
 type MapCallback = Box<dyn FnOnce(std::result::Result<(), wgpu::BufferAsyncError>) + Send>;
 
+/// Dev-facing batching counters. Always collected (cheap `u64` adds); the
+/// `*_ns` fields accumulate host wall time only when `MINIFIELD_WGPU_STATS`
+/// was set at device init. `encode` covers the host-side `dispatch` path
+/// (bind group + record); `submit` covers replay + `queue.submit`; the wait
+/// fields measure submit-to-observe latency of each completion kind, which
+/// includes GPU execution and callback delivery.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DeviceStats {
+    pub dispatches: u64,
+    pub copies: u64,
+    pub clears: u64,
+    pub compute_passes: u64,
+    pub submits: u64,
+    pub fences: u64,
+    pub readbacks: u64,
+    pub encode_ns: u64,
+    pub submit_ns: u64,
+    pub fence_wait_ns: u64,
+    pub readback_wait_ns: u64,
+}
+
+impl DeviceStats {
+    /// Read `MINIFIELD_WGPU_STATS` once; any non-empty value enables timing.
+    pub fn timing_enabled() -> bool {
+        static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ENABLED
+            .get_or_init(|| std::env::var_os("MINIFIELD_WGPU_STATS").is_some_and(|v| !v.is_empty()))
+    }
+}
+
 /// Per-class and aggregate byte accounting, mirroring the CPU tracker.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ClassBytes {
@@ -227,8 +259,48 @@ pub struct DeviceInner {
     ctx: RefCell<OpCtx>,
     pub tracker: RefCell<Tracker>,
     counters: Arc<Counters>,
+    /// Batching counters and (env-gated) host timing. See [`DeviceStats`].
+    pub stats: RefCell<DeviceStats>,
+    stats_timing: bool,
+    /// Per-kernel dispatch counts, printed with stats on drop.
+    kernels: RefCell<HashMap<Kernel, u64>>,
     /// Limits the device was created with (post adapter clamping).
     pub device_limits: wgpu::Limits,
+}
+
+impl Drop for DeviceInner {
+    #[allow(clippy::cast_precision_loss)] // diagnostic counters print as ms
+    fn drop(&mut self) {
+        if self.stats_timing {
+            let s = self.stats.borrow();
+            eprintln!(
+                "wgpu stats: dispatches={} copies={} clears={} passes={} submits={} \
+                 fences={} readbacks={} encode={:.2}ms submit={:.2}ms \
+                 fence_wait={:.2}ms readback_wait={:.2}ms",
+                s.dispatches,
+                s.copies,
+                s.clears,
+                s.compute_passes,
+                s.submits,
+                s.fences,
+                s.readbacks,
+                s.encode_ns as f64 / 1e6,
+                s.submit_ns as f64 / 1e6,
+                s.fence_wait_ns as f64 / 1e6,
+                s.readback_wait_ns as f64 / 1e6,
+            );
+            let mut kernels: Vec<(Kernel, u64)> = self
+                .kernels
+                .borrow()
+                .iter()
+                .map(|(k, c)| (*k, *c))
+                .collect();
+            kernels.sort_by_key(|entry| std::cmp::Reverse(entry.1));
+            for (kernel, count) in kernels {
+                eprintln!("  kernel {:<24} x{}", kernel.name(), count);
+            }
+        }
+    }
 }
 
 impl DeviceInner {
@@ -396,8 +468,16 @@ impl DeviceInner {
             counters: Arc::new(Counters {
                 confirmed: AtomicU64::new(0),
             }),
+            stats: RefCell::new(DeviceStats::default()),
+            stats_timing: DeviceStats::timing_enabled(),
+            kernels: RefCell::new(HashMap::new()),
             device_limits,
         }))
+    }
+
+    /// Whether host-side timing accumulation is on (`MINIFIELD_WGPU_STATS`).
+    pub fn stats_timing(&self) -> bool {
+        self.stats_timing
     }
 
     /// Highest submission serial confirmed complete.
@@ -532,6 +612,7 @@ impl DeviceInner {
     /// the serial-confirmation callback, and moves `pending_free` into
     /// `awaiting` under the new serial.
     fn submit_locked(&self, ctx: &mut OpCtx) -> Result<u64> {
+        let start = self.stats_timing.then(std::time::Instant::now);
         if !ctx.uniform_staging.is_empty() {
             self.queue
                 .write_buffer(&self.uniform, 0, &ctx.uniform_staging);
@@ -553,6 +634,7 @@ impl DeviceInner {
                             let Some(next) = ops.pop_front() else { break };
                             run.push(next);
                         }
+                        self.stats.borrow_mut().compute_passes += 1;
                         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                             label: Some("minifield-batch"),
                             timestamp_writes: None,
@@ -615,6 +697,13 @@ impl DeviceInner {
                 .push_back((serial, core::mem::take(&mut ctx.pending_free)));
         }
         ctx.uniform_cursor = 0;
+        {
+            let mut stats = self.stats.borrow_mut();
+            stats.submits += 1;
+            if let Some(start) = start {
+                stats.submit_ns += u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX);
+            }
+        }
         Ok(serial)
     }
 
@@ -697,6 +786,7 @@ impl DeviceInner {
                 "wgpu kernel params exceed uniform slot",
             ));
         }
+        let start = self.stats_timing.then(std::time::Instant::now);
         self.reap();
         let pipeline = self.pipeline(kernel);
         let mut ctx = self.ctx.borrow_mut();
@@ -740,6 +830,13 @@ impl DeviceInner {
             dynamic_offset,
             grid,
         });
+        drop(ctx);
+        *self.kernels.borrow_mut().entry(kernel).or_insert(0) += 1;
+        let mut stats = self.stats.borrow_mut();
+        stats.dispatches += 1;
+        if let Some(start) = start {
+            stats.encode_ns += u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        }
         Ok(())
     }
 
@@ -763,6 +860,7 @@ impl DeviceInner {
             destination_offset,
             bytes,
         });
+        self.stats.borrow_mut().copies += 1;
     }
 
     /// Record a zero fill of `buffer[0..bytes]` into the pending batch.
@@ -775,6 +873,7 @@ impl DeviceInner {
             buffer: buffer.clone(),
             bytes,
         });
+        self.stats.borrow_mut().clears += 1;
     }
 
     /// Attach a deferred map request to the pending batch. The map executes

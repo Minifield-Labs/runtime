@@ -1,8 +1,8 @@
 # backend-wgpu
 
-`InferenceOps` implementation over wgpu 30 for the portable executor. F32 only;
-it is the GPU foundation for the ternary-execution plan, not the ternary path
-itself.
+`InferenceOps` implementation over wgpu 30 for the portable executor. F32 plus
+the `minifield.ternary.v1` packed path; it runs the full LFM2.5 decode loop on
+device, including the greedy sample.
 
 ## What it does
 
@@ -27,11 +27,22 @@ itself.
 ## Kernels
 
 WGSL lives in `src/kernels.rs`: fill, binary add/multiply, 2D rect copy,
-row gather, shared-memory-reduction GEMV (m == 1) with a vec4 fast path,
-16x16 tiled GEMM (m > 1), row/head RMS norm, host-table split-half RoPE,
-per-token causal GQA with recorded cache appends, two-pass gated short
-convolution with rolling history, and SwiGLU. Grids flatten workgroup IDs so
-n up to 65_536 and beyond fits WebGPU's 65_535 workgroups-per-dimension limit.
+row gather, lane-grouped shared-reduction GEMV (m == 1) with vec4 activation
+loads and adaptive lanes-per-row, 16x16 tiled GEMM (m > 1), row/head RMS norm,
+host-table split-half RoPE, per-token causal GQA with recorded cache appends,
+gated short convolution (single-dispatch `conv_step` for decode; staged
+history assembly for multi-token prefill), SwiGLU, packed ternary GEMV /
+pair / SwiGLU / gather, fused add-RMS-norm, fused QK-norm+RoPE, and a
+two-stage argmax for wide rows. Grids flatten workgroup IDs so n up to 65_536
+and beyond fits WebGPU's 65_535 workgroups-per-dimension limit.
+
+## Diagnostics
+
+`MINIFIELD_WGPU_STATS` (any non-empty value) enables host-side timing and
+per-kernel dispatch counts, printed when the device drops. `tests/kernel_bench.rs`
+is a developer microbenchmark at real LFM2.5-230M shapes:
+
+    cargo test --release -p minifield-backend-wgpu --test kernel_bench -- --nocapture
 
 ## Device limits
 
@@ -48,5 +59,7 @@ tensors and skips cleanly when no adapter exists:
 
 ## Deferred
 
-Ternary weight decode, fused ternary kernels, wasm32 hosting, and subgroup or
-f16 fast paths are separate follow-up tasks.
+Subgroup-intrinsic reductions, f16 compute, wasm32 hosting, and wider decode
+fusion (fusing the row-norm epilogue into consuming GEMVs; multi-token decode
+batches behind one submission) are follow-up tasks. The adapter exposes
+`SUBGROUP` and `TIMESTAMP_QUERY`, but kernels stay portable for now.

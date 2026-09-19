@@ -69,6 +69,22 @@ fn flat_grid(groups: u64) -> Result<(u32, u32, u32)> {
     ))
 }
 
+/// Lanes per output row for the GEMV-family kernels. A workgroup covers
+/// `256 / lanes` rows, so narrow outputs get more lanes per row to keep the
+/// workgroup count high enough to fill the GPU; wide outputs use 32-lane
+/// groups, which already saturate through row count alone.
+fn gemv_lanes(output_width: u64) -> u64 {
+    // Measured on M1 Max: narrow outputs need more lanes per row for enough
+    // workgroups; wide outputs benefit from more per-lane work (fewer lanes).
+    if output_width < 4096 { 16 } else { 8 }
+}
+
+/// Workgroup tile count for a GEMV-family dispatch: each workgroup covers
+/// `256 / lanes` consecutive output rows.
+fn gemv_tiles(output_width: u64, lanes: u64) -> u64 {
+    output_width.div_ceil(256 / lanes)
+}
+
 /// A u64 dimension as a u32 kernel parameter.
 fn param32(value: u64) -> Result<u32> {
     u32::try_from(value).map_err(|_| {
@@ -827,11 +843,12 @@ impl WgpuBackend {
         let destination = output.wgpu_buffer()?.clone();
         if rows == 1 {
             // `w4` rebinds the weight as vec4 for 128-bit row loads.
+            let lanes = gemv_lanes(output_width);
             self.device.dispatch(
                 Kernel::Gemv,
                 &[&destination, &x, &w, &w],
-                &params(&[param32(output_width)?, param32(inner)?]),
-                flat_grid(output_width)?,
+                &params(&[param32(output_width)?, param32(inner)?, param32(lanes)?]),
+                flat_grid(gemv_tiles(output_width, lanes))?,
             )
         } else {
             let max = u64::from(MAX_WGS_PER_DIM);
@@ -929,15 +946,27 @@ impl WgpuBackend {
         let c = codes.wgpu_buffer()?.clone();
         let s = scales.wgpu_buffer()?.clone();
         let destination = output.wgpu_buffer()?.clone();
-        let workgroups = rows
-            .checked_mul(output_width)
-            .ok_or(ExecutorError::Overflow(
-                "packed linear output count overflows u64",
-            ))?;
+        let lanes = gemv_lanes(output_width);
+        let tiles = gemv_tiles(output_width, lanes);
+        let workgroups = rows.checked_mul(tiles).ok_or(ExecutorError::Overflow(
+            "packed linear output count overflows u64",
+        ))?;
+        // `x4` rebinds the activation as vec4 for 128-bit loads when the inner
+        // dimension is 4-aligned; the kernel flag falls back to scalar reads.
+        let vec_ok = u32::from(inner % 4 == 0);
         self.device.dispatch(
             Kernel::PackedGemv,
-            &[&destination, &x, &c, &s],
-            &params(&[param32(output_width)?, param32(inner)?, param32(rows)?]),
+            &[&destination, &x, &c, &s, &x],
+            &params(&[
+                param32(output_width)?,
+                param32(inner)?,
+                param32(lanes)?,
+                param32(tiles)?,
+                vec_ok,
+                0,
+                0,
+                0,
+            ]),
             flat_grid(workgroups)?,
         )
     }
@@ -1004,12 +1033,46 @@ impl WgpuBackend {
         }
         let source = input.wgpu_buffer()?.clone();
         let destination = output.wgpu_buffer()?.clone();
-        self.device.dispatch(
-            Kernel::Argmax,
-            &[&destination, &source],
-            &params(&[param32(rows)?, param32(columns)?]),
+        if columns <= 2048 {
+            return self.device.dispatch(
+                Kernel::Argmax,
+                &[&destination, &source],
+                &params(&[param32(rows)?, param32(columns)?]),
+                flat_grid(rows)?,
+            );
+        }
+        // Wide rows split into 2048-element blocks so a single workgroup does
+        // not serialize the whole scan: stage 1 writes one (value, index)
+        // partial per block, stage 2 reduces them per row.
+        let blocks = columns.div_ceil(2048);
+        let partials = self.device.alloc_storage(
+            rows.checked_mul(blocks)
+                .and_then(|count| count.checked_mul(8))
+                .ok_or(ExecutorError::Overflow(
+                    "argmax partials size overflows u64",
+                ))?,
+        )?;
+        let result = self.device.dispatch(
+            Kernel::ArgmaxBlocks,
+            &[&partials.buffer, &source],
+            &params(&[param32(rows)?, param32(columns)?, param32(blocks)?]),
+            flat_grid(
+                rows.checked_mul(blocks)
+                    .ok_or(ExecutorError::Overflow("argmax block count overflows u64"))?,
+            )?,
+        );
+        if result.is_err() {
+            self.device.defer_free(partials);
+            return result;
+        }
+        let result = self.device.dispatch(
+            Kernel::ArgmaxFinal,
+            &[&destination, &partials.buffer],
+            &params(&[param32(rows)?, param32(columns)?, param32(blocks)?]),
             flat_grid(rows)?,
-        )
+        );
+        self.device.defer_free(partials);
+        result
     }
 
     /// Paired packed ternary linear over one shared input: workgroup (i, j)
@@ -1069,15 +1132,27 @@ impl WgpuBackend {
         let sa = scales_a.wgpu_buffer()?.clone();
         let cb = codes_b.wgpu_buffer()?.clone();
         let sb = scales_b.wgpu_buffer()?.clone();
-        let workgroups = rows
-            .checked_mul(output_width)
-            .ok_or(ExecutorError::Overflow(
-                "packed linear pair output count overflows u64",
-            ))?;
+        let lanes = gemv_lanes(output_width);
+        let tiles = gemv_tiles(output_width, lanes);
+        let workgroups = rows.checked_mul(tiles).ok_or(ExecutorError::Overflow(
+            "packed linear pair output count overflows u64",
+        ))?;
+        // `x4` rebinds the activation as vec4 for 128-bit loads when the inner
+        // dimension is 4-aligned; the kernel flag falls back to scalar reads.
+        let vec_ok = u32::from(inner % 4 == 0);
         self.device.dispatch(
             Kernel::PackedGemvPair,
-            &[&da, &db, &x, &ca, &sa, &cb, &sb],
-            &params(&[param32(output_width)?, param32(inner)?, param32(rows)?]),
+            &[&da, &db, &x, &ca, &sa, &cb, &sb, &x],
+            &params(&[
+                param32(output_width)?,
+                param32(inner)?,
+                param32(lanes)?,
+                param32(tiles)?,
+                vec_ok,
+                0,
+                0,
+                0,
+            ]),
             flat_grid(workgroups)?,
         )
     }
@@ -1123,15 +1198,27 @@ impl WgpuBackend {
         let u = up.wgpu_buffer()?.clone();
         let c = codes.wgpu_buffer()?.clone();
         let s = scales.wgpu_buffer()?.clone();
-        let workgroups = rows
-            .checked_mul(output_width)
-            .ok_or(ExecutorError::Overflow(
-                "packed SwiGLU output count overflows u64",
-            ))?;
+        let lanes = gemv_lanes(output_width);
+        let tiles = gemv_tiles(output_width, lanes);
+        let workgroups = rows.checked_mul(tiles).ok_or(ExecutorError::Overflow(
+            "packed SwiGLU output count overflows u64",
+        ))?;
+        // `gate4`/`up4` rebind the operands as vec4 when the inner dimension is
+        // 4-aligned; the kernel flag falls back to scalar reads.
+        let vec_ok = u32::from(inner % 4 == 0);
         self.device.dispatch(
             Kernel::PackedSwigluGemv,
-            &[&destination, &g, &u, &c, &s],
-            &params(&[param32(output_width)?, param32(inner)?, param32(rows)?]),
+            &[&destination, &g, &u, &c, &s, &g, &u],
+            &params(&[
+                param32(output_width)?,
+                param32(inner)?,
+                param32(lanes)?,
+                param32(tiles)?,
+                vec_ok,
+                0,
+                0,
+                0,
+            ]),
             flat_grid(workgroups)?,
         )
     }
@@ -1697,6 +1784,36 @@ impl WgpuBackend {
             .ok_or(ExecutorError::Overflow(
                 "short conv history size overflows u64",
             ))?;
+        if tokens == 1 && history_rows > 0 {
+            // Decode step: one fused dispatch computes the gate, conv, and the
+            // shifted history in a fresh buffer, then the history buffer swaps
+            // storage. This avoids the staged same-buffer copies the general
+            // path needs.
+            let new_hist = self.device.alloc_storage(hist_elems.checked_mul(4).ok_or(
+                ExecutorError::Overflow("short conv history bytes overflow u64"),
+            )?)?;
+            let hp = projection.wgpu_buffer()?.clone();
+            let hk = kernel.wgpu_buffer()?.clone();
+            let hh = history.wgpu_buffer()?.clone();
+            let destination = output.wgpu_buffer()?.clone();
+            if let Err(err) = self.device.dispatch(
+                Kernel::ConvStep,
+                &[&hh, &hp, &hk, &new_hist.buffer, &destination],
+                &params(&[
+                    param32(hidden)?,
+                    param32(history_rows)?,
+                    param32(projection_width)?,
+                ]),
+                flat_grid(element_groups(hidden))?,
+            ) {
+                drop(new_hist);
+                return Err(err);
+            }
+            if let Some(old) = history.storage.replace(new_hist) {
+                self.device.defer_free(old);
+            }
+            return Ok(());
+        }
         let token_elems = tokens.checked_mul(hidden).ok_or(ExecutorError::Overflow(
             "short conv element count overflows u64",
         ))?;
@@ -1878,6 +1995,14 @@ impl InferenceOps for WgpuBackend {
         class: AllocationClass,
     ) -> Result<Self::Buffer> {
         WgpuBackend::allocate_f32_classified(self, shape, class)
+    }
+
+    fn allocate_f32_uninit(
+        &mut self,
+        shape: Shape,
+        class: AllocationClass,
+    ) -> Result<Self::Buffer> {
+        self.allocate_inner(shape, DType::F32, class, false)
     }
 
     fn upload_f32_classified(

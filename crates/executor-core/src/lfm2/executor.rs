@@ -15,7 +15,8 @@ use minifield_engine_api::{
 };
 
 use super::{
-    LayerKind, Lfm2Config, Lfm2LayerWeightRole, Lfm2TypedWeights, Lfm2WeightRole, NumericalMode,
+    LayerKind, Lfm2Config, Lfm2LayerWeightRole, Lfm2ResolvedWeight, Lfm2TypedWeights,
+    Lfm2WeightRole, NumericalMode,
 };
 
 /// Caller-selected logical cache capacity for one loaded model.
@@ -322,9 +323,9 @@ impl<B: InferenceOps> Lfm2Executor<B> {
 }
 
 fn validate_roles<B: InferenceOps>(weights: &Lfm2TypedWeights<B::Buffer>) -> Result<()> {
-    let _ = weights.buffer_for(Lfm2WeightRole::TokenEmbedding)?;
-    let _ = weights.buffer_for(Lfm2WeightRole::TiedLmHead)?;
-    let _ = weights.buffer_for(Lfm2WeightRole::EmbeddingNorm)?;
+    let _ = weights.resolve(Lfm2WeightRole::TokenEmbedding)?;
+    let _ = weights.resolve(Lfm2WeightRole::TiedLmHead)?;
+    let _ = weights.resolve(Lfm2WeightRole::EmbeddingNorm)?;
     for (index, kind) in weights.config().layers.iter().copied().enumerate() {
         match kind {
             LayerKind::Conv => {
@@ -333,7 +334,7 @@ fn validate_roles<B: InferenceOps>(weights: &Lfm2TypedWeights<B::Buffer>) -> Res
                     Lfm2LayerWeightRole::ConvInProjection,
                     Lfm2LayerWeightRole::ConvOutProjection,
                 ] {
-                    let _ = weights.buffer_for(layer_role(index, role))?;
+                    let _ = weights.resolve(layer_role(index, role))?;
                 }
             }
             LayerKind::FullAttention => {
@@ -345,7 +346,7 @@ fn validate_roles<B: InferenceOps>(weights: &Lfm2TypedWeights<B::Buffer>) -> Res
                     Lfm2LayerWeightRole::ValueProjection,
                     Lfm2LayerWeightRole::OutputProjection,
                 ] {
-                    let _ = weights.buffer_for(layer_role(index, role))?;
+                    let _ = weights.resolve(layer_role(index, role))?;
                 }
             }
         }
@@ -356,10 +357,27 @@ fn validate_roles<B: InferenceOps>(weights: &Lfm2TypedWeights<B::Buffer>) -> Res
             Lfm2LayerWeightRole::FfnNorm,
             Lfm2LayerWeightRole::OperatorNorm,
         ] {
-            let _ = weights.buffer_for(layer_role(index, role))?;
+            let _ = weights.resolve(layer_role(index, role))?;
         }
     }
     Ok(())
+}
+
+/// Linear projection through whichever operand set the role is stored as:
+/// dense f32 weights or `minifield.ternary.v1` packed code/scale streams.
+fn weight_linear<B: InferenceOps>(
+    backend: &B,
+    output: &mut B::Buffer,
+    input: &B::Buffer,
+    weights: &Lfm2TypedWeights<B::Buffer>,
+    role: Lfm2WeightRole,
+) -> Result<()> {
+    match weights.resolve(role)? {
+        Lfm2ResolvedWeight::Dense(weight) => backend.linear(output, input, weight),
+        Lfm2ResolvedWeight::Packed { codes, scales } => {
+            backend.packed_linear(output, input, codes, scales)
+        }
+    }
 }
 
 fn layer_role(index: usize, role: Lfm2LayerWeightRole) -> Lfm2WeightRole {
@@ -528,11 +546,14 @@ fn append_token<B: InferenceOps>(
             "LFM2 key/value width overflows u64",
         ))?;
     let mut x = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
-    backend.gather_rows(
-        &mut x.buffer,
-        context.weights.buffer_for(Lfm2WeightRole::TokenEmbedding)?,
-        &[token],
-    )?;
+    match context.weights.resolve(Lfm2WeightRole::TokenEmbedding)? {
+        Lfm2ResolvedWeight::Dense(embedding) => {
+            backend.gather_rows(&mut x.buffer, embedding, &[token])?;
+        }
+        Lfm2ResolvedWeight::Packed { codes, scales } => {
+            backend.packed_gather_rows(&mut x.buffer, codes, scales, &[token])?;
+        }
+    }
 
     for (index, kind) in config.layers.iter().copied().enumerate() {
         let mut u = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
@@ -557,12 +578,12 @@ fn append_token<B: InferenceOps>(
                     )?,
                     AllocationClass::Scratch,
                 )?;
-                backend.linear(
+                weight_linear(
+                    backend,
                     &mut projection.buffer,
                     &u.buffer,
-                    context
-                        .weights
-                        .buffer_for(layer_role(index, Lfm2LayerWeightRole::ConvInProjection))?,
+                    &context.weights,
+                    layer_role(index, Lfm2LayerWeightRole::ConvInProjection),
                 )?;
                 let mut b = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
                 let mut c = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
@@ -599,12 +620,12 @@ fn append_token<B: InferenceOps>(
                     &mut history.buffer,
                     GatedShortConvSpec::new(config.hidden_size, config.conv_width)?,
                 )?;
-                backend.linear(
+                weight_linear(
+                    backend,
                     &mut operator.buffer,
                     &convolved.buffer,
-                    context
-                        .weights
-                        .buffer_for(layer_role(index, Lfm2LayerWeightRole::ConvOutProjection))?,
+                    &context.weights,
+                    layer_role(index, Lfm2LayerWeightRole::ConvOutProjection),
                 )?;
                 push_scratch::<B>(
                     scratch,
@@ -621,26 +642,26 @@ fn append_token<B: InferenceOps>(
                 let mut q = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
                 let mut k = allocate(backend, shape(1, kv_width)?, AllocationClass::Scratch)?;
                 let mut v = allocate(backend, shape(1, kv_width)?, AllocationClass::Scratch)?;
-                backend.linear(
+                weight_linear(
+                    backend,
                     &mut q.buffer,
                     &u.buffer,
-                    context
-                        .weights
-                        .buffer_for(layer_role(index, Lfm2LayerWeightRole::QueryProjection))?,
+                    &context.weights,
+                    layer_role(index, Lfm2LayerWeightRole::QueryProjection),
                 )?;
-                backend.linear(
+                weight_linear(
+                    backend,
                     &mut k.buffer,
                     &u.buffer,
-                    context
-                        .weights
-                        .buffer_for(layer_role(index, Lfm2LayerWeightRole::KeyProjection))?,
+                    &context.weights,
+                    layer_role(index, Lfm2LayerWeightRole::KeyProjection),
                 )?;
-                backend.linear(
+                weight_linear(
+                    backend,
                     &mut v.buffer,
                     &u.buffer,
-                    context
-                        .weights
-                        .buffer_for(layer_role(index, Lfm2LayerWeightRole::ValueProjection))?,
+                    &context.weights,
+                    layer_role(index, Lfm2LayerWeightRole::ValueProjection),
                 )?;
                 let query_heads = PackedHeadSpec::new(config.attention_heads, config.head_dim)?;
                 let key_value_heads = PackedHeadSpec::new(config.key_value_heads, config.head_dim)?;
@@ -700,12 +721,12 @@ fn append_token<B: InferenceOps>(
                         config.head_dim,
                     )?,
                 )?;
-                backend.linear(
+                weight_linear(
+                    backend,
                     &mut operator.buffer,
                     &attention.buffer,
-                    context
-                        .weights
-                        .buffer_for(layer_role(index, Lfm2LayerWeightRole::OutputProjection))?,
+                    &context.weights,
+                    layer_role(index, Lfm2LayerWeightRole::OutputProjection),
                 )?;
                 push_scratch::<B>(
                     scratch,
@@ -735,29 +756,29 @@ fn append_token<B: InferenceOps>(
         )?;
         let mut gate = allocate(backend, shape(1, intermediate)?, AllocationClass::Scratch)?;
         let mut up = allocate(backend, shape(1, intermediate)?, AllocationClass::Scratch)?;
-        backend.linear(
+        weight_linear(
+            backend,
             &mut gate.buffer,
             &ffn_input.buffer,
-            context
-                .weights
-                .buffer_for(layer_role(index, Lfm2LayerWeightRole::FfnW1))?,
+            &context.weights,
+            layer_role(index, Lfm2LayerWeightRole::FfnW1),
         )?;
-        backend.linear(
+        weight_linear(
+            backend,
             &mut up.buffer,
             &ffn_input.buffer,
-            context
-                .weights
-                .buffer_for(layer_role(index, Lfm2LayerWeightRole::FfnW3))?,
+            &context.weights,
+            layer_role(index, Lfm2LayerWeightRole::FfnW3),
         )?;
         let mut activated = allocate(backend, shape(1, intermediate)?, AllocationClass::Scratch)?;
         backend.swiglu(&mut activated.buffer, &gate.buffer, &up.buffer)?;
         let mut down = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
-        backend.linear(
+        weight_linear(
+            backend,
             &mut down.buffer,
             &activated.buffer,
-            context
-                .weights
-                .buffer_for(layer_role(index, Lfm2LayerWeightRole::FfnW2))?,
+            &context.weights,
+            layer_role(index, Lfm2LayerWeightRole::FfnW2),
         )?;
         let mut next = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
         backend.add(&mut next.buffer, &residual.buffer, &down.buffer)?;
@@ -789,10 +810,12 @@ fn append_token<B: InferenceOps>(
         shape(1, u64::from(config.vocab_size))?,
         AllocationClass::Cache,
     )?;
-    backend.linear(
+    weight_linear(
+        backend,
         &mut logits.buffer,
         &normalized.buffer,
-        context.weights.buffer_for(Lfm2WeightRole::TiedLmHead)?,
+        &context.weights,
+        Lfm2WeightRole::TiedLmHead,
     )?;
     push_scratch::<B>(scratch, [x.buffer, normalized.buffer]);
     state.next_logits = Some(logits);

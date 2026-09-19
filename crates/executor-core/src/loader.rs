@@ -50,11 +50,14 @@ impl LoaderLimits {
     }
 }
 
-/// Source storage accepted by this F32-compute loader. BF16 is expanded before upload.
+/// Source storage accepted by this F32-compute loader. BF16 and F16 are expanded before upload.
+/// U8 payloads (packed ternary code streams) upload byte-exact, without scalar interpretation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StorageDType {
     F32,
     BF16,
+    F16,
+    U8,
 }
 
 impl StorageDType {
@@ -62,6 +65,8 @@ impl StorageDType {
         match text {
             "F32" => Ok(Self::F32),
             "BF16" => Ok(Self::BF16),
+            "F16" => Ok(Self::F16),
+            "U8" => Ok(Self::U8),
             "F64" => Err(ExecutorError::Unsupported(
                 "F64 safetensors storage is unsupported by the F32 loader",
             )),
@@ -75,7 +80,17 @@ impl StorageDType {
     pub const fn byte_width(self) -> u64 {
         match self {
             Self::F32 => 4,
-            Self::BF16 => 2,
+            Self::BF16 | Self::F16 => 2,
+            Self::U8 => 1,
+        }
+    }
+
+    /// Byte width of the uploaded backend buffer per source element.
+    #[must_use]
+    pub const fn uploaded_byte_width(self) -> u64 {
+        match self {
+            Self::U8 => 1,
+            Self::F32 | Self::BF16 | Self::F16 => 4,
         }
     }
 
@@ -84,6 +99,8 @@ impl StorageDType {
         match self {
             Self::F32 => DType::F32,
             Self::BF16 => DType::BF16,
+            Self::F16 => DType::F16,
+            Self::U8 => DType::U8,
         }
     }
 }
@@ -637,7 +654,24 @@ impl<'de> Visitor<'de> for U64VectorVisitor {
     }
 }
 
+/// Decode one IEEE-754 half-precision value. Special encodings produce
+/// non-finite f32 and are rejected by the caller's finite-value check.
+fn f16_to_f32(bits: u16) -> f32 {
+    let sign = u32::from(bits & 0x8000) << 16;
+    let exponent = u32::from(bits >> 10 & 0x1F);
+    let mantissa = bits & 0x03FF;
+    let value = if exponent == 0 {
+        f32::from(mantissa) * 2f32.powi(-24)
+    } else if exponent == 31 {
+        f32::from_bits(0x7F80_0000 | (u32::from(mantissa) << 13))
+    } else {
+        f32::from_bits(((exponent + 112) << 23) | (u32::from(mantissa) << 13))
+    };
+    f32::from_bits(value.to_bits() | sign)
+}
+
 /// F32 decoded values and their explicitly converted operator shape.
+/// U8 packed payloads do not pass through here; they upload byte-exact.
 fn decode_tensor(
     bytes: &[u8],
     tensor: &ParsedTensor,
@@ -670,6 +704,17 @@ fn decode_tensor(
                 let bits = u16::from_le_bytes([chunk[0], chunk[1]]);
                 values.push(f32::from_bits(u32::from(bits) << 16));
             }
+        }
+        StorageDType::F16 => {
+            let (chunks, _) = bytes.as_chunks::<2>();
+            for chunk in chunks {
+                values.push(f16_to_f32(u16::from_le_bytes(*chunk)));
+            }
+        }
+        StorageDType::U8 => {
+            return Err(ExecutorError::InvalidDType(
+                "u8 packed payloads upload byte-exact and never decode to f32",
+            ));
         }
     }
     if values.len() != element_count || !values.iter().all(|value| value.is_finite()) {
@@ -715,7 +760,7 @@ pub struct TypedWeights<Buffer> {
     asset_sha256: [u8; 32],
     tensors: Vec<LoadedTensor<Buffer>>,
     roles: Vec<(String, usize)>,
-    owned_f32_bytes: u64,
+    owned_uploaded_bytes: u64,
 }
 
 impl<Buffer> TypedWeights<Buffer> {
@@ -738,8 +783,8 @@ impl<Buffer> TypedWeights<Buffer> {
         self.asset_sha256
     }
     #[must_use]
-    pub const fn owned_f32_bytes(&self) -> u64 {
-        self.owned_f32_bytes
+    pub const fn owned_uploaded_bytes(&self) -> u64 {
+        self.owned_uploaded_bytes
     }
     #[must_use]
     pub fn tensors(&self) -> &[LoadedTensor<Buffer>] {
@@ -1332,8 +1377,8 @@ where
                         .element_count()
                         .and_then(|count| {
                             count
-                                .checked_mul(DType::F32.byte_width())
-                                .ok_or(ExecutorError::Overflow("decoded f32 bytes overflow u64"))
+                                .checked_mul(tensor.storage_dtype.uploaded_byte_width())
+                                .ok_or(ExecutorError::Overflow("decoded bytes overflow u64"))
                         })
                         .map_err(|cause| LoaderError {
                             stage: LoaderStage::TensorDecode,
@@ -1359,19 +1404,49 @@ where
                     self.report.retained_source_bytes = tensor.bytes.len;
                     self.report.decoded_f32_bytes = decoded_bytes;
                     self.hasher.update(bytes.as_slice());
-                    let (operator_shape, values) =
-                        decode_tensor(bytes.as_slice(), tensor, requirement.layout).map_err(
-                            |cause| LoaderError {
-                                stage: LoaderStage::TensorDecode,
-                                cause,
-                            },
-                        )?;
-                    let buffer = backend
-                        .upload_f32_classified(operator_shape, &values, AllocationClass::Weight)
-                        .map_err(|cause| LoaderError {
-                            stage: LoaderStage::Upload,
+                    let (operator_shape, buffer) = if tensor.storage_dtype == StorageDType::U8 {
+                        let operator_shape = requirement
+                            .layout
+                            .output_shape(tensor.source_shape)
+                            .map_err(|cause| LoaderError {
+                            stage: LoaderStage::TensorDecode,
                             cause,
                         })?;
+                        if operator_shape != tensor.source_shape {
+                            return Err(LoaderError {
+                                stage: LoaderStage::TensorDecode,
+                                cause: ExecutorError::InvalidShape(
+                                    "u8 packed payloads require an identity layout",
+                                ),
+                            });
+                        }
+                        let buffer = backend
+                            .upload_u8_classified(
+                                operator_shape,
+                                bytes.as_slice(),
+                                AllocationClass::Weight,
+                            )
+                            .map_err(|cause| LoaderError {
+                                stage: LoaderStage::Upload,
+                                cause,
+                            })?;
+                        (operator_shape, buffer)
+                    } else {
+                        let (operator_shape, values) =
+                            decode_tensor(bytes.as_slice(), tensor, requirement.layout).map_err(
+                                |cause| LoaderError {
+                                    stage: LoaderStage::TensorDecode,
+                                    cause,
+                                },
+                            )?;
+                        let buffer = backend
+                            .upload_f32_classified(operator_shape, &values, AllocationClass::Weight)
+                            .map_err(|cause| LoaderError {
+                                stage: LoaderStage::Upload,
+                                cause,
+                            })?;
+                        (operator_shape, buffer)
+                    };
                     self.staged.push(StagedWeight {
                         manifest_index: index,
                         tensor: LoadedTensor {
@@ -1483,7 +1558,7 @@ where
                     for binding in &self.bindings {
                         roles.push((binding.role.clone(), binding.tensor_index));
                     }
-                    let owned_f32_bytes = tensors
+                    let owned_uploaded_bytes = tensors
                         .iter()
                         .try_fold(0_u64, |total, tensor| {
                             total
@@ -1491,14 +1566,12 @@ where
                                     tensor
                                         .operator_shape
                                         .element_count()?
-                                        .checked_mul(4)
+                                        .checked_mul(tensor.source_dtype.uploaded_byte_width())
                                         .ok_or(ExecutorError::Overflow(
-                                            "owned f32 weight bytes overflow u64",
+                                            "owned weight bytes overflow u64",
                                         ))?,
                                 )
-                                .ok_or(ExecutorError::Overflow(
-                                    "owned f32 weight bytes overflow u64",
-                                ))
+                                .ok_or(ExecutorError::Overflow("owned weight bytes overflow u64"))
                         })
                         .map_err(|cause| LoaderError {
                             stage: LoaderStage::FinalFence,
@@ -1520,7 +1593,7 @@ where
                         asset_sha256: observed,
                         tensors,
                         roles,
-                        owned_f32_bytes,
+                        owned_uploaded_bytes,
                     })))
                 }
             },

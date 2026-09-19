@@ -7,6 +7,6 @@ pub use executor::{
     Lfm2ExecutionLimits, Lfm2Executor, Lfm2Prefix, LogitsTask, PrefixTask, ScoreTask,
 };
 pub use weights::{
-    Lfm2LayerWeightRole, Lfm2LoadRequest, Lfm2TypedWeights, Lfm2WeightLoadTask, Lfm2WeightPlan,
-    Lfm2WeightRole,
+    Lfm2LayerWeightRole, Lfm2LoadRequest, Lfm2ResolvedWeight, Lfm2TypedWeights, Lfm2WeightFormat,
+    Lfm2WeightLoadTask, Lfm2WeightPlan, Lfm2WeightRole,
 };

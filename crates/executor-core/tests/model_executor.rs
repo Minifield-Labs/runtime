@@ -442,6 +442,15 @@ impl InferenceOps for DeferredBackend {
         self.cpu.upload_f32_classified(shape, values, class)
     }
 
+    fn upload_u8_classified(
+        &mut self,
+        shape: Shape,
+        bytes: &[u8],
+        class: minifield_engine_api::AllocationClass,
+    ) -> Result<Self::Buffer> {
+        self.cpu.upload_u8_classified(shape, bytes, class)
+    }
+
     fn fence(&self) -> Result<Self::Fence> {
         if self.state.fail_fence.get() {
             return Err(ExecutorError::BackendFailure(
@@ -510,6 +519,26 @@ impl InferenceOps for DeferredBackend {
         weight: &Self::Buffer,
     ) -> Result<()> {
         self.cpu.linear(output, input, weight)
+    }
+
+    fn packed_linear(
+        &self,
+        output: &mut Self::Buffer,
+        input: &Self::Buffer,
+        codes: &Self::Buffer,
+        scales: &Self::Buffer,
+    ) -> Result<()> {
+        self.cpu.packed_linear(output, input, codes, scales)
+    }
+
+    fn packed_gather_rows(
+        &self,
+        output: &mut Self::Buffer,
+        codes: &Self::Buffer,
+        scales: &Self::Buffer,
+        ids: &[u32],
+    ) -> Result<()> {
+        self.cpu.packed_gather_rows(output, codes, scales, ids)
     }
 
     fn row_rms_norm(

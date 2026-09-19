@@ -324,7 +324,7 @@ fn sealed_tiny_weights_load_as_owned_f32_with_one_tied_embedding_head() {
     let weights =
         drive_lfm_immediate(task, &mut provider, &mut runtime).expect("published LFM weights");
     assert_eq!(weights.inner().tensors().len(), 21);
-    assert_eq!(weights.inner().owned_f32_bytes(), 22_048);
+    assert_eq!(weights.inner().owned_uploaded_bytes(), 22_048);
     assert_eq!(runtime.resource_report().resident_weight_bytes, 22_048);
     assert_eq!(runtime.resource_report().total_owned_bytes(), Ok(22_048));
     assert!(core::ptr::eq(
@@ -1245,6 +1245,14 @@ impl InferenceOps for DeferredFenceBackend {
     ) -> Result<CpuBuffer> {
         self.cpu.upload_f32_classified(shape, values, class)
     }
+    fn upload_u8_classified(
+        &mut self,
+        shape: Shape,
+        bytes: &[u8],
+        class: AllocationClass,
+    ) -> Result<CpuBuffer> {
+        self.cpu.upload_u8_classified(shape, bytes, class)
+    }
     fn fence(&self) -> Result<DeferredFence> {
         Ok(DeferredFence {
             pending: self.pending_fence_polls,
@@ -1277,6 +1285,24 @@ impl InferenceOps for DeferredFenceBackend {
     }
     fn linear(&self, output: &mut CpuBuffer, input: &CpuBuffer, weight: &CpuBuffer) -> Result<()> {
         self.cpu.linear(output, input, weight)
+    }
+    fn packed_linear(
+        &self,
+        output: &mut CpuBuffer,
+        input: &CpuBuffer,
+        codes: &CpuBuffer,
+        scales: &CpuBuffer,
+    ) -> Result<()> {
+        self.cpu.packed_linear(output, input, codes, scales)
+    }
+    fn packed_gather_rows(
+        &self,
+        output: &mut CpuBuffer,
+        codes: &CpuBuffer,
+        scales: &CpuBuffer,
+        ids: &[u32],
+    ) -> Result<()> {
+        self.cpu.packed_gather_rows(output, codes, scales, ids)
     }
     fn row_rms_norm(
         &self,

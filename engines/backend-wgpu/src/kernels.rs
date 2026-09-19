@@ -120,7 +120,9 @@ fn main(
     let c = i - r * pc.p.y;
     let id = row_id(r);
     if id >= pc.p.z {
-        dst[i] = bitcast<f32>(0x7FC00000u);
+        // NaN arrives through the params uniform: Dawn rejects non-finite
+        // bitcast constants during shader const-eval.
+        dst[i] = bitcast<f32>(pc.p.w);
         return;
     }
     dst[i] = table[id * pc.p.y + c];
@@ -136,9 +138,9 @@ const GEMV: &str = r"
 struct Params { p: vec4<u32> };
 @group(0) @binding(0) var<uniform> pc: Params;
 @group(0) @binding(1) var<storage, read_write> dst: array<f32>;
-@group(0) @binding(2) var<storage, read_write> x: array<f32>;
-@group(0) @binding(3) var<storage, read_write> w: array<f32>;
-@group(0) @binding(4) var<storage, read_write> w4: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read> x: array<f32>;
+@group(0) @binding(3) var<storage, read> w: array<f32>;
+@group(0) @binding(4) var<storage, read> w4: array<vec4<f32>>;
 
 // Groups of `G` lanes each reduce one output row; the workgroup covers
 // `256/G` rows so narrow matrices still launch enough workgroups to fill the
@@ -212,10 +214,10 @@ const PACKED_GEMV: &str = r"
 struct Params { p: vec4<u32>, q: vec4<u32> };
 @group(0) @binding(0) var<uniform> pc: Params;
 @group(0) @binding(1) var<storage, read_write> dst: array<f32>;
-@group(0) @binding(2) var<storage, read_write> x: array<f32>;
-@group(0) @binding(3) var<storage, read_write> codes: array<u32>;
-@group(0) @binding(4) var<storage, read_write> scales: array<f32>;
-@group(0) @binding(5) var<storage, read_write> x4: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read> x: array<f32>;
+@group(0) @binding(3) var<storage, read> codes: array<u32>;
+@group(0) @binding(4) var<storage, read> scales: array<f32>;
+@group(0) @binding(5) var<storage, read> x4: array<vec4<f32>>;
 
 // Groups of `G` lanes each reduce one output row; the workgroup covers
 // `256/G` rows so narrow matrices still launch enough workgroups to fill the
@@ -325,7 +327,7 @@ fn main(
         src = u32(srcf);
     }
     if src >= pc.p.z {
-        dst[i] = bitcast<f32>(0x7FC00000u);
+        dst[i] = bitcast<f32>(pc.p.w);
         return;
     }
     let word = codes[src * (k >> 4u) + (l >> 4u)];
@@ -360,13 +362,15 @@ fn main(
     if row >= pc.p.x { return; }
     let tid = lid.x;
     let base = row * cols;
-    var best = bitcast<f32>(0xFF800000u);
-    var idx = 0u;
+    // Dawn rejects -inf/NaN bitcast constants; lowest f32 plus a sentinel
+    // index preserves first-strict-max semantics, and NaN rides pc.p.w.
+    var best = -3.4028234663852886e38;
+    var idx = 0xFFFFFFFFu;
     var bad = 0u;
     for (var c = tid; c < cols; c = c + 256u) {
         let v = src[base + c];
         if v == v && abs(v) <= 3.4028234663852886e38 {
-            if v > best {
+            if v > best || (v == best && c < idx) {
                 best = v;
                 idx = c;
             }
@@ -392,7 +396,7 @@ fn main(
     }
     if tid == 0u {
         if sh_b[0] != 0u {
-            dst[row] = bitcast<f32>(0x7FC00000u);
+            dst[row] = bitcast<f32>(pc.p.w);
         } else {
             dst[row] = f32(sh_i[0]);
         }
@@ -430,13 +434,13 @@ fn main(
     let row_base = row * cols;
     let start = block * 2048u;
     let stop = min(start + 2048u, cols);
-    var best = bitcast<f32>(0xFF800000u);
-    var idx = 0u;
+    var best = -3.4028234663852886e38;
+    var idx = 0xFFFFFFFFu;
     var bad = 0u;
     for (var c = start + tid; c < stop; c = c + 256u) {
         let v = src[row_base + c];
         if v == v && abs(v) <= 3.4028234663852886e38 {
-            if v > best {
+            if v > best || (v == best && c < idx) {
                 best = v;
                 idx = c;
             }
@@ -462,7 +466,7 @@ fn main(
     }
     if tid == 0u {
         if sh_b[0] != 0u {
-            partials[flat] = vec2<f32>(bitcast<f32>(0x7FC00000u), 0.0);
+            partials[flat] = vec2<f32>(bitcast<f32>(pc.p.w), 0.0);
         } else {
             partials[flat] = vec2<f32>(sh_v[0], f32(sh_i[0]));
         }
@@ -493,8 +497,8 @@ fn main(
     if row >= pc.p.x { return; }
     let tid = lid.x;
     let base = row * blocks;
-    var best = bitcast<f32>(0xFF800000u);
-    var idx = 0u;
+    var best = -3.4028234663852886e38;
+    var idx = 0xFFFFFFFFu;
     var bad = 0u;
     for (var b = tid; b < blocks; b = b + 256u) {
         let p = partials[base + b];
@@ -523,7 +527,7 @@ fn main(
     }
     if tid == 0u {
         if sh_b[0] != 0u {
-            dst[row] = bitcast<f32>(0x7FC00000u);
+            dst[row] = bitcast<f32>(pc.p.w);
         } else {
             dst[row] = f32(sh_i[0]);
         }
@@ -540,12 +544,12 @@ struct Params { p: vec4<u32>, q: vec4<u32> };
 @group(0) @binding(0) var<uniform> pc: Params;
 @group(0) @binding(1) var<storage, read_write> dst_a: array<f32>;
 @group(0) @binding(2) var<storage, read_write> dst_b: array<f32>;
-@group(0) @binding(3) var<storage, read_write> x: array<f32>;
-@group(0) @binding(4) var<storage, read_write> codes_a: array<u32>;
-@group(0) @binding(5) var<storage, read_write> scales_a: array<f32>;
-@group(0) @binding(6) var<storage, read_write> codes_b: array<u32>;
-@group(0) @binding(7) var<storage, read_write> scales_b: array<f32>;
-@group(0) @binding(8) var<storage, read_write> x4: array<vec4<f32>>;
+@group(0) @binding(3) var<storage, read> x: array<f32>;
+@group(0) @binding(4) var<storage, read> codes_a: array<u32>;
+@group(0) @binding(5) var<storage, read> scales_a: array<f32>;
+@group(0) @binding(6) var<storage, read> codes_b: array<u32>;
+@group(0) @binding(7) var<storage, read> scales_b: array<f32>;
+@group(0) @binding(8) var<storage, read> x4: array<vec4<f32>>;
 
 // Same lane-grouped layout as `PACKED_GEMV`: each group of `G` lanes reduces
 // one output row for both weight sets, so the shared x stream is read once
@@ -647,12 +651,12 @@ const PACKED_SWIGLU_GEMV: &str = r"
 struct Params { p: vec4<u32>, q: vec4<u32> };
 @group(0) @binding(0) var<uniform> pc: Params;
 @group(0) @binding(1) var<storage, read_write> dst: array<f32>;
-@group(0) @binding(2) var<storage, read_write> gate: array<f32>;
-@group(0) @binding(3) var<storage, read_write> up: array<f32>;
-@group(0) @binding(4) var<storage, read_write> codes: array<u32>;
-@group(0) @binding(5) var<storage, read_write> scales: array<f32>;
-@group(0) @binding(6) var<storage, read_write> gate4: array<vec4<f32>>;
-@group(0) @binding(7) var<storage, read_write> up4: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read> gate: array<f32>;
+@group(0) @binding(3) var<storage, read> up: array<f32>;
+@group(0) @binding(4) var<storage, read> codes: array<u32>;
+@group(0) @binding(5) var<storage, read> scales: array<f32>;
+@group(0) @binding(6) var<storage, read> gate4: array<vec4<f32>>;
+@group(0) @binding(7) var<storage, read> up4: array<vec4<f32>>;
 
 var<workgroup> part: array<f32, 256>;
 
@@ -1267,6 +1271,45 @@ pub enum Kernel {
 }
 
 impl Kernel {
+    pub const ALL: &[Self] = &[
+        Self::Fill,
+        Self::Binary,
+        Self::Copy2d,
+        Self::Gather,
+        Self::Gemv,
+        Self::Gemm,
+        Self::RmsNorm,
+        Self::Rotary,
+        Self::Gqa,
+        Self::ConvGate,
+        Self::Conv,
+        Self::ConvStep,
+        Self::SwiGlu,
+        Self::PackedGemv,
+        Self::PackedGather,
+        Self::PackedGemvPair,
+        Self::PackedSwigluGemv,
+        Self::AddNorm,
+        Self::QkNormRope,
+        Self::Argmax,
+        Self::ArgmaxBlocks,
+        Self::ArgmaxFinal,
+    ];
+
+    /// Bitmask over storage binding positions (1..=storage_bindings) the
+    /// shader declares `read` rather than `read_write`. Dawn validates
+    /// binding access in both directions, so the bind group layout must
+    /// declare the same positions read-only.
+    pub const fn read_only_mask(self) -> u32 {
+        match self {
+            Self::Gemv => 0b11100,                // x, w, w4
+            Self::PackedGemv => 0b111100,         // x, codes, scales, x4
+            Self::PackedGemvPair => 0b111111000,  // x, codes/scales a+b, x4
+            Self::PackedSwigluGemv => 0b11111100, // gate, up, codes, scales, gate4, up4
+            _ => 0,
+        }
+    }
+
     /// WGSL source with the shared flattened-index helper prepended.
     pub fn source(self) -> String {
         let body = match self {

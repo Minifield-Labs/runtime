@@ -31,8 +31,11 @@ use crate::kernels::Kernel;
 pub const WORKGROUP_SIZE: u32 = 256;
 /// Uniform-parameter slots available before a ring wrap forces a submission.
 const UNIFORM_RING_SLOTS: u64 = 4096;
-/// Maximum storage-buffer bindings behind the uniform params binding.
-pub const MAX_STORAGE_BINDINGS: u32 = 8;
+/// Layout-map key: storage binding count in the low byte, per-binding
+/// read-only mask above it.
+fn layout_key(storages: u32, mask: u32) -> u64 {
+    u64::from(storages) | (u64::from(mask) << 8)
+}
 
 /// A pooled device buffer plus its size class.
 pub struct PooledBuf {
@@ -245,8 +248,8 @@ pub struct DeviceInner {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     /// Indexed by storage-binding count; entry 0 is the params-only layout.
-    bind_group_layouts: Vec<wgpu::BindGroupLayout>,
-    pipeline_layouts: Vec<wgpu::PipelineLayout>,
+    bind_group_layouts: HashMap<u64, wgpu::BindGroupLayout>,
+    pipeline_layouts: HashMap<u64, wgpu::PipelineLayout>,
     pipelines: RefCell<HashMap<Kernel, wgpu::ComputePipeline>>,
     /// `STORAGE|COPY_SRC|COPY_DST` buffers (user buffers and kernel scratch).
     pool: RefCell<BufferPool>,
@@ -371,12 +374,22 @@ impl DeviceInner {
                 ExecutorError::BackendFailure("wgpu: device request failed on selected adapter")
             })?;
 
-        // One bind group layout per storage-binding count. Binding 0 is the
-        // uniform params block with a dynamic offset; every other binding is a
-        // read-write storage buffer, so one layout per count serves all kernels.
-        let mut bind_group_layouts = Vec::with_capacity(MAX_STORAGE_BINDINGS as usize + 1);
-        let mut pipeline_layouts = Vec::with_capacity(MAX_STORAGE_BINDINGS as usize + 1);
-        for storages in 0..=MAX_STORAGE_BINDINGS {
+        // One bind group layout per (binding count, read-only mask) pair.
+        // Binding 0 is the uniform params block with a dynamic offset; the
+        // storage bindings below it are read-write unless the kernel's
+        // read_only_mask marks them read. Dawn validates shader access
+        // against the layout in both directions and rejects overlapping
+        // writable bindings that alias the same buffer, so the layout must
+        // match the kernel's declared access.
+        let mut bind_group_layouts = HashMap::new();
+        let mut pipeline_layouts = HashMap::new();
+        for &kernel in Kernel::ALL {
+            let storages = kernel.storage_bindings();
+            let mask = kernel.read_only_mask();
+            let key = layout_key(storages, mask);
+            if bind_group_layouts.contains_key(&key) {
+                continue;
+            }
             let mut entries = Vec::with_capacity(storages as usize + 1);
             entries.push(wgpu::BindGroupLayoutEntry {
                 binding: 0,
@@ -393,7 +406,9 @@ impl DeviceInner {
                     binding,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        ty: wgpu::BufferBindingType::Storage {
+                            read_only: mask & (1 << binding) != 0,
+                        },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -409,8 +424,8 @@ impl DeviceInner {
                 bind_group_layouts: &[Some(&bgl)],
                 immediate_size: 0,
             });
-            bind_group_layouts.push(bgl);
-            pipeline_layouts.push(pl);
+            bind_group_layouts.insert(key, bgl);
+            pipeline_layouts.insert(key, pl);
         }
 
         let uniform_stride = device_limits.min_uniform_buffer_offset_alignment.max(256);
@@ -748,7 +763,10 @@ impl DeviceInner {
             .device
             .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(kernel.name()),
-                layout: Some(&self.pipeline_layouts[kernel.storage_bindings() as usize]),
+                layout: Some(
+                    &self.pipeline_layouts
+                        [&layout_key(kernel.storage_bindings(), kernel.read_only_mask())],
+                ),
                 module: &module,
                 entry_point: Some("main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -818,7 +836,8 @@ impl DeviceInner {
         }
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(kernel.name()),
-            layout: &self.bind_group_layouts[kernel.storage_bindings() as usize],
+            layout: &self.bind_group_layouts
+                [&layout_key(kernel.storage_bindings(), kernel.read_only_mask())],
             entries: &entries,
         });
 

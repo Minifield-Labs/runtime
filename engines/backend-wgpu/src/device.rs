@@ -315,7 +315,7 @@ impl DeviceInner {
     }
 
     #[allow(clippy::too_many_lines)]
-    async fn new_async(
+    pub(crate) async fn new_async(
         owner: u64,
         ordinal: u32,
         limits: minifield_engine_api::ResourceLimits,

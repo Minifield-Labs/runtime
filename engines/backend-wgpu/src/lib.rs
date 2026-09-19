@@ -163,9 +163,32 @@ impl WgpuBackend {
         Self::on_adapter(owner, 0, limits)
     }
 
+    /// Create a backend asynchronously on the best-ranked adapter.
+    ///
+    /// Browser hosts must use this path: WebGPU adapter and device requests
+    /// resolve through the JS event loop, so `new`'s blocking executor would
+    /// never make progress on wasm32.
+    pub async fn new_async(owner: u64, limits: ResourceLimits) -> Result<Self> {
+        Self::on_adapter_async(owner, 0, limits).await
+    }
+
+    /// Create a backend asynchronously on a specific ranked adapter position.
+    pub async fn on_adapter_async(
+        owner: u64,
+        ordinal: u32,
+        limits: ResourceLimits,
+    ) -> Result<Self> {
+        let device = DeviceInner::new_async(owner, ordinal, limits).await?;
+        Ok(Self::with_device(device, limits))
+    }
+
     /// Create a backend on a specific ranked adapter position.
     pub fn on_adapter(owner: u64, ordinal: u32, limits: ResourceLimits) -> Result<Self> {
         let device = DeviceInner::new(owner, ordinal, limits)?;
+        Ok(Self::with_device(device, limits))
+    }
+
+    fn with_device(device: Rc<DeviceInner>, limits: ResourceLimits) -> Self {
         let operations = OperationSet::empty()
             .with(OperationKind::Copy)
             .with(OperationKind::RectCopy2d)
@@ -205,11 +228,11 @@ impl WgpuBackend {
             supports_nonblocking_completion: true,
         };
         let retirement = Rc::new(WgpuFenceRetirement::new(Rc::clone(&device)));
-        Ok(Self {
+        Self {
             device,
             retirement,
             capabilities,
-        })
+        }
     }
 
     #[must_use]

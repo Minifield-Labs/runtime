@@ -172,6 +172,91 @@ fn main(
 }
 ";
 
+/// Packed ternary GEMV for `minifield.ternary.v1` weights:
+/// dst[i*n + j] = `sum_l` x[i*k + l] * (code(j,l) - 1) * scale(j, l/128).
+/// One workgroup per output element (the flat grid covers every m, m == 1
+/// being the decode case); 256 threads tree-reduce over k in shared memory.
+/// Codes bind as u32 words over the byte stream: weight l lives in byte l/4
+/// of the row, i.e. bits [8*((l/4)%4) + 2*(l%4)] of word l/16.
+const PACKED_GEMV: &str = r"
+struct Params { p: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<storage, read_write> x: array<f32>;
+@group(0) @binding(3) var<storage, read_write> codes: array<u32>;
+@group(0) @binding(4) var<storage, read_write> scales: array<f32>;
+
+var<workgroup> sh: array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let flat = flat_wg(wid, numw);
+    let n = pc.p.x;
+    let k = pc.p.y;
+    let m = pc.p.z;
+    if flat >= m * n { return; }
+    let i = flat / n;
+    let j = flat - i * n;
+    let tid = lid.x;
+    let code_words = k >> 4u;
+    let groups = k >> 7u;
+    let cbase = j * code_words;
+    let sbase = j * groups;
+    let xbase = i * k;
+    var acc = 0.0;
+    for (var l = tid; l < k; l = l + 256u) {
+        let word = codes[cbase + (l >> 4u)];
+        let byte = (word >> (((l >> 2u) & 3u) << 3u)) & 0xFFu;
+        let code = (byte >> ((l & 3u) << 1u)) & 3u;
+        acc = acc + x[xbase + l] * (f32(i32(code) - 1) * scales[sbase + (l >> 7u)]);
+    }
+    sh[tid] = acc;
+    workgroupBarrier();
+    for (var s = 128u; s > 0u; s = s >> 1u) {
+        if tid < s { sh[tid] = sh[tid] + sh[tid + s]; }
+        workgroupBarrier();
+    }
+    if tid == 0u {
+        dst[i * n + j] = sh[0];
+    }
+}
+";
+
+/// Packed ternary gather: dst[r*k + l] = (code(ids[r], l) - 1) *
+/// scale(ids[r], l/128). One thread per output element; the code decode is
+/// the same byte/bit scheme as `PACKED_GEMV`.
+const PACKED_GATHER: &str = r"
+struct Params { p: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<storage, read_write> ids: array<u32>;
+@group(0) @binding(3) var<storage, read_write> codes: array<u32>;
+@group(0) @binding(4) var<storage, read_write> scales: array<f32>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let i = flat_wg(wid, numw) * 256u + lid.x;
+    let total = pc.p.x * pc.p.y;
+    if i >= total { return; }
+    let k = pc.p.y;
+    let r = i / k;
+    let l = i - r * k;
+    let src = ids[r];
+    let word = codes[src * (k >> 4u) + (l >> 4u)];
+    let byte = (word >> (((l >> 2u) & 3u) << 3u)) & 0xFFu;
+    let code = (byte >> ((l & 3u) << 1u)) & 3u;
+    dst[i] = f32(i32(code) - 1) * scales[src * (k >> 7u) + (l >> 7u)];
+}
+";
+
 /// Tiled shared-memory GEMM for m > 1: dst[i,j] = `sum_l` x[i,l] * w[j,l].
 /// Tiles are 16x16; the weight tile is transposed on load because W is packed
 /// [n, k] while the tile needs [k, n]. Grid: (ceil(n/16), ceil(m/16) split over
@@ -517,6 +602,8 @@ pub enum Kernel {
     ConvGate,
     Conv,
     SwiGlu,
+    PackedGemv,
+    PackedGather,
 }
 
 impl Kernel {
@@ -535,6 +622,8 @@ impl Kernel {
             Self::ConvGate => CONV_GATE,
             Self::Conv => CONV,
             Self::SwiGlu => SWIGLU,
+            Self::PackedGemv => PACKED_GEMV,
+            Self::PackedGather => PACKED_GATHER,
         };
         let mut source = String::with_capacity(WGSL_INDEX.len() + body.len() + 1);
         source.push_str(WGSL_INDEX);
@@ -553,7 +642,7 @@ impl Kernel {
             | Self::RmsNorm
             | Self::Rotary
             | Self::SwiGlu => 3,
-            Self::Gemv | Self::ConvGate | Self::Conv => 4,
+            Self::Gemv | Self::ConvGate | Self::Conv | Self::PackedGemv | Self::PackedGather => 4,
             Self::Gqa => 7,
         }
     }
@@ -572,6 +661,8 @@ impl Kernel {
             Self::ConvGate => "conv_gate",
             Self::Conv => "conv",
             Self::SwiGlu => "swiglu",
+            Self::PackedGemv => "packed_gemv",
+            Self::PackedGather => "packed_gather",
         }
     }
 }

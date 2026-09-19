@@ -8,6 +8,7 @@
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
     clippy::expect_used,
     clippy::float_cmp,
     clippy::similar_names
@@ -521,4 +522,167 @@ fn swiglu_matches_cpu() {
         .swiglu(&mut cpu_out, &cpu_g, &cpu_u)
         .expect("cpu swiglu");
     assert_close(&read(&backend, &gpu_out), cpu_out.as_slice(), 1e-6, 1e-6);
+}
+
+/// Pack one 128-weight group per `minifield.ternary.v1`: absmax scale,
+/// round-to-nearest code, byte `j/4` bits `2*(j%4)`. Returns (code bytes,
+/// f32 scale). A zero row encodes all codes 1 (weight 0) with scale 0.
+fn pack_group(row: &[f32]) -> ([u8; 32], f32) {
+    let scale = row.iter().fold(0.0_f32, |m, v| m.max(v.abs()));
+    let mut codes = [0_u8; 32];
+    for (j, w) in row.iter().enumerate() {
+        let q = if scale == 0.0 {
+            1_u8
+        } else {
+            ((w / scale).round() + 1.0).clamp(0.0, 3.0) as u8
+        };
+        codes[j / 4] |= q << (2 * (j % 4));
+    }
+    (codes, scale)
+}
+
+/// Build the (codes, scales) streams for `rows` x `k` weights, `k % 128 == 0`.
+fn pack_weights(weights: &[f32], rows: usize, k: usize) -> (Vec<u8>, Vec<f32>) {
+    let mut codes = Vec::with_capacity(rows * k / 4);
+    let mut scales = Vec::with_capacity(rows * k / 128);
+    for chunk in weights.as_chunks::<128>().0 {
+        let (group_codes, scale) = pack_group(chunk);
+        codes.extend_from_slice(&group_codes);
+        scales.push(scale);
+    }
+    (codes, scales)
+}
+
+#[test]
+fn packed_linear_matches_cpu() {
+    let Some(mut backend) = gpu() else { return };
+    let mut reference = cpu();
+
+    // m == 1 decode path and a multi-row batch; k spans several 128-weight
+    // groups. n = 70_000 exercises the flattened-grid split past one
+    // workgroup dimension (the lm_head shape is 65_536 rows).
+    for (m, n, k) in [(1_u64, 37_u64, 256_u64), (5, 37, 384), (1, 70_000, 128)] {
+        let input_shape = Shape::new(&[m, k]).expect("input shape");
+        let codes_shape = Shape::new(&[n, k / 4]).expect("codes shape");
+        let scales_shape = Shape::new(&[n, k / 128]).expect("scales shape");
+        let out_shape = Shape::new(&[m, n]).expect("out shape");
+        let input = values(41, (m * k) as usize);
+        let weight = values(43, (n * k) as usize);
+        let (codes, scales) = pack_weights(&weight, n as usize, k as usize);
+
+        let gpu_in = backend.upload_f32(input_shape, &input).expect("gpu in");
+        let gpu_codes = backend
+            .upload_u8_classified(codes_shape, &codes, AllocationClass::Weight)
+            .expect("gpu codes");
+        let gpu_scales = backend
+            .upload_f32_classified(scales_shape, &scales, AllocationClass::Weight)
+            .expect("gpu scales");
+        let cpu_in = reference.upload_f32(input_shape, &input).expect("cpu in");
+        let cpu_codes = reference
+            .upload_u8_classified(codes_shape, &codes, AllocationClass::Weight)
+            .expect("cpu codes");
+        let cpu_scales = reference
+            .upload_f32_classified(scales_shape, &scales, AllocationClass::Weight)
+            .expect("cpu scales");
+        let mut gpu_out = backend.allocate_f32(out_shape).expect("gpu out");
+        let mut cpu_out = reference.allocate_f32(out_shape).expect("cpu out");
+        backend
+            .packed_linear(&mut gpu_out, &gpu_in, &gpu_codes, &gpu_scales)
+            .expect("gpu packed linear");
+        reference
+            .packed_linear(&mut cpu_out, &cpu_in, &cpu_codes, &cpu_scales)
+            .expect("cpu packed linear");
+        assert_close(&read(&backend, &gpu_out), cpu_out.as_slice(), 1e-4, 1e-4);
+    }
+}
+
+#[test]
+fn packed_gather_rows_matches_cpu() {
+    let Some(mut backend) = gpu() else { return };
+    let mut reference = cpu();
+    let (n, k) = (64_u64, 256_u64);
+    let codes_shape = Shape::new(&[n, k / 4]).expect("codes shape");
+    let scales_shape = Shape::new(&[n, k / 128]).expect("scales shape");
+    let weight = values(53, (n * k) as usize);
+    let (codes, scales) = pack_weights(&weight, n as usize, k as usize);
+    let ids = [63_u32, 0, 17, 17, 2, 41];
+    let out_shape = Shape::new(&[6, k]).expect("out shape");
+
+    let gpu_codes = backend
+        .upload_u8_classified(codes_shape, &codes, AllocationClass::Weight)
+        .expect("gpu codes");
+    let gpu_scales = backend
+        .upload_f32_classified(scales_shape, &scales, AllocationClass::Weight)
+        .expect("gpu scales");
+    let cpu_codes = reference
+        .upload_u8_classified(codes_shape, &codes, AllocationClass::Weight)
+        .expect("cpu codes");
+    let cpu_scales = reference
+        .upload_f32_classified(scales_shape, &scales, AllocationClass::Weight)
+        .expect("cpu scales");
+    let mut gpu_out = backend.allocate_f32(out_shape).expect("gpu out");
+    let mut cpu_out = reference.allocate_f32(out_shape).expect("cpu out");
+    backend
+        .packed_gather_rows(&mut gpu_out, &gpu_codes, &gpu_scales, &ids)
+        .expect("gpu packed gather");
+    reference
+        .packed_gather_rows(&mut cpu_out, &cpu_codes, &cpu_scales, &ids)
+        .expect("cpu packed gather");
+    // Dequantized weights are exact products, so parity is bitwise.
+    assert_exact(&read(&backend, &gpu_out), cpu_out.as_slice());
+}
+
+#[test]
+fn packed_ops_reject_invalid_operands() {
+    let Some(mut backend) = gpu() else { return };
+    let input = backend
+        .upload_f32(Shape::new(&[1, 128]).expect("shape"), &[0.0; 128])
+        .expect("input");
+    let codes = backend
+        .upload_u8_classified(
+            Shape::new(&[2, 32]).expect("shape"),
+            &[0x55_u8; 64],
+            AllocationClass::Weight,
+        )
+        .expect("codes");
+    let scales = backend
+        .upload_f32(Shape::new(&[2, 1]).expect("shape"), &[1.0, 1.0])
+        .expect("scales");
+    let f32_codes = backend
+        .upload_f32(Shape::new(&[2, 32]).expect("shape"), &[0.0; 64])
+        .expect("f32 codes");
+    let bad_scales = backend
+        .upload_f32(Shape::new(&[2, 2]).expect("shape"), &[1.0; 4])
+        .expect("bad scales");
+    let mut out = backend
+        .allocate_f32(Shape::new(&[1, 2]).expect("shape"))
+        .expect("out");
+
+    // f32 where u8 codes belong.
+    assert!(
+        backend
+            .packed_linear(&mut out, &input, &f32_codes, &scales)
+            .is_err()
+    );
+    // wrong group count.
+    assert!(
+        backend
+            .packed_linear(&mut out, &input, &codes, &bad_scales)
+            .is_err()
+    );
+    // input width mismatch.
+    let wide = backend
+        .upload_f32(Shape::new(&[1, 256]).expect("shape"), &[0.0; 256])
+        .expect("wide input");
+    assert!(
+        backend
+            .packed_linear(&mut out, &wide, &codes, &scales)
+            .is_err()
+    );
+    // gather id past the row count.
+    assert!(
+        backend
+            .packed_gather_rows(&mut out, &codes, &scales, &[7])
+            .is_err()
+    );
 }

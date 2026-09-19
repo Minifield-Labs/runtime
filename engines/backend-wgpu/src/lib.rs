@@ -161,9 +161,11 @@ impl WgpuBackend {
             .with(OperationKind::Rotary)
             .with(OperationKind::GroupedQueryAttention)
             .with(OperationKind::GatedShortConvolution)
-            .with(OperationKind::SwiGlu);
+            .with(OperationKind::SwiGlu)
+            .with(OperationKind::PackedGatherRows)
+            .with(OperationKind::PackedLinear);
         let capabilities = BackendCapabilities {
-            dtypes: DTypeSet::only(DType::F32),
+            dtypes: DTypeSet::only(DType::F32).with(DType::U8),
             operations,
             precision: PrecisionPolicy {
                 weights: DType::F32,
@@ -276,11 +278,6 @@ impl WgpuBackend {
             return Err(ExecutorError::WrongBackend);
         }
         buffer.descriptor.validate_for(self.identity())?;
-        if buffer.descriptor.layout.dtype() != DType::F32 {
-            return Err(ExecutorError::InvalidDType(
-                "wgpu backend supports only f32",
-            ));
-        }
         if !buffer.descriptor.layout.is_contiguous()? {
             return Err(ExecutorError::InvalidLayout(
                 "wgpu backend requires contiguous zero-offset buffers",
@@ -289,8 +286,29 @@ impl WgpuBackend {
         Ok(())
     }
 
+    /// Structural checks plus an f32 dtype requirement. Ops that read or
+    /// write f32 elements must use this so a u8 buffer cannot reach an f32
+    /// kernel binding.
+    fn check_f32_buffer(&self, buffer: &WgpuBuffer) -> Result<()> {
+        self.check_buffer(buffer)?;
+        if buffer.descriptor.layout.dtype() != DType::F32 {
+            return Err(ExecutorError::InvalidDType("expected an f32 operand"));
+        }
+        Ok(())
+    }
+
+    /// Structural checks plus a u8 dtype requirement, for packed byte
+    /// streams.
+    fn check_u8_buffer(&self, buffer: &WgpuBuffer) -> Result<()> {
+        self.check_buffer(buffer)?;
+        if buffer.descriptor.layout.dtype() != DType::U8 {
+            return Err(ExecutorError::InvalidDType("expected a u8 operand"));
+        }
+        Ok(())
+    }
+
     fn check_output_shape(&self, output: &WgpuBuffer, shape: Shape) -> Result<()> {
-        self.check_buffer(output)?;
+        self.check_f32_buffer(output)?;
         let expected = TensorLayout::contiguous(DType::F32, shape)?;
         if output.descriptor.layout != expected {
             return Err(ExecutorError::InvalidShape(
@@ -341,7 +359,7 @@ impl WgpuBackend {
         shape: Shape,
         class: AllocationClass,
     ) -> Result<WgpuBuffer> {
-        self.allocate_inner(shape, class, true)
+        self.allocate_inner(shape, DType::F32, class, true)
     }
 
     /// Shared allocation path. `zero_fill` records a Fill dispatch; uploads
@@ -350,13 +368,14 @@ impl WgpuBackend {
     fn allocate_inner(
         &mut self,
         shape: Shape,
+        dtype: DType,
         class: AllocationClass,
         zero_fill: bool,
     ) -> Result<WgpuBuffer> {
         self.check_submit()?;
-        let layout = TensorLayout::contiguous(DType::F32, shape)?;
+        let layout = TensorLayout::contiguous(dtype, shape)?;
         self.capabilities.validate(
-            DType::F32,
+            dtype,
             OperationKind::Copy,
             shape.rank(),
             shape.element_count()?,
@@ -440,7 +459,7 @@ impl WgpuBackend {
         }
         // No fill: the queue-ordered write below must not race a same-batch
         // zero dispatch.
-        let output = self.allocate_inner(shape, class, false)?;
+        let output = self.allocate_inner(shape, DType::F32, class, false)?;
         if !values.is_empty() {
             let mut bytes = Vec::with_capacity(values.len() * 4);
             for value in values {
@@ -450,6 +469,34 @@ impl WgpuBackend {
                 return Err(ExecutorError::BackendFailure("wgpu upload storage missing"));
             };
             self.device.queue.write_buffer(&storage.buffer, 0, &bytes);
+        }
+        Ok(output)
+    }
+
+    /// Copy host bytes into an owned device buffer with an explicit resource
+    /// class. Packed payload bytes land unmodified; no f32 finite-value check
+    /// applies.
+    pub fn upload_u8_classified(
+        &mut self,
+        shape: Shape,
+        bytes: &[u8],
+        class: AllocationClass,
+    ) -> Result<WgpuBuffer> {
+        let expected = usize::try_from(shape.element_count()?)
+            .map_err(|_| ExecutorError::Overflow("element count exceeds usize"))?;
+        if expected != bytes.len() {
+            return Err(ExecutorError::InvalidShape(
+                "upload bytes differ from shape element count",
+            ));
+        }
+        // No fill: the queue-ordered write below must not race a same-batch
+        // zero dispatch.
+        let output = self.allocate_inner(shape, DType::U8, class, false)?;
+        if !bytes.is_empty() {
+            let Some(storage) = &output.storage else {
+                return Err(ExecutorError::BackendFailure("wgpu upload storage missing"));
+            };
+            self.device.queue.write_buffer(&storage.buffer, 0, bytes);
         }
         Ok(output)
     }
@@ -468,7 +515,7 @@ impl WgpuBackend {
     /// result observes the full pending batch.
     pub fn read_f32_async(&self, buffer: &WgpuBuffer) -> Result<WgpuReadback> {
         self.check_submit()?;
-        self.check_buffer(buffer)?;
+        self.check_f32_buffer(buffer)?;
         let bytes = buffer.byte_len();
         self.charge_completion(bytes)?;
         let staging = self.device.alloc_staging(bytes.max(4));
@@ -516,7 +563,7 @@ impl WgpuBackend {
     /// Full-buffer copy between distinct or identical contiguous f32 buffers.
     pub fn copy(&self, output: &mut WgpuBuffer, input: &WgpuBuffer) -> Result<()> {
         self.check_operation(OperationKind::Copy)?;
-        self.check_buffer(input)?;
+        self.check_f32_buffer(input)?;
         self.check_output_shape(output, input.descriptor.layout.shape())?;
         if output.descriptor.allocation == input.descriptor.allocation {
             return Ok(());
@@ -537,8 +584,8 @@ impl WgpuBackend {
         rectangle: RectCopy2d,
     ) -> Result<()> {
         self.check_operation(OperationKind::RectCopy2d)?;
-        self.check_buffer(input)?;
-        self.check_buffer(output)?;
+        self.check_f32_buffer(input)?;
+        self.check_f32_buffer(output)?;
         if input.descriptor.allocation == output.descriptor.allocation {
             return Err(ExecutorError::Unsupported(
                 "rectangular copy does not permit overlapping source and destination allocation",
@@ -588,7 +635,7 @@ impl WgpuBackend {
         ids: &[u32],
     ) -> Result<()> {
         self.check_operation(OperationKind::GatherRows)?;
-        self.check_buffer(table)?;
+        self.check_f32_buffer(table)?;
         let table_shape = table.descriptor.layout.shape();
         if table_shape.rank() != 2 {
             return Err(ExecutorError::InvalidShape("gather table must be rank two"));
@@ -679,8 +726,8 @@ impl WgpuBackend {
         operation: OperationKind,
     ) -> Result<()> {
         self.check_operation(operation)?;
-        self.check_buffer(left)?;
-        self.check_buffer(right)?;
+        self.check_f32_buffer(left)?;
+        self.check_f32_buffer(right)?;
         if left.descriptor.layout != right.descriptor.layout {
             return Err(ExecutorError::InvalidShape(
                 "elementwise operands have different layouts",
@@ -721,8 +768,8 @@ impl WgpuBackend {
         weight: &WgpuBuffer,
     ) -> Result<()> {
         self.check_operation(OperationKind::Linear)?;
-        self.check_buffer(input)?;
-        self.check_buffer(weight)?;
+        self.check_f32_buffer(input)?;
+        self.check_f32_buffer(weight)?;
         let input_shape = input.descriptor.layout.shape();
         let weight_shape = weight.descriptor.layout.shape();
         if input_shape.rank() != 2 || weight_shape.rank() != 2 {
@@ -786,6 +833,157 @@ impl WgpuBackend {
         }
     }
 
+    /// Validate packed ternary operands and return (weight rows, inner
+    /// width). `codes` must be U8 [rows, k/4]; `scales` f32 [rows, k/128]; k
+    /// is a multiple of 128.
+    fn check_packed_operands(&self, codes: &WgpuBuffer, scales: &WgpuBuffer) -> Result<(u64, u64)> {
+        self.check_u8_buffer(codes)?;
+        self.check_f32_buffer(scales)?;
+        let codes_shape = codes.descriptor.layout.shape();
+        let scales_shape = scales.descriptor.layout.shape();
+        if codes_shape.rank() != 2 || scales_shape.rank() != 2 {
+            return Err(ExecutorError::InvalidShape(
+                "packed weight streams must be rank two",
+            ));
+        }
+        let code_width = codes_shape.dim(1)?;
+        if !code_width.is_multiple_of(32) {
+            return Err(ExecutorError::InvalidShape(
+                "packed code width is not a whole number of 128-weight groups",
+            ));
+        }
+        let inner = code_width
+            .checked_mul(4)
+            .ok_or(ExecutorError::Overflow("packed inner width overflows u64"))?;
+        if scales_shape.dim(0)? != codes_shape.dim(0)? || scales_shape.dim(1)? != inner / 128 {
+            return Err(ExecutorError::InvalidShape(
+                "packed codes and scales disagree on rows or groups",
+            ));
+        }
+        Ok((codes_shape.dim(0)?, inner))
+    }
+
+    /// Packed ternary linear: input [m, k] times the dequantized weight
+    /// [n, k] carried as `minifield.ternary.v1` codes and scales. One
+    /// workgroup reduces each output element.
+    pub fn packed_linear(
+        &self,
+        output: &mut WgpuBuffer,
+        input: &WgpuBuffer,
+        codes: &WgpuBuffer,
+        scales: &WgpuBuffer,
+    ) -> Result<()> {
+        self.check_operation(OperationKind::PackedLinear)?;
+        self.check_f32_buffer(input)?;
+        let (output_width, inner) = self.check_packed_operands(codes, scales)?;
+        let input_shape = input.descriptor.layout.shape();
+        if input_shape.rank() != 2 {
+            return Err(ExecutorError::InvalidShape(
+                "packed linear input must be rank two",
+            ));
+        }
+        let rows = input_shape.dim(0)?;
+        if input_shape.dim(1)? != inner {
+            return Err(ExecutorError::InvalidShape(
+                "packed linear input width differs from weight width",
+            ));
+        }
+        let output_shape = Shape::new(&[rows, output_width])?;
+        self.check_output_shape(output, output_shape)?;
+        if rows == 0 || output_width == 0 {
+            return Ok(());
+        }
+        if inner == 0 {
+            // sum over an empty axis is zero.
+            self.device
+                .record_clear(output.wgpu_buffer()?, output.byte_len());
+            return Ok(());
+        }
+        let x = input.wgpu_buffer()?.clone();
+        let c = codes.wgpu_buffer()?.clone();
+        let s = scales.wgpu_buffer()?.clone();
+        let destination = output.wgpu_buffer()?.clone();
+        let workgroups = rows
+            .checked_mul(output_width)
+            .ok_or(ExecutorError::Overflow(
+                "packed linear output count overflows u64",
+            ))?;
+        self.device.dispatch(
+            Kernel::PackedGemv,
+            &[&destination, &x, &c, &s],
+            &params(&[param32(output_width)?, param32(inner)?, param32(rows)?]),
+            flat_grid(workgroups)?,
+        )
+    }
+
+    /// Packed ternary gather: dequantize the selected `minifield.ternary.v1`
+    /// weight rows into an f32 [ids, k] output.
+    pub fn packed_gather_rows(
+        &self,
+        output: &mut WgpuBuffer,
+        codes: &WgpuBuffer,
+        scales: &WgpuBuffer,
+        ids: &[u32],
+    ) -> Result<()> {
+        self.check_operation(OperationKind::PackedGatherRows)?;
+        let (rows, inner) = self.check_packed_operands(codes, scales)?;
+        for id in ids {
+            if u64::from(*id) >= rows {
+                return Err(ExecutorError::OutOfBounds(
+                    "gather identifier exceeds row count",
+                ));
+            }
+        }
+        let output_shape = Shape::new(&[
+            u64::try_from(ids.len())
+                .map_err(|_| ExecutorError::Overflow("id count overflows u64"))?,
+            inner,
+        ])?;
+        self.check_output_shape(output, output_shape)?;
+        if ids.is_empty() || inner == 0 {
+            return Ok(());
+        }
+        // ids is host data: stage it into a pooled scratch buffer that stays
+        // alive until this batch's submission is confirmed.
+        let id_bytes = u64::try_from(ids.len())
+            .map_err(|_| ExecutorError::Overflow("gather ids overflow u64"))?
+            .checked_mul(4)
+            .ok_or(ExecutorError::Overflow(
+                "gather ids byte count overflows u64",
+            ))?;
+        let scratch = self.device.alloc_storage(id_bytes)?;
+        let mut bytes = Vec::with_capacity(ids.len() * 4);
+        for id in ids {
+            bytes.extend_from_slice(&id.to_le_bytes());
+        }
+        self.device.queue.write_buffer(&scratch.buffer, 0, &bytes);
+        let groups = element_groups(
+            u64::try_from(ids.len())
+                .map_err(|_| ExecutorError::Overflow("gather row count overflows u64"))?
+                .checked_mul(inner)
+                .ok_or(ExecutorError::Overflow(
+                    "gather element count overflows u64",
+                ))?,
+        );
+        let c = codes.wgpu_buffer()?.clone();
+        let s = scales.wgpu_buffer()?.clone();
+        let destination = output.wgpu_buffer()?.clone();
+        let result = self.device.dispatch(
+            Kernel::PackedGather,
+            &[&destination, &scratch.buffer, &c, &s],
+            &params(&[
+                param32(
+                    u64::try_from(ids.len())
+                        .map_err(|_| ExecutorError::Overflow("gather row count overflows u64"))?,
+                )?,
+                param32(inner)?,
+            ]),
+            flat_grid(groups)?,
+        );
+        self.device.defer_free(scratch);
+        result
+    }
+
     /// Row RMS norm over a [rows, width] input and a [width] weight.
     pub fn row_rms_norm(
         &self,
@@ -800,8 +998,8 @@ impl WgpuBackend {
                 "RMS epsilon must be finite and positive",
             ));
         }
-        self.check_buffer(input)?;
-        self.check_buffer(weight)?;
+        self.check_f32_buffer(input)?;
+        self.check_f32_buffer(weight)?;
         let input_shape = input.descriptor.layout.shape();
         let weight_shape = weight.descriptor.layout.shape();
         if input_shape.rank() != 2 || weight_shape.rank() != 1 {
@@ -835,8 +1033,8 @@ impl WgpuBackend {
                 "RMS epsilon must be finite and positive",
             ));
         }
-        self.check_buffer(input)?;
-        self.check_buffer(weight)?;
+        self.check_f32_buffer(input)?;
+        self.check_f32_buffer(weight)?;
         let input_shape = input.descriptor.layout.shape();
         let tokens = heads.validate_packed(input_shape)?;
         if weight.descriptor.layout.shape() != Shape::new(&[u64::from(heads.head_dim())])? {
@@ -892,7 +1090,7 @@ impl WgpuBackend {
         spec: RotarySpec,
     ) -> Result<()> {
         self.check_operation(OperationKind::Rotary)?;
-        self.check_buffer(input)?;
+        self.check_f32_buffer(input)?;
         let input_shape = input.descriptor.layout.shape();
         let tokens = spec.heads().validate_packed(input_shape)?;
         let token_count = usize::try_from(tokens)
@@ -993,11 +1191,11 @@ impl WgpuBackend {
         spec: GqaSpec,
     ) -> Result<()> {
         self.check_operation(OperationKind::GroupedQueryAttention)?;
-        self.check_buffer(query)?;
-        self.check_buffer(key)?;
-        self.check_buffer(value)?;
-        self.check_buffer(key_cache)?;
-        self.check_buffer(value_cache)?;
+        self.check_f32_buffer(query)?;
+        self.check_f32_buffer(key)?;
+        self.check_f32_buffer(value)?;
+        self.check_f32_buffer(key_cache)?;
+        self.check_f32_buffer(value_cache)?;
         if key_cache.descriptor.allocation == value_cache.descriptor.allocation {
             return Err(ExecutorError::InvalidArgument(
                 "key and value caches must have distinct storage",
@@ -1137,11 +1335,11 @@ impl WgpuBackend {
         spec: GatedShortConvSpec,
     ) -> Result<()> {
         self.check_operation(OperationKind::GatedShortConvolution)?;
-        self.check_buffer(b)?;
-        self.check_buffer(c)?;
-        self.check_buffer(v)?;
-        self.check_buffer(kernel)?;
-        self.check_buffer(history)?;
+        self.check_f32_buffer(b)?;
+        self.check_f32_buffer(c)?;
+        self.check_f32_buffer(v)?;
+        self.check_f32_buffer(kernel)?;
+        self.check_f32_buffer(history)?;
         let token_shape = b.descriptor.layout.shape();
         if token_shape.rank() != 2 || token_shape.dim(1)? != u64::from(spec.hidden()) {
             return Err(ExecutorError::InvalidShape(
@@ -1294,8 +1492,8 @@ impl WgpuBackend {
         up: &WgpuBuffer,
     ) -> Result<()> {
         self.check_operation(OperationKind::SwiGlu)?;
-        self.check_buffer(gate)?;
-        self.check_buffer(up)?;
+        self.check_f32_buffer(gate)?;
+        self.check_f32_buffer(up)?;
         if gate.descriptor.layout != up.descriptor.layout {
             return Err(ExecutorError::InvalidShape(
                 "SwiGLU gate and up layouts differ",
@@ -1372,13 +1570,11 @@ impl InferenceOps for WgpuBackend {
 
     fn upload_u8_classified(
         &mut self,
-        _shape: Shape,
-        _bytes: &[u8],
-        _class: AllocationClass,
+        shape: Shape,
+        bytes: &[u8],
+        class: AllocationClass,
     ) -> Result<Self::Buffer> {
-        Err(ExecutorError::Unsupported(
-            "u8 packed payloads arrive with the T7b ternary kernels",
-        ))
+        WgpuBackend::upload_u8_classified(self, shape, bytes, class)
     }
 
     fn fence(&self) -> Result<Self::Fence> {
@@ -1440,26 +1636,22 @@ impl InferenceOps for WgpuBackend {
 
     fn packed_linear(
         &self,
-        _output: &mut Self::Buffer,
-        _input: &Self::Buffer,
-        _codes: &Self::Buffer,
-        _scales: &Self::Buffer,
+        output: &mut Self::Buffer,
+        input: &Self::Buffer,
+        codes: &Self::Buffer,
+        scales: &Self::Buffer,
     ) -> Result<()> {
-        Err(ExecutorError::Unsupported(
-            "packed ternary matvec lands with the T7b wgpu kernels",
-        ))
+        WgpuBackend::packed_linear(self, output, input, codes, scales)
     }
 
     fn packed_gather_rows(
         &self,
-        _output: &mut Self::Buffer,
-        _codes: &Self::Buffer,
-        _scales: &Self::Buffer,
-        _ids: &[u32],
+        output: &mut Self::Buffer,
+        codes: &Self::Buffer,
+        scales: &Self::Buffer,
+        ids: &[u32],
     ) -> Result<()> {
-        Err(ExecutorError::Unsupported(
-            "packed ternary gather lands with the T7b wgpu kernels",
-        ))
+        WgpuBackend::packed_gather_rows(self, output, codes, scales, ids)
     }
 
     fn row_rms_norm(

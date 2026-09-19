@@ -2172,6 +2172,67 @@ impl CpuBackend {
         Ok(())
     }
 
+    /// Masked row-wise argmax: only positions whose bit is set in `mask`
+    /// (LSB-first u64 words, `ceil(width / 64)` long) are candidates.
+    /// Masked-out values are skipped, so their NaN or infinity cannot poison
+    /// the row; a non-finite value at an allowed position still does. A row
+    /// with no allowed candidate yields NaN.
+    pub fn argmax_masked(
+        &self,
+        output: &mut CpuBuffer,
+        input: &CpuBuffer,
+        mask: &[u64],
+    ) -> Result<()> {
+        self.check_operation(OperationKind::Argmax)?;
+        self.check_f32_buffer(input)?;
+        let input_shape = input.descriptor.layout.shape();
+        if input_shape.rank() != 2 {
+            return Err(ExecutorError::InvalidShape(
+                "masked argmax input must be rank two",
+            ));
+        }
+        let rows = usize::try_from(input_shape.dim(0)?)
+            .map_err(|_| ExecutorError::Overflow("masked argmax row count exceeds usize"))?;
+        let width = usize::try_from(input_shape.dim(1)?)
+            .map_err(|_| ExecutorError::Overflow("masked argmax width exceeds usize"))?;
+        if width == 0 || width > (1_usize << 24) {
+            return Err(ExecutorError::Unsupported(
+                "masked argmax width must be in [1, 2^24] for exact f32 indices",
+            ));
+        }
+        let words = width.div_ceil(64);
+        if mask.len() != words {
+            return Err(ExecutorError::InvalidArgument(
+                "masked argmax mask length must be ceil(width / 64)",
+            ));
+        }
+        self.check_output_shape(output, Shape::new(&[input_shape.dim(0)?])?)?;
+        #[allow(clippy::cast_precision_loss)]
+        for row in 0..rows {
+            let base = row * width;
+            let mut best = f32::NEG_INFINITY;
+            let mut best_index = usize::MAX;
+            let mut poisoned = false;
+            for (index, value) in input.values[base..base + width].iter().enumerate() {
+                if mask[index / 64] & (1_u64 << (index % 64)) == 0 {
+                    continue;
+                }
+                if !value.is_finite() {
+                    poisoned = true;
+                } else if *value > best || (*value == best && index < best_index) {
+                    best = *value;
+                    best_index = index;
+                }
+            }
+            output.values[row] = if poisoned || best_index == usize::MAX {
+                f32::NAN
+            } else {
+                best_index as f32
+            };
+        }
+        Ok(())
+    }
+
     /// Submit a CPU completion fence. This baseline is ready on its first poll.
     pub fn fence(&self) -> Result<CpuCompletion<()>> {
         self.submit_ready(Ok(()), Vec::new())
@@ -2319,6 +2380,15 @@ impl InferenceOps for CpuBackend {
 
     fn argmax(&self, output: &mut Self::Buffer, input: &Self::Buffer) -> Result<()> {
         CpuBackend::argmax(self, output, input)
+    }
+
+    fn argmax_masked(
+        &self,
+        output: &mut Self::Buffer,
+        input: &Self::Buffer,
+        mask: &[u64],
+    ) -> Result<()> {
+        CpuBackend::argmax_masked(self, output, input, mask)
     }
 
     fn packed_linear(

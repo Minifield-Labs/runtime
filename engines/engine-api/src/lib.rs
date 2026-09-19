@@ -1090,6 +1090,24 @@ pub trait InferenceOps {
     /// finiteness check for the whole logits row.
     fn argmax(&self, output: &mut Self::Buffer, input: &Self::Buffer) -> Result<()>;
 
+    /// `argmax` with a per-element candidate mask: only positions whose bit
+    /// is set in `mask` may win. `mask` is one bit per element, LSB-first
+    /// inside each u64 word (`mask[i / 64]` bit `i % 64`); its length must be
+    /// `ceil(width / 64)`. Non-finite values at allowed positions still
+    /// poison the row to NaN; masked-out values are skipped entirely. A row
+    /// with no allowed candidate produces NaN. The default implementation
+    /// reports `Unsupported` rather than silently ignoring the constraint.
+    fn argmax_masked(
+        &self,
+        _output: &mut Self::Buffer,
+        _input: &Self::Buffer,
+        _mask: &[u64],
+    ) -> Result<()> {
+        Err(ExecutorError::Unsupported(
+            "masked argmax is not implemented for this backend",
+        ))
+    }
+
     fn gather_rows(
         &self,
         output: &mut Self::Buffer,
@@ -1607,6 +1625,31 @@ pub trait TokenExecutor {
     /// reuse its cache storage in place instead of deep-copying it. Returns
     /// `InvalidArgument` when the prefix has no resolved greedy sample.
     fn append_argmax(&mut self, prefix: Self::Prefix) -> Result<Self::Append>;
+    /// `prefill` whose greedy sample is constrained to `mask`: bit `i` of the
+    /// bitset (LSB-first u64 words, `ceil(vocab / 64)` long) marks an allowed
+    /// token id. Implementations that cannot constrain report `Unsupported`
+    /// instead of silently dropping the mask.
+    fn prefill_masked(
+        &mut self,
+        _input: TokenChunk<'_>,
+        _mask: Rc<[u64]>,
+    ) -> Result<Self::Prefill> {
+        Err(ExecutorError::Unsupported(
+            "masked prefill is not implemented for this executor",
+        ))
+    }
+    /// `append_argmax` whose next greedy sample is constrained to `mask`
+    /// (same bitset layout as `prefill_masked`). The appended token itself
+    /// was already sampled under the previous step's mask.
+    fn append_argmax_masked(
+        &mut self,
+        _prefix: Self::Prefix,
+        _mask: Rc<[u64]>,
+    ) -> Result<Self::Append> {
+        Err(ExecutorError::Unsupported(
+            "masked append_argmax is not implemented for this executor",
+        ))
+    }
     fn fork(&mut self, prefix: &Self::Prefix) -> Result<Self::Fork>;
     fn next_logits(&mut self, prefix: &Self::Prefix) -> Result<Self::Logits>;
     fn score_candidates(
@@ -1614,6 +1657,19 @@ pub trait TokenExecutor {
         prefix: &Self::Prefix,
         candidates: &[&[TokenId]],
     ) -> Result<Self::Scores>;
+}
+
+/// Per-step decode constraint driven by a generation loop: supplies the
+/// allowed-token bitset before each sampled step and observes each emitted
+/// id so the constraint can advance its own state. Bitsets are one bit per
+/// token id, LSB-first u64 words (`ceil(vocab / 64)` long), matching the
+/// `argmax_masked`/`prefill_masked`/`append_argmax_masked` layout.
+pub trait DecodeConstraint {
+    /// Allowed ids for the upcoming sample.
+    fn allowed(&mut self) -> Rc<[u64]>;
+    /// Records an emitted token. Called when the id is committed, after the
+    /// decode checks pass and before the append that produced it publishes.
+    fn advance(&mut self, token: TokenId);
 }
 
 /// Common explicit completion state used by immediate portable adapters and tests.

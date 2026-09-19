@@ -45,3 +45,12 @@ required). The page fetches `config.json`, the packed safetensors, and
   the fallback.
 - Each sampled id streams back through an `on_token` callback; the page
   renders `id | decoded fragment` chips and reports tokens/second.
+- `generate_json()` runs the same loop under a decode constraint:
+  `crates/json-grammar`'s byte-level acceptor yields an allowed-token bitset
+  per step, and `prefill_masked`/`append_argmax_masked` gate the on-device
+  argmax so only grammar-continuable tokens can win. The page's Tool call
+  button uses `ToolCallEnforcer` with the comma-separated names input:
+  output is exactly `{"<name>":true}` or `{"<name>":false}` where `<name>`
+  is one of the registered names, so a complete document is guaranteed once
+  the key opens. The crate also exposes `JsonEnforcer` for general
+  JSON-shaped output.

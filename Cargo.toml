@@ -8,6 +8,7 @@ members = [
     "crates/text-tokenizer",
     "crates/text-generation",
     "crates/infer-cli",
+    "crates/json-grammar",
     "engines/decoding-protocol",
     "web",
 ]

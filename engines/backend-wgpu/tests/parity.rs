@@ -742,6 +742,108 @@ fn argmax_marks_nonfinite_rows_nan() {
 }
 
 #[test]
+fn argmax_masked_matches_cpu() {
+    let Some(mut backend) = gpu() else { return };
+    let mut reference = cpu();
+    let mask_of = |width: usize, allowed: &[usize]| {
+        let mut words = vec![0_u64; width.div_ceil(64)];
+        for &index in allowed {
+            words[index / 64] |= 1_u64 << (index % 64);
+        }
+        words
+    };
+    // Narrow single-workgroup and wide two-stage paths: the true argmax
+    // winner is masked out, so the runner-up must win on both backends.
+    for (rows, columns, winner, runner_up) in [
+        (1_u64, 1024_u64, 700_usize, 42_usize),
+        (3, 511, 500, 10),
+        (2, 8192, 8000, 65),
+    ] {
+        let shape = Shape::new(&[rows, columns]).expect("logits shape");
+        let width = columns as usize;
+        let mut logits = vec![-1.0_f32; rows as usize * width];
+        for row in 0..rows as usize {
+            logits[row * width + winner] = 9.0;
+            logits[row * width + runner_up] = 5.0;
+        }
+        let mask = mask_of(width, &[runner_up, 0]);
+        let gpu_in = backend.upload_f32(shape, &logits).expect("gpu logits");
+        let cpu_in = reference.upload_f32(shape, &logits).expect("cpu logits");
+        let mut gpu_out = backend
+            .allocate_f32(Shape::new(&[rows]).expect("out"))
+            .expect("gpu masked argmax out");
+        let mut cpu_out = reference
+            .allocate_f32(Shape::new(&[rows]).expect("out"))
+            .expect("cpu masked argmax out");
+        backend
+            .argmax_masked(&mut gpu_out, &gpu_in, &mask)
+            .expect("gpu masked argmax");
+        reference
+            .argmax_masked(&mut cpu_out, &cpu_in, &mask)
+            .expect("cpu masked argmax");
+        assert_exact(&read(&backend, &gpu_out), cpu_out.as_slice());
+        let expected = vec![runner_up as f32; rows as usize];
+        assert_eq!(cpu_out.as_slice(), expected.as_slice());
+    }
+}
+
+#[test]
+fn argmax_masked_nan_and_empty_rows() {
+    let Some(mut backend) = gpu() else { return };
+    let mut reference = cpu();
+    // A fully masked-out row yields NaN on both backends.
+    let shape = Shape::new(&[1, 512]).expect("shape");
+    let logits = values(53, 512);
+    let gpu_in = backend.upload_f32(shape, &logits).expect("gpu logits");
+    let cpu_in = reference.upload_f32(shape, &logits).expect("cpu logits");
+    let empty = vec![0_u64; 8];
+    let mut gpu_out = backend
+        .allocate_f32(Shape::new(&[1]).expect("out"))
+        .expect("gpu out");
+    let mut cpu_out = reference
+        .allocate_f32(Shape::new(&[1]).expect("out"))
+        .expect("cpu out");
+    backend
+        .argmax_masked(&mut gpu_out, &gpu_in, &empty)
+        .expect("gpu masked argmax");
+    reference
+        .argmax_masked(&mut cpu_out, &cpu_in, &empty)
+        .expect("cpu masked argmax");
+    assert!(read(&backend, &gpu_out)[0].is_nan());
+    assert!(cpu_out.as_slice()[0].is_nan());
+
+    // An inf produced on-device at a masked position is skipped; the same inf
+    // at an allowed position poisons the row to NaN.
+    let base = [1.0, 3.0e38, 0.5, -1.0];
+    let two = [2.0_f32; 4];
+    let gpu_base = backend
+        .upload_f32(Shape::new(&[1, 4]).expect("shape"), &base)
+        .expect("gpu base");
+    let gpu_two = backend
+        .upload_f32(Shape::new(&[1, 4]).expect("shape"), &two)
+        .expect("gpu two");
+    let mut gpu_inf = backend
+        .allocate_f32(Shape::new(&[1, 4]).expect("shape"))
+        .expect("gpu inf");
+    backend
+        .multiply(&mut gpu_inf, &gpu_base, &gpu_two)
+        .expect("gpu multiply");
+    let mut out = backend
+        .allocate_f32(Shape::new(&[1]).expect("out"))
+        .expect("out");
+    // Mask off index 1 (the +inf): index 0 wins at 2.0.
+    backend
+        .argmax_masked(&mut out, &gpu_inf, &[0b0101])
+        .expect("masked argmax skips masked inf");
+    assert_eq!(read(&backend, &out)[0], 0.0);
+    // Allow the inf position: the row is poisoned.
+    backend
+        .argmax_masked(&mut out, &gpu_inf, &[0b0111])
+        .expect("masked argmax poisons on allowed inf");
+    assert!(read(&backend, &out)[0].is_nan());
+}
+
+#[test]
 fn device_argmax_ids_feed_gathers() {
     let Some(mut backend) = gpu() else { return };
     let mut reference = cpu();

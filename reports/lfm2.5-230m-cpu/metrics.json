@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "sample": false,
+  "model": { "name": "LFM2.5-230M", "parameters": 229693184, "quantization": "BF16 weights, F32 dense compute" },
+  "io": { "inputTokens": null, "contextTokens": 1024, "outputTokens": 32, "batchSize": 1 },
+  "platform": { "hardware": "Apple M1 Max (arm64)", "memory": null, "runtime": "CPU", "engine": "minifield-infer (executor-core + backend-cpu)", "engineVersion": "runtime@c3400ba", "environment": "macOS · native · release build" },
+  "measurement": { "statistic": "Single run", "repetitions": 1, "cache": "Cold · no prefix reuse", "memoryScope": "Whole process (max RSS via /usr/bin/time -l). F32-expanded weights alone are ~0.86 GiB by allocation math; KV cache at 1024 tokens is ~24 MiB.", "notes": "Cold-start CLI: each invocation parses ~441 MiB BF16 safetensors and expands to F32. TTFT therefore includes model load plus prompt processing. Output speed = (32−1 tokens) / (t₃₂ − t₁) = 31 / 10.95 s, isolating decode from load. Decode is unfused (~240 backend interactions/token); T8 fusion is the planned fix. Prefill not separately measured (per-token path, same cost as decode). Correctness gate (the point of this iteration): llama.cpp b11046 CPU f32-KV oracle, 118/118 teacher-forced positions top-1 agreement, max abs logit delta 0.33, mean 0.021; 330/332 generated ids agree, both disagreements at near-ties (top-2 gap < 0.011)." },
+  "date": "2026-09-18",
+  "evidence": "Oracle gate: crates/executor-core/tests/oracle_lfm25.rs @ c3400ba (env-gated, MINIFIELD_LFM25_BUNDLE_DIR + MINIFIELD_LFM25_ORACLE_DIR). Capture tooling: scripts/oracle/ @ c3400ba. Oracle: llama.cpp b11046 CPU-only, f32 KV, temp 0, 6 prompts, artifacts hashed in tmp/oracle/manifest.json. Timing: /usr/bin/time -l on minifield-infer, prompt 'Tell me about yourself.', BOS on.",
+  "iterations": [
+    { "id": "001", "name": "F32 dense baseline (oracle-validated)", "outputTokensPerSecond": 2.83, "prefillTokensPerSecond": null, "ttftMs": 5850, "modelMemoryBytes": null, "peakMemoryBytes": 1956626432 }
+  ]
+}

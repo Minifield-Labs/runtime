@@ -12,7 +12,9 @@ For automated reporting, supply the same JSON shape to the optional Node 22+ hel
 node reports/render.mjs runs/metrics.json runs/report.html
 ```
 
-The helper validates the data, escapes embedded JSON, and creates a standalone HTML file. It refuses to overwrite an existing report. The output directory must already exist. Keep measured reports and evidence outside Git, for example under the ignored `runs/` directory.
+The helper validates the data, escapes embedded JSON, and creates a standalone HTML file. It refuses to overwrite an existing report. The output directory must already exist.
+
+Each report lives in its own directory under `reports/<model>-<platform>/` with a canonical `metrics.json` and the rendered `report.html`, committed together for every accepted performance-affecting change. Keep bulk evidence (logs, raw captures, model files) outside Git; record its location and hashes in the `evidence` field.
 
 Set `sample: false` only after replacing every illustrative value with a measurement or `null`. Missing measurements display as `N/A`; they never become zero. Strings render as text. If editing embedded JSON by hand, write a literal `<` as `\u003c` so strings cannot close the script block. The helper handles this automatically.
 

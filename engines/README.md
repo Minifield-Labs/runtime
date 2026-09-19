@@ -9,3 +9,8 @@ mistral.rs server for a verified `minifield.training-model/1` LFM2 export,
 sends raw prompts serialized exactly like training, and shuts the process down
 through the runtime's resident-model owner. The adapter never merges training
 checkpoints. Export remains a training or experiment operation.
+
+`backend-wgpu/` is the portable GPU backend. It implements the engine-api
+`InferenceOps` contract over wgpu 30 for F32 tensors with batched command
+recording and nonblocking fence/readback completions. Ternary kernels are
+follow-up work.

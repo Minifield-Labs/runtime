@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "engines/engine-api",
+    "engines/backend-wgpu",
     "crates/backend-cpu",
     "crates/executor-core",
     "crates/text-tokenizer",

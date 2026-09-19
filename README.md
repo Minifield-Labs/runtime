@@ -13,6 +13,7 @@ implemented.
 
 - engines/engine-api: backend-neutral tensor, resource, completion, asset, token, and finite inference-operation contracts.
 - crates/backend-cpu: owned scalar FP32 storage and arithmetic, linear, normalization, convolution, rotary-position, and attention kernels.
+- engines/backend-wgpu: wgpu 30 F32 backend implementing the same finite operation contract with batched command recording and nonblocking completions.
 - crates/executor-core: checked configuration and bounded typed weight loading, full LFM2 execution, prefix caches, append/fork operations, and complete candidate scoring.
 - crates/text-tokenizer: owned bounded tokenizer asset parsing, byte-level BPE, Unicode pretokenization, and incremental UTF-8 decoding.
 - crates/text-generation: backend-neutral bounded greedy plaintext generation over a caller-provided tokenizer and token executor.

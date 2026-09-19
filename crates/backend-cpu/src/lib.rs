@@ -87,12 +87,13 @@ fn tracker_owned_bytes(tracker: &Tracker) -> Result<u64> {
         ))
 }
 
-/// An owned f32 buffer. Its storage cannot be used by another backend owner or generation.
+/// An owned f32 or u8 buffer. Its storage cannot be used by another backend owner or generation.
 #[derive(Debug)]
 pub struct CpuBuffer {
     descriptor: BufferDescriptor,
     class: AllocationClass,
     values: Vec<f32>,
+    bytes: Vec<u8>,
     tracker: Rc<RefCell<Tracker>>,
 }
 
@@ -115,6 +116,12 @@ impl CpuBuffer {
     #[must_use]
     pub fn as_slice(&self) -> &[f32] {
         &self.values
+    }
+
+    /// Raw byte storage for U8-typed buffers such as packed weight codes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
     }
 
     fn byte_len(&self) -> u64 {
@@ -360,9 +367,11 @@ impl CpuBackend {
             .with(OperationKind::Rotary)
             .with(OperationKind::GroupedQueryAttention)
             .with(OperationKind::GatedShortConvolution)
-            .with(OperationKind::SwiGlu);
+            .with(OperationKind::SwiGlu)
+            .with(OperationKind::PackedGatherRows)
+            .with(OperationKind::PackedLinear);
         let capabilities = BackendCapabilities {
-            dtypes: DTypeSet::only(DType::F32),
+            dtypes: DTypeSet::only(DType::F32).with(DType::U8),
             operations,
             precision: PrecisionPolicy {
                 weights: DType::F32,
@@ -485,9 +494,11 @@ impl CpuBackend {
             return Err(ExecutorError::WrongBackend);
         }
         buffer.descriptor.validate_for(self.identity())?;
-        if buffer.descriptor.layout.dtype() != DType::F32 {
+        if buffer.descriptor.layout.dtype() != DType::F32
+            && buffer.descriptor.layout.dtype() != DType::U8
+        {
             return Err(ExecutorError::InvalidDType(
-                "CPU foundation supports only f32",
+                "CPU foundation supports only f32 and u8",
             ));
         }
         if !buffer.descriptor.layout.is_contiguous()? {
@@ -498,21 +509,56 @@ impl CpuBackend {
         let elements = buffer.descriptor.layout.shape().element_count()?;
         let elements = usize::try_from(elements)
             .map_err(|_| ExecutorError::Overflow("element count exceeds usize"))?;
-        if elements != buffer.values.len() {
-            return Err(ExecutorError::BackendFailure(
-                "CPU buffer length differs from descriptor",
-            ));
+        match buffer.descriptor.layout.dtype() {
+            DType::F32 => {
+                if elements != buffer.values.len() {
+                    return Err(ExecutorError::BackendFailure(
+                        "CPU buffer length differs from descriptor",
+                    ));
+                }
+                if !buffer.values.iter().all(|value| value.is_finite()) {
+                    return Err(ExecutorError::BackendFailure(
+                        "CPU buffer contains a non-finite value",
+                    ));
+                }
+            }
+            DType::U8 => {
+                if elements != buffer.bytes.len() {
+                    return Err(ExecutorError::BackendFailure(
+                        "CPU byte buffer length differs from descriptor",
+                    ));
+                }
+            }
+            _ => {
+                return Err(ExecutorError::InvalidDType(
+                    "CPU foundation supports only f32 and u8",
+                ));
+            }
         }
-        if !buffer.values.iter().all(|value| value.is_finite()) {
-            return Err(ExecutorError::BackendFailure(
-                "CPU buffer contains a non-finite value",
-            ));
+        Ok(())
+    }
+
+    /// Structural checks plus an f32 dtype requirement. Ops that read or write
+    /// `values` must use this so a u8 buffer cannot reach an f32 code path.
+    fn check_f32_buffer(&self, buffer: &CpuBuffer) -> Result<()> {
+        self.check_buffer(buffer)?;
+        if buffer.descriptor.layout.dtype() != DType::F32 {
+            return Err(ExecutorError::InvalidDType("expected an f32 operand"));
+        }
+        Ok(())
+    }
+
+    /// Structural checks plus a u8 dtype requirement, for packed byte streams.
+    fn check_u8_buffer(&self, buffer: &CpuBuffer) -> Result<()> {
+        self.check_buffer(buffer)?;
+        if buffer.descriptor.layout.dtype() != DType::U8 {
+            return Err(ExecutorError::InvalidDType("expected a u8 operand"));
         }
         Ok(())
     }
 
     fn check_output_shape(&self, output: &CpuBuffer, shape: Shape) -> Result<()> {
-        self.check_buffer(output)?;
+        self.check_f32_buffer(output)?;
         let expected = TensorLayout::contiguous(DType::F32, shape)?;
         if output.descriptor.layout != expected {
             return Err(ExecutorError::InvalidShape(
@@ -611,8 +657,112 @@ impl CpuBackend {
             descriptor,
             class,
             values,
+            bytes: Vec::new(),
             tracker: Rc::clone(&self.tracker),
         })
+    }
+
+    /// Allocate a writable u8 buffer for opaque packed payloads such as ternary
+    /// weight codes. Empty layouts are valid and allocate no bytes.
+    pub fn allocate_u8_classified(
+        &mut self,
+        shape: Shape,
+        class: AllocationClass,
+    ) -> Result<CpuBuffer> {
+        self.check_submit()?;
+        let layout = TensorLayout::contiguous(DType::U8, shape)?;
+        self.capabilities.validate(
+            DType::U8,
+            OperationKind::Copy,
+            shape.rank(),
+            shape.element_count()?,
+            layout.byte_extent(),
+        )?;
+        let elements = usize::try_from(shape.element_count()?)
+            .map_err(|_| ExecutorError::Overflow("element count exceeds usize"))?;
+
+        let (identity, allocation) = {
+            let tracker = self.tracker.borrow();
+            tracker
+                .limits
+                .validate_allocation(layout.byte_extent(), tracker_owned_bytes(&tracker)?)?;
+            tracker
+                .next_allocation
+                .checked_add(1)
+                .ok_or(ExecutorError::Overflow(
+                    "allocation identifier overflows u64",
+                ))?;
+            tracker
+                .live_bytes
+                .checked_add(layout.byte_extent())
+                .ok_or(ExecutorError::Overflow("CPU live bytes overflow u64"))?;
+            let mut classes = tracker.live_by_class;
+            classes.checked_add(class, layout.byte_extent())?;
+            (tracker.identity, tracker.next_allocation)
+        };
+
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(elements)
+            .map_err(|_| ExecutorError::ResourceLimit("CPU allocation failed"))?;
+        bytes.resize(elements, 0);
+
+        let mut tracker = self.tracker.borrow_mut();
+        tracker
+            .limits
+            .validate_allocation(layout.byte_extent(), tracker_owned_bytes(&tracker)?)?;
+        if tracker.next_allocation != allocation || tracker.identity != identity {
+            return Err(ExecutorError::BackendFailure(
+                "CPU allocator changed during allocation",
+            ));
+        }
+        tracker.next_allocation =
+            tracker
+                .next_allocation
+                .checked_add(1)
+                .ok_or(ExecutorError::Overflow(
+                    "allocation identifier overflows u64",
+                ))?;
+        tracker.live_bytes = tracker
+            .live_bytes
+            .checked_add(layout.byte_extent())
+            .ok_or(ExecutorError::Overflow("CPU live bytes overflow u64"))?;
+        tracker
+            .live_by_class
+            .checked_add(class, layout.byte_extent())?;
+        let descriptor = BufferDescriptor {
+            backend: tracker.identity,
+            allocation,
+            layout,
+            access: BufferAccess::ReadWrite,
+        };
+        drop(tracker);
+        Ok(CpuBuffer {
+            descriptor,
+            class,
+            values: Vec::new(),
+            bytes,
+            tracker: Rc::clone(&self.tracker),
+        })
+    }
+
+    /// Copy host bytes into an owned CPU buffer with an explicit resource class.
+    pub fn upload_u8_classified(
+        &mut self,
+        shape: Shape,
+        bytes: &[u8],
+        class: AllocationClass,
+    ) -> Result<CpuBuffer> {
+        let expected = usize::try_from(shape.element_count()?)
+            .map_err(|_| ExecutorError::Overflow("element count exceeds usize"))?;
+        if expected != bytes.len() {
+            return Err(ExecutorError::InvalidShape(
+                "upload bytes differ from shape element count",
+            ));
+        }
+        let mut output = self.allocate_u8_classified(shape, class)?;
+        output.bytes.copy_from_slice(bytes);
+        Ok(output)
     }
 
     /// Copy finite host f32 values into an owned CPU buffer.
@@ -659,7 +809,7 @@ impl CpuBackend {
 
     pub fn copy(&self, output: &mut CpuBuffer, input: &CpuBuffer) -> Result<()> {
         self.check_operation(OperationKind::Copy)?;
-        self.check_buffer(input)?;
+        self.check_f32_buffer(input)?;
         self.check_output_shape(output, input.descriptor.layout.shape())?;
         output.values.copy_from_slice(&input.values);
         Ok(())
@@ -673,7 +823,7 @@ impl CpuBackend {
         ids: &[u32],
     ) -> Result<()> {
         self.check_operation(OperationKind::GatherRows)?;
-        self.check_buffer(table)?;
+        self.check_f32_buffer(table)?;
         let table_shape = table.descriptor.layout.shape();
         if table_shape.rank() != 2 {
             return Err(ExecutorError::InvalidShape("gather table must be rank two"));
@@ -736,8 +886,8 @@ impl CpuBackend {
         function: impl Fn(f32, f32) -> f32,
     ) -> Result<()> {
         self.check_operation(operation)?;
-        self.check_buffer(left)?;
-        self.check_buffer(right)?;
+        self.check_f32_buffer(left)?;
+        self.check_f32_buffer(right)?;
         if left.descriptor.layout != right.descriptor.layout {
             return Err(ExecutorError::InvalidShape(
                 "elementwise operands have different layouts",
@@ -770,8 +920,8 @@ impl CpuBackend {
         weight: &CpuBuffer,
     ) -> Result<()> {
         self.check_operation(OperationKind::Linear)?;
-        self.check_buffer(input)?;
-        self.check_buffer(weight)?;
+        self.check_f32_buffer(input)?;
+        self.check_f32_buffer(weight)?;
         let input_shape = input.descriptor.layout.shape();
         let weight_shape = weight.descriptor.layout.shape();
         if input_shape.rank() != 2 || weight_shape.rank() != 2 {
@@ -833,6 +983,177 @@ impl CpuBackend {
         Ok(())
     }
 
+    /// Gather packed ternary rows and dequantize them into an f32 [ids, k] output.
+    /// Codes are the `minifield.ternary.v1` U8 stream: 128 weights per group,
+    /// 32 bytes per group, weight j at byte `j / 4` bits `2 * (j % 4)`.
+    /// Decoded weight `w = (code - 1) * scale`.
+    pub fn packed_gather_rows(
+        &self,
+        output: &mut CpuBuffer,
+        codes: &CpuBuffer,
+        scales: &CpuBuffer,
+        ids: &[u32],
+    ) -> Result<()> {
+        self.check_operation(OperationKind::PackedGatherRows)?;
+        let (rows, inner) = self.check_packed_operands(codes, scales)?;
+        self.check_f32_buffer(output)?;
+        let output_shape = Shape::new(&[
+            u64::try_from(ids.len())
+                .map_err(|_| ExecutorError::Overflow("id count overflows u64"))?,
+            u64::try_from(inner).map_err(|_| ExecutorError::Overflow("width overflows u64"))?,
+        ])?;
+        if output.descriptor.layout.shape() != output_shape {
+            return Err(ExecutorError::InvalidShape(
+                "packed gather output layout differs from required shape",
+            ));
+        }
+        let code_width = inner / 4;
+        for (destination_row, id) in ids.iter().copied().enumerate() {
+            let source_row = usize::try_from(id)
+                .map_err(|_| ExecutorError::OutOfBounds("gather identifier exceeds usize"))?;
+            if source_row >= rows {
+                return Err(ExecutorError::OutOfBounds(
+                    "gather identifier exceeds row count",
+                ));
+            }
+            let code_start = source_row
+                .checked_mul(code_width)
+                .ok_or(ExecutorError::Overflow(
+                    "gather code offset overflows usize",
+                ))?;
+            let scale_start =
+                source_row
+                    .checked_mul(inner / 128)
+                    .ok_or(ExecutorError::Overflow(
+                        "gather scale offset overflows usize",
+                    ))?;
+            let destination_start =
+                destination_row
+                    .checked_mul(inner)
+                    .ok_or(ExecutorError::Overflow(
+                        "gather destination offset overflows usize",
+                    ))?;
+            for index in 0..inner {
+                let group = index / 128;
+                let within = index % 128;
+                let code =
+                    (codes.bytes[code_start + group * 32 + within / 4] >> (2 * (within % 4))) & 0x3;
+                output.values[destination_start + index] =
+                    (f32::from(code) - 1.0) * scales.values[scale_start + group];
+            }
+        }
+        Ok(())
+    }
+
+    /// Packed ternary linear: input [m, k] times dequantized weight [n, k].
+    /// Accumulation is sequential f32 in increasing k order, matching `linear`.
+    pub fn packed_linear(
+        &self,
+        output: &mut CpuBuffer,
+        input: &CpuBuffer,
+        codes: &CpuBuffer,
+        scales: &CpuBuffer,
+    ) -> Result<()> {
+        self.check_operation(OperationKind::PackedLinear)?;
+        self.check_f32_buffer(input)?;
+        let (output_width, inner) = self.check_packed_operands(codes, scales)?;
+        let input_shape = input.descriptor.layout.shape();
+        if input_shape.rank() != 2 {
+            return Err(ExecutorError::InvalidShape(
+                "packed linear input must be rank two",
+            ));
+        }
+        let rows = usize::try_from(input_shape.dim(0)?)
+            .map_err(|_| ExecutorError::Overflow("packed linear row count exceeds usize"))?;
+        let input_inner = usize::try_from(input_shape.dim(1)?)
+            .map_err(|_| ExecutorError::Overflow("packed linear width exceeds usize"))?;
+        if input_inner != inner {
+            return Err(ExecutorError::InvalidShape(
+                "packed linear input width differs from weight width",
+            ));
+        }
+        let output_shape = Shape::new(&[
+            u64::try_from(rows)
+                .map_err(|_| ExecutorError::Overflow("packed linear rows overflow u64"))?,
+            u64::try_from(output_width)
+                .map_err(|_| ExecutorError::Overflow("packed linear width overflows u64"))?,
+        ])?;
+        self.check_output_shape(output, output_shape)?;
+        let code_width = inner / 4;
+        let groups = inner / 128;
+        for row in 0..rows {
+            for column in 0..output_width {
+                let code_start = column
+                    .checked_mul(code_width)
+                    .ok_or(ExecutorError::Overflow(
+                        "packed weight offset overflows usize",
+                    ))?;
+                let scale_start = column.checked_mul(groups).ok_or(ExecutorError::Overflow(
+                    "packed scale offset overflows usize",
+                ))?;
+                let input_start = row.checked_mul(inner).ok_or(ExecutorError::Overflow(
+                    "packed input offset overflows usize",
+                ))?;
+                let mut accumulator = 0.0_f32;
+                for index in 0..inner {
+                    let group = index / 128;
+                    let within = index % 128;
+                    let code = (codes.bytes[code_start + group * 32 + within / 4]
+                        >> (2 * (within % 4)))
+                        & 0x3;
+                    let weight = (f32::from(code) - 1.0) * scales.values[scale_start + group];
+                    accumulator += input.values[input_start + index] * weight;
+                }
+                if !accumulator.is_finite() {
+                    return Err(ExecutorError::BackendFailure(
+                        "packed linear projection produced a non-finite value",
+                    ));
+                }
+                output.values[row * output_width + column] = accumulator;
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate packed ternary operands and return (rows, inner weight width).
+    /// `codes` must be U8 [rows, k/4]; `scales` must be f32 [rows, k/128]; k is a
+    /// multiple of 128.
+    fn check_packed_operands(
+        &self,
+        codes: &CpuBuffer,
+        scales: &CpuBuffer,
+    ) -> Result<(usize, usize)> {
+        self.check_u8_buffer(codes)?;
+        self.check_f32_buffer(scales)?;
+        let codes_shape = codes.descriptor.layout.shape();
+        let scales_shape = scales.descriptor.layout.shape();
+        if codes_shape.rank() != 2 || scales_shape.rank() != 2 {
+            return Err(ExecutorError::InvalidShape(
+                "packed weight streams must be rank two",
+            ));
+        }
+        let rows = usize::try_from(codes_shape.dim(0)?)
+            .map_err(|_| ExecutorError::Overflow("packed row count exceeds usize"))?;
+        let code_width = usize::try_from(codes_shape.dim(1)?)
+            .map_err(|_| ExecutorError::Overflow("packed code width exceeds usize"))?;
+        if code_width % 32 != 0 {
+            return Err(ExecutorError::InvalidShape(
+                "packed code width is not a whole number of 128-weight groups",
+            ));
+        }
+        let inner = code_width.checked_mul(4).ok_or(ExecutorError::Overflow(
+            "packed inner width overflows usize",
+        ))?;
+        let groups = usize::try_from(scales_shape.dim(1)?)
+            .map_err(|_| ExecutorError::Overflow("packed scale width exceeds usize"))?;
+        if scales_shape.dim(0)? != codes_shape.dim(0)? || groups != inner / 128 {
+            return Err(ExecutorError::InvalidShape(
+                "packed codes and scales disagree on rows or groups",
+            ));
+        }
+        Ok((rows, inner))
+    }
+
     /// Row RMS norm over a [rows, width] input and a [width] weight.
     /// The sum and square root use f32 to define the scalar reference rounding path.
     pub fn row_rms_norm(
@@ -848,8 +1169,8 @@ impl CpuBackend {
                 "RMS epsilon must be finite and positive",
             ));
         }
-        self.check_buffer(input)?;
-        self.check_buffer(weight)?;
+        self.check_f32_buffer(input)?;
+        self.check_f32_buffer(weight)?;
         let input_shape = input.descriptor.layout.shape();
         let weight_shape = weight.descriptor.layout.shape();
         if input_shape.rank() != 2 || weight_shape.rank() != 1 {
@@ -915,8 +1236,8 @@ impl CpuBackend {
         rectangle: RectCopy2d,
     ) -> Result<()> {
         self.check_operation(OperationKind::RectCopy2d)?;
-        self.check_buffer(input)?;
-        self.check_buffer(output)?;
+        self.check_f32_buffer(input)?;
+        self.check_f32_buffer(output)?;
         if input.descriptor.allocation == output.descriptor.allocation {
             return Err(ExecutorError::Unsupported(
                 "rectangular copy does not permit overlapping source and destination allocation",
@@ -993,8 +1314,8 @@ impl CpuBackend {
                 "RMS epsilon must be finite and positive",
             ));
         }
-        self.check_buffer(input)?;
-        self.check_buffer(weight)?;
+        self.check_f32_buffer(input)?;
+        self.check_f32_buffer(weight)?;
         let input_shape = input.descriptor.layout.shape();
         let tokens = heads.validate_packed(input_shape)?;
         let weight_shape = weight.descriptor.layout.shape();
@@ -1060,7 +1381,7 @@ impl CpuBackend {
         spec: RotarySpec,
     ) -> Result<()> {
         self.check_operation(OperationKind::Rotary)?;
-        self.check_buffer(input)?;
+        self.check_f32_buffer(input)?;
         let input_shape = input.descriptor.layout.shape();
         let tokens = spec.heads().validate_packed(input_shape)?;
         let token_count = usize::try_from(tokens)
@@ -1130,11 +1451,11 @@ impl CpuBackend {
         spec: GqaSpec,
     ) -> Result<()> {
         self.check_operation(OperationKind::GroupedQueryAttention)?;
-        self.check_buffer(query)?;
-        self.check_buffer(key)?;
-        self.check_buffer(value)?;
-        self.check_buffer(key_cache)?;
-        self.check_buffer(value_cache)?;
+        self.check_f32_buffer(query)?;
+        self.check_f32_buffer(key)?;
+        self.check_f32_buffer(value)?;
+        self.check_f32_buffer(key_cache)?;
+        self.check_f32_buffer(value_cache)?;
         if key_cache.descriptor.allocation == value_cache.descriptor.allocation {
             return Err(ExecutorError::InvalidArgument(
                 "key and value caches must have distinct storage",
@@ -1357,11 +1678,11 @@ impl CpuBackend {
         spec: GatedShortConvSpec,
     ) -> Result<()> {
         self.check_operation(OperationKind::GatedShortConvolution)?;
-        self.check_buffer(b)?;
-        self.check_buffer(c)?;
-        self.check_buffer(v)?;
-        self.check_buffer(kernel)?;
-        self.check_buffer(history)?;
+        self.check_f32_buffer(b)?;
+        self.check_f32_buffer(c)?;
+        self.check_f32_buffer(v)?;
+        self.check_f32_buffer(kernel)?;
+        self.check_f32_buffer(history)?;
         let token_shape = b.descriptor.layout.shape();
         if token_shape.rank() != 2 || token_shape.dim(1)? != u64::from(spec.hidden()) {
             return Err(ExecutorError::InvalidShape(
@@ -1468,8 +1789,8 @@ impl CpuBackend {
     /// Apply SiLU(gate) * up over matching contiguous f32 layouts.
     pub fn swiglu(&self, output: &mut CpuBuffer, gate: &CpuBuffer, up: &CpuBuffer) -> Result<()> {
         self.check_operation(OperationKind::SwiGlu)?;
-        self.check_buffer(gate)?;
-        self.check_buffer(up)?;
+        self.check_f32_buffer(gate)?;
+        self.check_f32_buffer(up)?;
         if gate.descriptor.layout != up.descriptor.layout {
             return Err(ExecutorError::InvalidShape(
                 "SwiGLU gate and up layouts differ",
@@ -1501,7 +1822,7 @@ impl CpuBackend {
     /// A successful poll transfers that Vec to the caller and removes it from backend accounting.
     pub fn read_f32_async(&self, buffer: &CpuBuffer) -> Result<CpuCompletion<Vec<f32>>> {
         self.check_submit()?;
-        self.check_buffer(buffer)?;
+        self.check_f32_buffer(buffer)?;
         let result_bytes = buffer.byte_len();
         preflight_completion_bytes(&self.tracker, result_bytes)?;
 
@@ -1587,6 +1908,15 @@ impl InferenceOps for CpuBackend {
         CpuBackend::upload_f32_classified(self, shape, values, class)
     }
 
+    fn upload_u8_classified(
+        &mut self,
+        shape: Shape,
+        bytes: &[u8],
+        class: AllocationClass,
+    ) -> Result<Self::Buffer> {
+        CpuBackend::upload_u8_classified(self, shape, bytes, class)
+    }
+
     fn fence(&self) -> Result<Self::Fence> {
         CpuBackend::fence(self)
     }
@@ -1615,6 +1945,26 @@ impl InferenceOps for CpuBackend {
         ids: &[u32],
     ) -> Result<()> {
         CpuBackend::gather_rows(self, output, table, ids)
+    }
+
+    fn packed_gather_rows(
+        &self,
+        output: &mut Self::Buffer,
+        codes: &Self::Buffer,
+        scales: &Self::Buffer,
+        ids: &[u32],
+    ) -> Result<()> {
+        CpuBackend::packed_gather_rows(self, output, codes, scales, ids)
+    }
+
+    fn packed_linear(
+        &self,
+        output: &mut Self::Buffer,
+        input: &Self::Buffer,
+        codes: &Self::Buffer,
+        scales: &Self::Buffer,
+    ) -> Result<()> {
+        CpuBackend::packed_linear(self, output, input, codes, scales)
     }
 
     fn add(

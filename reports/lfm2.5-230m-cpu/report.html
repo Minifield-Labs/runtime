@@ -410,7 +410,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   "model": {
     "name": "LFM2.5-230M",
     "parameters": 229693184,
-    "quantization": "BF16 weights, F32 dense compute"
+    "quantization": "BF16 weights, F32 dense compute; ternary-v1 packed variant added in iteration 002"
   },
   "io": {
     "inputTokens": null,
@@ -423,7 +423,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     "memory": null,
     "runtime": "CPU",
     "engine": "minifield-infer (executor-core + backend-cpu)",
-    "engineVersion": "runtime@c3400ba",
+    "engineVersion": "runtime@6838db1 + ternary/t4-packed-linear",
     "environment": "macOS · native · release build"
   },
   "measurement": {
@@ -431,10 +431,10 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     "repetitions": 1,
     "cache": "Cold · no prefix reuse",
     "memoryScope": "Whole process (max RSS via /usr/bin/time -l). F32-expanded weights alone are ~0.86 GiB by allocation math; KV cache at 1024 tokens is ~24 MiB.",
-    "notes": "Cold-start CLI: each invocation parses ~441 MiB BF16 safetensors and expands to F32. TTFT therefore includes model load plus prompt processing. Output speed = (32−1 tokens) / (t₃₂ − t₁) = 31 / 10.95 s, isolating decode from load. Decode is unfused (~240 backend interactions/token); T8 fusion is the planned fix. Prefill not separately measured (per-token path, same cost as decode). Correctness gate (the point of this iteration): llama.cpp b11046 CPU f32-KV oracle, 118/118 teacher-forced positions top-1 agreement, max abs logit delta 0.33, mean 0.021; 330/332 generated ids agree, both disagreements at near-ties (top-2 gap \u003c 0.011)."
+    "notes": "Iteration 001 (baseline): cold-start CLI, parses ~438 MiB BF16 safetensors and expands to F32. TTFT includes model load plus prompt processing. Output speed = (32−1 tokens) / (t₃₂ − t₁) = 31 / 10.95 s. Correctness: llama.cpp b11046 CPU f32-KV oracle, 118/118 teacher-forced positions top-1 agreement, max abs logit delta 0.33; 330/332 generated ids agree, both disagreements at near-ties. Iteration 002 (ternary packed path): correctness gate is bitwise — packed_linear/packed_gather_rows and the fully packed executor produce identical logits to the dequantized minifield.ternary.v1 weights through the dense path (fixture vectors + generated 2-layer model + multi-group rows). Real-artifact run: packed safetensors (58.3 MiB) loads in 0.42 s vs dense (438.2 MiB) in 3.39 s (parse+decode+upload from memory); a 26-token teacher-forced pass runs 6.74 s packed vs 8.82 s dense (3.71 vs 2.84 tokens/s decode-equivalent, ~270 vs ~353 ms/token). Packed codes stay U8 in RAM so resident weights track file size; dense expands to F32 (~0.86 GiB). Speedup is weight-bandwidth, not kernel math — the scalar kernel does the same MAC count plus unpacking. Quality caveat: naive absmax-RTN ternary gives 0/26 top-1 agreement vs dense (max logit delta ~24) — expected for 230M without QAT; quality is a training-side concern, the runtime path itself is bit-exact vs its own dequantization."
   },
   "date": "2026-09-18",
-  "evidence": "Oracle gate: crates/executor-core/tests/oracle_lfm25.rs @ c3400ba (env-gated, MINIFIELD_LFM25_BUNDLE_DIR + MINIFIELD_LFM25_ORACLE_DIR). Capture tooling: scripts/oracle/ @ c3400ba. Oracle: llama.cpp b11046 CPU-only, f32 KV, temp 0, 6 prompts, artifacts hashed in tmp/oracle/manifest.json. Timing: /usr/bin/time -l on minifield-infer, prompt 'Tell me about yourself.', BOS on.",
+  "evidence": "Oracle gate: crates/executor-core/tests/oracle_lfm25.rs @ c3400ba (env-gated, MINIFIELD_LFM25_BUNDLE_DIR + MINIFIELD_LFM25_ORACLE_DIR). Capture tooling: scripts/oracle/ @ c3400ba. Oracle: llama.cpp b11046 CPU-only, f32 KV, temp 0, 6 prompts, artifacts hashed in tmp/oracle/manifest.json. Timing: /usr/bin/time -l on minifield-infer, prompt 'Tell me about yourself.', BOS on. Iteration 002 evidence: crates/executor-core/tests/packed_ternary.rs on branch ternary/t4-packed-linear (committed fixture crates/executor-core/tests/fixtures/ternary-v1-001/ + generated in-memory model); real-artifact run env-gated on MINIFIELD_LFM25_PACKED=tmp/models/lfm2.5-230m/lfm2.5-230m-ternary-v1.safetensors (61,132,272 B, produced by training/ sample exporter on branch ternary-export-v1) vs model.safetensors (459,401,112 B). Load timings measure parse+decode+upload from in-memory bytes, file IO excluded.",
   "iterations": [
     {
       "id": "001",
@@ -444,6 +444,15 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       "ttftMs": 5850,
       "modelMemoryBytes": null,
       "peakMemoryBytes": 1956626432
+    },
+    {
+      "id": "002",
+      "name": "Ternary packed CPU path (minifield.ternary.v1, scalar)",
+      "outputTokensPerSecond": 3.71,
+      "prefillTokensPerSecond": null,
+      "ttftMs": null,
+      "modelMemoryBytes": 61132272,
+      "peakMemoryBytes": null
     }
   ]
 }

@@ -205,6 +205,8 @@ pub enum OperationKind {
     GatedShortConvolution,
     SwiGlu,
     LmProjection,
+    PackedGatherRows,
+    PackedLinear,
 }
 
 impl OperationKind {
@@ -1010,6 +1012,16 @@ pub trait InferenceOps {
         class: AllocationClass,
     ) -> Result<Self::Buffer>;
 
+    /// Upload raw bytes into an explicitly classified backend-owned buffer.
+    /// Used for opaque packed payloads such as ternary code streams; the bytes
+    /// are not interpreted as scalars by the buffer contract.
+    fn upload_u8_classified(
+        &mut self,
+        shape: Shape,
+        bytes: &[u8],
+        class: AllocationClass,
+    ) -> Result<Self::Buffer>;
+
     /// Allocate transient work storage. Model/prefix loaders must use the classified form.
     fn allocate_f32(&mut self, shape: Shape) -> Result<Self::Buffer> {
         self.allocate_f32_classified(shape, AllocationClass::Scratch)
@@ -1044,6 +1056,35 @@ pub trait InferenceOps {
         output: &mut Self::Buffer,
         table: &Self::Buffer,
         ids: &[u32],
+    ) -> Result<()>;
+
+    /// Gather packed ternary rows and dequantize them into an f32 `[ids, K]` output.
+    ///
+    /// `codes` is a U8 `[rows, K/4]` buffer in `minifield.ternary.v1` layout: each
+    /// group of 128 weights occupies 32 consecutive bytes, and weight `j` of a
+    /// group sits at byte `j / 4`, bits `2 * (j % 4)`. `scales` is the f32
+    /// `[rows, K/128]` group-scale stream decoded from the packed file's FP16
+    /// scales. Decoded weight `w = (code - 1) * scale`.
+    fn packed_gather_rows(
+        &self,
+        output: &mut Self::Buffer,
+        codes: &Self::Buffer,
+        scales: &Self::Buffer,
+        ids: &[u32],
+    ) -> Result<()>;
+
+    /// Packed ternary linear: `output[t, r] = sum_k input[t, k] * w[r, k]` where
+    /// `w` is the `minifield.ternary.v1` dequantization of `codes`/`scales` as
+    /// documented on [`InferenceOps::packed_gather_rows`]. `input` is f32
+    /// `[T, K]`, `codes` is U8 `[R, K/4]`, `scales` is f32 `[R, K/128]`, and
+    /// `output` is f32 `[T, R]`. Group scales apply inside each 128-weight
+    /// group, matching the reference dequantized matvec.
+    fn packed_linear(
+        &self,
+        output: &mut Self::Buffer,
+        input: &Self::Buffer,
+        codes: &Self::Buffer,
+        scales: &Self::Buffer,
     ) -> Result<()>;
     fn add(
         &self,

@@ -19,6 +19,17 @@ use crate::{
 
 const LFM2_CONFIG_NAME: &str = "lfm2";
 
+/// Stored weight representation for a delivered LFM2 asset.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Lfm2WeightFormat {
+    /// Every matrix weight is a dense F32/BF16 tensor.
+    Dense,
+    /// `minifield.ternary.v1` split streams: every matrix weight is a
+    /// `<tensor>.codes` U8 [rows, k/4] tensor plus a `<tensor>.scales` F16
+    /// [rows, k/128] tensor. Norm and convolution-kernel roles stay dense.
+    TernaryV1,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Lfm2WeightRole {
     TokenEmbedding,
@@ -52,14 +63,20 @@ pub enum Lfm2LayerWeightRole {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lfm2WeightPlan {
     config: Lfm2Config,
+    format: Lfm2WeightFormat,
     plan: WeightPlan,
 }
 
 impl Lfm2WeightPlan {
+    /// Derive the dense inventory for a validated configuration.
+    pub fn from_config(config: Lfm2Config) -> Result<Self> {
+        Self::from_config_with_format(config, Lfm2WeightFormat::Dense)
+    }
+
     /// Derive all names, layouts, dimensions and source dtype before reading an asset header.
     /// This uses effective FF width, never raw `intermediate_size`.
     #[allow(clippy::too_many_lines)] // Exact inventory is intentionally listed together for audit.
-    pub fn from_config(config: Lfm2Config) -> Result<Self> {
+    pub fn from_config_with_format(config: Lfm2Config, format: Lfm2WeightFormat) -> Result<Self> {
         config.validate()?;
         let source_dtype = match config.weight_storage_dtype {
             Lfm2StorageDType::F32 => StorageDType::F32,
@@ -93,22 +110,22 @@ impl Lfm2WeightPlan {
                     .ok_or(ExecutorError::Overflow("LFM2 role count overflows usize"))?,
             )
             .map_err(|_| ExecutorError::ResourceLimit("LFM2 plan allocation failed"))?;
-        push(
+        push_matmul(
             &mut requirements,
+            format,
             "token_embedding",
             "model.embed_tokens.weight",
             source_dtype,
             &[vocab, hidden],
-            WeightLayout::Identity,
             None,
         )?;
-        push(
+        push_matmul(
             &mut requirements,
+            format,
             "tied_lm_head",
             "model.embed_tokens.weight",
             source_dtype,
             &[vocab, hidden],
-            WeightLayout::Identity,
             Some("token_embedding"),
         )?;
         push(
@@ -134,22 +151,22 @@ impl Lfm2WeightPlan {
                         WeightLayout::ConvHiddenSingletonWidth,
                         None,
                     )?;
-                    push(
+                    push_matmul(
                         &mut requirements,
+                        format,
                         &format!("layer.{index}.conv.in_projection"),
                         &format!("{prefix}.conv.in_proj.weight"),
                         source_dtype,
                         &[three_hidden, hidden],
-                        WeightLayout::Identity,
                         None,
                     )?;
-                    push(
+                    push_matmul(
                         &mut requirements,
+                        format,
                         &format!("layer.{index}.conv.out_projection"),
                         &format!("{prefix}.conv.out_proj.weight"),
                         source_dtype,
                         &[hidden, hidden],
-                        WeightLayout::Identity,
                         None,
                     )?;
                 }
@@ -172,69 +189,69 @@ impl Lfm2WeightPlan {
                         WeightLayout::Identity,
                         None,
                     )?;
-                    push(
+                    push_matmul(
                         &mut requirements,
+                        format,
                         &format!("layer.{index}.attention.q_projection"),
                         &format!("{prefix}.self_attn.q_proj.weight"),
                         source_dtype,
                         &[hidden, hidden],
-                        WeightLayout::Identity,
                         None,
                     )?;
-                    push(
+                    push_matmul(
                         &mut requirements,
+                        format,
                         &format!("layer.{index}.attention.k_projection"),
                         &format!("{prefix}.self_attn.k_proj.weight"),
                         source_dtype,
                         &[key_value, hidden],
-                        WeightLayout::Identity,
                         None,
                     )?;
-                    push(
+                    push_matmul(
                         &mut requirements,
+                        format,
                         &format!("layer.{index}.attention.v_projection"),
                         &format!("{prefix}.self_attn.v_proj.weight"),
                         source_dtype,
                         &[key_value, hidden],
-                        WeightLayout::Identity,
                         None,
                     )?;
-                    push(
+                    push_matmul(
                         &mut requirements,
+                        format,
                         &format!("layer.{index}.attention.out_projection"),
                         &format!("{prefix}.self_attn.out_proj.weight"),
                         source_dtype,
                         &[hidden, hidden],
-                        WeightLayout::Identity,
                         None,
                     )?;
                 }
             }
-            push(
+            push_matmul(
                 &mut requirements,
+                format,
                 &format!("layer.{index}.ffn.w1"),
                 &format!("{prefix}.feed_forward.w1.weight"),
                 source_dtype,
                 &[intermediate, hidden],
-                WeightLayout::Identity,
                 None,
             )?;
-            push(
+            push_matmul(
                 &mut requirements,
+                format,
                 &format!("layer.{index}.ffn.w2"),
                 &format!("{prefix}.feed_forward.w2.weight"),
                 source_dtype,
                 &[hidden, intermediate],
-                WeightLayout::Identity,
                 None,
             )?;
-            push(
+            push_matmul(
                 &mut requirements,
+                format,
                 &format!("layer.{index}.ffn.w3"),
                 &format!("{prefix}.feed_forward.w3.weight"),
                 source_dtype,
                 &[intermediate, hidden],
-                WeightLayout::Identity,
                 None,
             )?;
             push(
@@ -269,12 +286,21 @@ impl Lfm2WeightPlan {
             max_tensors: usize::MAX,
             max_rank: 4,
         })?;
-        Ok(Self { config, plan })
+        Ok(Self {
+            config,
+            format,
+            plan,
+        })
     }
 
     #[must_use]
     pub fn config(&self) -> &Lfm2Config {
         &self.config
+    }
+
+    #[must_use]
+    pub const fn format(&self) -> Lfm2WeightFormat {
+        self.format
     }
 
     #[must_use]
@@ -322,7 +348,9 @@ impl Lfm2WeightPlan {
         )
     }
 
-    fn role_name(&self, role: Lfm2WeightRole) -> Result<String> {
+    /// Base requirement name for a role, without checking whether that role
+    /// exists in this plan's stored format.
+    fn role_base_name(&self, role: Lfm2WeightRole) -> Result<String> {
         let name = match role {
             Lfm2WeightRole::TokenEmbedding => "token_embedding".to_owned(),
             Lfm2WeightRole::TiedLmHead => "tied_lm_head".to_owned(),
@@ -375,6 +403,11 @@ impl Lfm2WeightPlan {
                 format!("layer.{index}.{suffix}")
             }
         };
+        Ok(name)
+    }
+
+    fn role_name(&self, role: Lfm2WeightRole) -> Result<String> {
+        let name = self.role_base_name(role)?;
         if self.plan.requirements.iter().any(|item| item.role == name) {
             Ok(name)
         } else {
@@ -413,6 +446,65 @@ fn push(
     Ok(())
 }
 
+/// Emit one dense requirement or the `minifield.ternary.v1` split-stream pair,
+/// depending on the plan's stored format. Packed roles keep the base name as a
+/// prefix: `<role>.codes` is U8 `[rows, k/4]` and `<role>.scales` is F16
+/// `[rows, k/128]`, where `[rows, k]` is the dense operator shape.
+fn push_matmul(
+    requirements: &mut Vec<WeightRequirement>,
+    format: Lfm2WeightFormat,
+    role: &str,
+    tensor_name: &str,
+    storage_dtype: StorageDType,
+    dimensions: &[u64],
+    tied_to_role: Option<&str>,
+) -> Result<()> {
+    match format {
+        Lfm2WeightFormat::Dense => push(
+            requirements,
+            role,
+            tensor_name,
+            storage_dtype,
+            dimensions,
+            WeightLayout::Identity,
+            tied_to_role,
+        ),
+        Lfm2WeightFormat::TernaryV1 => {
+            if dimensions.len() != 2 {
+                return Err(ExecutorError::InvalidShape(
+                    "packed weight requirement must be rank two",
+                ));
+            }
+            let (rows, columns) = (dimensions[0], dimensions[1]);
+            if columns % 128 != 0 {
+                return Err(ExecutorError::InvalidShape(
+                    "packed weight input width must be a multiple of 128",
+                ));
+            }
+            let tied_codes = tied_to_role.map(|tied| format!("{tied}.codes"));
+            let tied_scales = tied_to_role.map(|tied| format!("{tied}.scales"));
+            push(
+                requirements,
+                &format!("{role}.codes"),
+                &format!("{tensor_name}.codes"),
+                StorageDType::U8,
+                &[rows, columns / 4],
+                WeightLayout::Identity,
+                tied_codes.as_deref(),
+            )?;
+            push(
+                requirements,
+                &format!("{role}.scales"),
+                &format!("{tensor_name}.scales"),
+                StorageDType::F16,
+                &[rows, columns / 128],
+                WeightLayout::Identity,
+                tied_scales.as_deref(),
+            )
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lfm2LoadRequest {
     request: LoadRequest,
@@ -420,6 +512,7 @@ pub struct Lfm2LoadRequest {
 }
 
 impl Lfm2LoadRequest {
+    /// Build a request for a dense F32/BF16 asset.
     pub fn new(
         config_bytes: Vec<u8>,
         expected_config_sha256: [u8; 32],
@@ -427,8 +520,28 @@ impl Lfm2LoadRequest {
         expected_asset_sha256: [u8; 32],
         limits: LoaderLimits,
     ) -> Result<Self> {
+        Self::new_with_format(
+            config_bytes,
+            expected_config_sha256,
+            declared_asset_bytes,
+            expected_asset_sha256,
+            limits,
+            Lfm2WeightFormat::Dense,
+        )
+    }
+
+    /// Build a request whose requirement inventory matches the asset's stored
+    /// format (dense or `minifield.ternary.v1` split streams).
+    pub fn new_with_format(
+        config_bytes: Vec<u8>,
+        expected_config_sha256: [u8; 32],
+        declared_asset_bytes: u64,
+        expected_asset_sha256: [u8; 32],
+        limits: LoaderLimits,
+        format: Lfm2WeightFormat,
+    ) -> Result<Self> {
         let config = parse_lfm2_config(&config_bytes)?;
-        let plan = Lfm2WeightPlan::from_config(config)?;
+        let plan = Lfm2WeightPlan::from_config_with_format(config, format)?;
         Ok(Self {
             request: LoadRequest {
                 config_name: LFM2_CONFIG_NAME.to_owned(),
@@ -518,7 +631,47 @@ impl<Buffer> Lfm2TypedWeights<Buffer> {
         &self.inner
     }
 
+    /// Dense-role lookup. Fails for roles stored as packed split streams;
+    /// `resolve` is the format-agnostic entry point.
     pub fn buffer_for(&self, role: Lfm2WeightRole) -> Result<&Buffer> {
         self.inner.buffer_for_role(&self.plan.role_name(role)?)
     }
+
+    #[must_use]
+    pub const fn format(&self) -> Lfm2WeightFormat {
+        self.plan.format
+    }
+
+    /// Resolve a role to its stored operand set: one dense buffer, or the
+    /// packed ternary code/scale pair for packed matmul roles.
+    pub fn resolve(&self, role: Lfm2WeightRole) -> Result<Lfm2ResolvedWeight<'_, Buffer>> {
+        let base = self.plan.role_base_name(role)?;
+        if self.plan.format == Lfm2WeightFormat::TernaryV1
+            && self
+                .plan
+                .plan
+                .requirements
+                .iter()
+                .any(|item| item.role == format!("{base}.codes"))
+        {
+            return Ok(Lfm2ResolvedWeight::Packed {
+                codes: self.inner.buffer_for_role(&format!("{base}.codes"))?,
+                scales: self.inner.buffer_for_role(&format!("{base}.scales"))?,
+            });
+        }
+        Ok(Lfm2ResolvedWeight::Dense(
+            self.inner.buffer_for_role(&base)?,
+        ))
+    }
+}
+
+/// Stored operand set for one weight role.
+pub enum Lfm2ResolvedWeight<'a, Buffer> {
+    /// One dense f32 buffer used by `linear`/`gather_rows`.
+    Dense(&'a Buffer),
+    /// `minifield.ternary.v1` split streams used by `packed_linear`/`packed_gather_rows`.
+    Packed {
+        codes: &'a Buffer,
+        scales: &'a Buffer,
+    },
 }

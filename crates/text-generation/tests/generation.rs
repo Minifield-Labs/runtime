@@ -15,6 +15,7 @@ struct Prefix(Vec<TokenId>);
 struct FakeExecutor {
     logits: VecDeque<ExecutorResult<Vec<f32>>>,
     appended: Vec<TokenId>,
+    pending_sample: Option<TokenId>,
     prefill_calls: usize,
     logits_calls: usize,
     fail_append: bool,
@@ -25,6 +26,7 @@ impl FakeExecutor {
         Self {
             logits: logits.into(),
             appended: Vec::new(),
+            pending_sample: None,
             prefill_calls: 0,
             logits_calls: 0,
             fail_append: false,
@@ -58,6 +60,51 @@ impl TokenExecutor for FakeExecutor {
         let mut next = prefix.0.clone();
         next.extend_from_slice(input.ids);
         self.appended.extend_from_slice(input.ids);
+        Ok(ReadyCompletion::new(Ok(Prefix(next))))
+    }
+
+    fn sampled_token(&mut self, _prefix: &Self::Prefix) -> ExecutorResult<Option<TokenId>> {
+        self.logits_calls += 1;
+        let logits = self
+            .logits
+            .pop_front()
+            .unwrap_or(Err(ExecutorError::BackendFailure(
+                "unexpected logits request",
+            )))?;
+        let mut best_id = 0_u32;
+        let mut best = logits[0];
+        if !best.is_finite() {
+            return Err(ExecutorError::BackendFailure("non-finite test logit"));
+        }
+        for (index, &value) in logits.iter().enumerate().skip(1) {
+            if !value.is_finite() {
+                return Err(ExecutorError::BackendFailure("non-finite test logit"));
+            }
+            if value > best {
+                best = value;
+                best_id = u32::try_from(index)
+                    .map_err(|_| ExecutorError::Overflow("test logit index overflows u32"))?;
+            }
+        }
+        self.pending_sample = Some(best_id);
+        Ok(Some(best_id))
+    }
+
+    fn append_argmax(&mut self, prefix: &Self::Prefix) -> ExecutorResult<Self::Append> {
+        if self.fail_append {
+            return Ok(ReadyCompletion::new(Err(ExecutorError::BackendFailure(
+                "test append failure",
+            ))));
+        }
+        let token = self
+            .pending_sample
+            .take()
+            .ok_or(ExecutorError::BackendFailure(
+                "append_argmax without a resolved sample",
+            ))?;
+        let mut next = prefix.0.clone();
+        next.push(token);
+        self.appended.push(token);
         Ok(ReadyCompletion::new(Ok(Prefix(next))))
     }
 

@@ -13,6 +13,7 @@ use minifield_engine_api::{
     FenceRetirement, GatedShortConvSpec, GqaSpec, InferenceCompletion, InferenceOps,
     MemoryAssetProvider, MemoryAssetRead, PackedHeadSpec, RectCopy2d, ResourceLimits,
     ResourceReport, Result, RetirementRejection, RotarySpec, Shape, TokenChunk, TokenExecutor,
+    TokenIds,
 };
 use minifield_executor_core::{
     Lfm2ExecutionLimits, Lfm2Executor, Lfm2LoadRequest, Lfm2WeightLoadTask, LoaderLimits,
@@ -489,9 +490,20 @@ impl InferenceOps for DeferredBackend {
         &self,
         output: &mut Self::Buffer,
         table: &Self::Buffer,
-        ids: &[u32],
+        ids: TokenIds<'_, Self>,
     ) -> Result<()> {
-        self.cpu.gather_rows(output, table, ids)
+        self.cpu.gather_rows(
+            output,
+            table,
+            match ids {
+                TokenIds::Host(ids) => TokenIds::Host(ids),
+                TokenIds::Device(buffer) => TokenIds::Device(buffer),
+            },
+        )
+    }
+
+    fn argmax(&self, output: &mut Self::Buffer, input: &Self::Buffer) -> Result<()> {
+        self.cpu.argmax(output, input)
     }
 
     fn add(
@@ -536,9 +548,17 @@ impl InferenceOps for DeferredBackend {
         output: &mut Self::Buffer,
         codes: &Self::Buffer,
         scales: &Self::Buffer,
-        ids: &[u32],
+        ids: TokenIds<'_, Self>,
     ) -> Result<()> {
-        self.cpu.packed_gather_rows(output, codes, scales, ids)
+        self.cpu.packed_gather_rows(
+            output,
+            codes,
+            scales,
+            match ids {
+                TokenIds::Host(ids) => TokenIds::Host(ids),
+                TokenIds::Device(buffer) => TokenIds::Device(buffer),
+            },
+        )
     }
 
     fn row_rms_norm(

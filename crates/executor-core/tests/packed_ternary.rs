@@ -24,7 +24,7 @@ use std::{fs, path::PathBuf};
 use minifield_backend_cpu::CpuBackend;
 use minifield_engine_api::{
     CompletionPoll, InferenceCompletion, MemoryAssetProvider, ResourceLimits, Shape, TokenChunk,
-    TokenExecutor,
+    TokenExecutor, TokenIds,
 };
 use minifield_executor_core::{
     Lfm2ExecutionLimits, Lfm2Executor, Lfm2LoadRequest, Lfm2WeightFormat, Lfm2WeightLoadTask,
@@ -198,8 +198,13 @@ fn packed_linear_and_gather_match_dequantized_reference() {
 
         // packed_gather_rows must equal the dequantized row bitwise.
         let mut gathered = cpu.allocate_f32(shape(1, 128)).expect("gather out");
-        cpu.packed_gather_rows(&mut gathered, &codes_buffer, &scales_buffer, &[0])
-            .expect("packed gather");
+        cpu.packed_gather_rows(
+            &mut gathered,
+            &codes_buffer,
+            &scales_buffer,
+            TokenIds::Host(&[0]),
+        )
+        .expect("packed gather");
         assert_eq!(
             gathered.as_slice(),
             expected_row.as_slice(),
@@ -412,10 +417,11 @@ fn load_executor(
     .expect("executor")
 }
 
-#[test]
-fn packed_executor_matches_dequantized_dense_executor() {
-    // Tiny LFM2: hidden=intermediate=vocab=128 keeps every matmul input width
-    // a multiple of 128 so all roles pack. One conv + one attention layer.
+/// Deterministic tiny LFM2 fixture: (config, packed safetensors, dequantized
+/// safetensors). hidden=intermediate=vocab=128 keeps every matmul input width
+/// a multiple of 128 so all roles pack. One conv + one attention layer.
+#[allow(clippy::too_many_lines)]
+fn tiny_packed_fixture() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     type DenseTensors = Vec<(String, Vec<u64>, Vec<f32>)>;
     let config = serde_json::to_vec(&json!({
         "block_auto_adjust_ff_dim": false,
@@ -576,7 +582,12 @@ fn packed_executor_matches_dequantized_dense_executor() {
         .collect();
     let packed_bytes = safetensors(&packed_refs);
     let dequant_bytes = safetensors(&dequant_refs);
+    (config, packed_bytes, dequant_bytes)
+}
 
+#[test]
+fn packed_executor_matches_dequantized_dense_executor() {
+    let (config, packed_bytes, dequant_bytes) = tiny_packed_fixture();
     let mut packed_exec =
         load_executor(&config, &packed_bytes, Lfm2WeightFormat::TernaryV1, 1 << 24);
     let mut dense_exec = load_executor(&config, &dequant_bytes, Lfm2WeightFormat::Dense, 1 << 24);
@@ -608,6 +619,56 @@ fn packed_executor_matches_dequantized_dense_executor() {
             &dense_logits,
             &format!("step {step}: packed executor logits diverged from dequantized dense"),
         );
+    }
+}
+
+/// First strict maximum, matching the executor's device argmax tie-break.
+fn first_argmax(logits: &[f32]) -> u32 {
+    let mut best = f32::NEG_INFINITY;
+    let mut id = 0_u32;
+    for (index, &value) in logits.iter().enumerate() {
+        if value.is_finite() && value > best {
+            best = value;
+            id = index as u32;
+        }
+    }
+    id
+}
+
+#[test]
+fn append_argmax_extends_prefix_with_resolved_greedy_token() {
+    let (config, packed_bytes, _) = tiny_packed_fixture();
+    let mut executor = load_executor(&config, &packed_bytes, Lfm2WeightFormat::TernaryV1, 1 << 24);
+    let mut task = executor
+        .prefill(TokenChunk::all(&[3, 5, 9]))
+        .expect("prefill");
+    let mut prefix = ready(&mut task);
+
+    for _ in 0..4 {
+        // The published sample must equal the first-max index of the
+        // prefix's logits row.
+        let mut logits_task = executor.next_logits(&prefix).expect("logits");
+        let logits = ready(&mut logits_task);
+        let expected = first_argmax(&logits);
+        assert_eq!(
+            executor.sampled_token(&prefix).expect("sampled"),
+            Some(expected),
+            "sampled token diverged from logits argmax"
+        );
+
+        // append_argmax must produce the same state as append_known of the
+        // same token: identical history and bitwise-identical next logits.
+        let mut greedy = executor.append_argmax(&prefix).expect("greedy append");
+        let greedy_prefix = ready(&mut greedy);
+        let mut known = executor
+            .append_known(&prefix, TokenChunk::all(&[expected]))
+            .expect("known append");
+        let known_prefix = ready(&mut known);
+        assert_eq!(greedy_prefix.token_history(), known_prefix.token_history());
+        let mut greedy_logits = executor.next_logits(&greedy_prefix).expect("logits");
+        let mut known_logits = executor.next_logits(&known_prefix).expect("logits");
+        assert_eq!(ready(&mut greedy_logits), ready(&mut known_logits));
+        prefix = greedy_prefix;
     }
 }
 

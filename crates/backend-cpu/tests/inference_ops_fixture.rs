@@ -7,7 +7,7 @@
 use minifield_backend_cpu::CpuBackend;
 use minifield_engine_api::{
     CompletionPoll, ExecutorError, InferenceCompletion, InferenceOps, OperationKind,
-    ResourceLimits, Shape,
+    ResourceLimits, Shape, TokenIds,
 };
 use serde_json::{Map, Value};
 
@@ -182,7 +182,7 @@ fn independent_operator_fixture_covers_every_cr01_cpu_kernel() {
                 let ids = u32_values(field(inputs, "token_ids"));
                 let table = must(cpu.upload_f32(shape(weight), &values(weight)));
                 let mut output = must(cpu.allocate_f32(shape(expected)));
-                must(cpu.gather_rows(&mut output, &table, &ids));
+                must(cpu.gather_rows(&mut output, &table, TokenIds::Host(&ids)));
                 assert_within(
                     &must(cpu.read_f32(&output)),
                     &values(expected),
@@ -282,7 +282,7 @@ fn cpu_storage_rejects_colliding_owners_stale_buffers_limits_and_bad_gathers() {
     let table = must(second.upload_f32(must(Shape::new(&[2, 1])), &[0.0, 1.0]));
     let mut output = must(second.allocate_f32(must(Shape::new(&[1, 1]))));
     assert_eq!(
-        second.gather_rows(&mut output, &table, &[2]),
+        second.gather_rows(&mut output, &table, TokenIds::Host(&[2])),
         Err(ExecutorError::OutOfBounds(
             "gather identifier exceeds row count"
         ))

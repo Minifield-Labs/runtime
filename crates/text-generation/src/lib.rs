@@ -9,7 +9,10 @@ use core::fmt;
 use minifield_engine_api::{
     CompletionPoll, ExecutorError, InferenceCompletion, TokenChunk, TokenExecutor, TokenId,
 };
-use minifield_text_tokenizer::{EncodeOptions, MODEL_VOCAB_SIZE, Tokenizer, TokenizerError};
+use minifield_text_tokenizer::{EncodeOptions, Tokenizer, TokenizerError};
+
+#[cfg(test)]
+use minifield_text_tokenizer::MODEL_VOCAB_SIZE;
 
 /// The fixed generation policy supported by the first integration slice.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -146,8 +149,11 @@ impl From<ExecutorError> for GenerationError {
 
 /// Runs bounded greedy generation over the complete 65,536-token model head.
 ///
-/// The executor prefix and output decoder are only replaced after an append completion succeeds.
-/// A selected unmapped or malformed UTF-8 token is rejected before that append begins.
+/// The executor resolves the greedy next token inside its append/prefill
+/// completion (`sampled_token`), so no full logits row crosses to the host.
+/// The executor prefix and output decoder are only replaced after an append
+/// completion succeeds. A selected unmapped or malformed UTF-8 token is
+/// rejected before that append begins.
 ///
 /// # Errors
 ///
@@ -202,9 +208,11 @@ where
             })?;
         ensure_context(required, request.max_context_tokens)?;
 
-        let mut logits_task = executor.next_logits(&prefix)?;
-        let logits = complete(&mut logits_task, cancellation)?;
-        let next_id = choose_greedy(&logits)?;
+        let next_id = executor
+            .sampled_token(&prefix)?
+            .ok_or(GenerationError::Executor(ExecutorError::BackendFailure(
+                "executor published no greedy next-token sample",
+            )))?;
         if request.stop_token_ids.contains(&next_id) {
             let tail = decoded.finish()?;
             text.push_str(&tail);
@@ -218,7 +226,10 @@ where
 
         let mut candidate_decoder = decoded.clone();
         let decoded_fragment = candidate_decoder.push(&[next_id])?;
-        let mut append_task = executor.append_known(&prefix, TokenChunk::all(&[next_id]))?;
+        if cancellation.is_cancelled() {
+            return Err(GenerationError::Cancelled);
+        }
+        let mut append_task = executor.append_argmax(&prefix)?;
         let candidate_prefix = complete(&mut append_task, cancellation)?;
         prefix = candidate_prefix;
         decoded = candidate_decoder;
@@ -262,6 +273,7 @@ where
     }
 }
 
+#[cfg(test)]
 fn choose_greedy(logits: &[f32]) -> Result<TokenId, GenerationError> {
     let expected = MODEL_VOCAB_SIZE as usize;
     if logits.len() != expected {
@@ -294,6 +306,7 @@ fn choose_greedy(logits: &[f32]) -> Result<TokenId, GenerationError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn logits(winners: &[(TokenId, f32)]) -> Vec<f32> {
         let mut values = vec![-10.0; MODEL_VOCAB_SIZE as usize];
         for &(id, value) in winners {

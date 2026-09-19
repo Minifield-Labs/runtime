@@ -85,7 +85,13 @@ pub struct Zombie {
 /// Command-recording state guarded by `RefCell`. `op` methods take `&self`, so
 /// the pending batch lives behind interior mutability.
 pub struct OpCtx {
-    encoder: Option<wgpu::CommandEncoder>,
+    /// Recorded operations replayed into a fresh encoder at submit time.
+    /// Consecutive dispatches merge into one compute pass; copies, clears,
+    /// and deferred maps break the pass.
+    ops: Vec<PendingOp>,
+    /// Staged uniform-ring contents for the pending batch; one
+    /// `Queue::write_buffer` at submit covers every recorded slot.
+    uniform_staging: Vec<u8>,
     /// Buffers dropped since the last submission. They may still be referenced
     /// by the pending batch or any in-flight submission.
     pending_free: Vec<PooledBuf>,
@@ -99,6 +105,33 @@ pub struct OpCtx {
     /// Local submission serial counter.
     submissions: u64,
 }
+
+/// One recorded operation in the pending batch.
+pub enum PendingOp {
+    Dispatch {
+        pipeline: wgpu::ComputePipeline,
+        bind_group: wgpu::BindGroup,
+        dynamic_offset: u32,
+        grid: (u32, u32, u32),
+    },
+    Copy {
+        source: wgpu::Buffer,
+        source_offset: u64,
+        destination: wgpu::Buffer,
+        destination_offset: u64,
+        bytes: u64,
+    },
+    Clear {
+        buffer: wgpu::Buffer,
+        bytes: u64,
+    },
+    MapOnSubmit {
+        staging: wgpu::Buffer,
+        callback: MapCallback,
+    },
+}
+
+type MapCallback = Box<dyn FnOnce(std::result::Result<(), wgpu::BufferAsyncError>) + Send>;
 
 /// Per-class and aggregate byte accounting, mirroring the CPU tracker.
 #[derive(Clone, Copy, Debug, Default)]
@@ -339,7 +372,8 @@ impl DeviceInner {
             uniform_stride: u64::from(uniform_stride),
             uniform_ring_bytes,
             ctx: RefCell::new(OpCtx {
-                encoder: None,
+                ops: Vec::new(),
+                uniform_staging: Vec::new(),
                 pending_free: Vec::new(),
                 awaiting: VecDeque::new(),
                 zombies: Vec::new(),
@@ -492,30 +526,76 @@ impl DeviceInner {
         self.ctx.borrow_mut().pending_free.push(buf);
     }
 
-    /// Ensure an encoder exists and return it for recording.
-    fn encoder<'a>(&self, ctx: &'a mut OpCtx) -> &'a mut wgpu::CommandEncoder {
-        if ctx.encoder.is_none() {
-            ctx.encoder = Some(self.device.create_command_encoder(
-                &wgpu::CommandEncoderDescriptor {
-                    label: Some("minifield-encoder"),
-                },
-            ));
-        }
-        match ctx.encoder.as_mut() {
-            Some(encoder) => encoder,
-            None => unreachable!("encoder was just created"),
-        }
-    }
-
-    /// Submit the pending encoder. Registers the serial-confirmation callback
-    /// and moves `pending_free` into `awaiting` under the new serial.
+    /// Submit the pending batch. Flushes staged uniform bytes in one
+    /// `write_buffer`, replays recorded operations into a fresh encoder with
+    /// consecutive dispatches merged into shared compute passes, registers
+    /// the serial-confirmation callback, and moves `pending_free` into
+    /// `awaiting` under the new serial.
     fn submit_locked(&self, ctx: &mut OpCtx) -> Result<u64> {
-        let encoder = ctx.encoder.take().unwrap_or_else(|| {
-            self.device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("minifield-encoder"),
-                })
-        });
+        if !ctx.uniform_staging.is_empty() {
+            self.queue
+                .write_buffer(&self.uniform, 0, &ctx.uniform_staging);
+            ctx.uniform_staging.clear();
+        }
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("minifield-encoder"),
+            });
+        {
+            let mut ops = ctx.ops.drain(..).collect::<VecDeque<_>>();
+            while let Some(op) = ops.pop_front() {
+                match op {
+                    PendingOp::Dispatch { .. } => {
+                        let mut run = Vec::new();
+                        run.push(op);
+                        while let Some(PendingOp::Dispatch { .. }) = ops.front() {
+                            let Some(next) = ops.pop_front() else { break };
+                            run.push(next);
+                        }
+                        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("minifield-batch"),
+                            timestamp_writes: None,
+                        });
+                        for op in run {
+                            let PendingOp::Dispatch {
+                                pipeline,
+                                bind_group,
+                                dynamic_offset,
+                                grid,
+                            } = op
+                            else {
+                                unreachable!("run holds dispatches only");
+                            };
+                            pass.set_pipeline(&pipeline);
+                            pass.set_bind_group(0, &bind_group, &[dynamic_offset]);
+                            pass.dispatch_workgroups(grid.0, grid.1, grid.2);
+                        }
+                    }
+                    PendingOp::Copy {
+                        source,
+                        source_offset,
+                        destination,
+                        destination_offset,
+                        bytes,
+                    } => {
+                        encoder.copy_buffer_to_buffer(
+                            &source,
+                            source_offset,
+                            &destination,
+                            destination_offset,
+                            bytes,
+                        );
+                    }
+                    PendingOp::Clear { buffer, bytes } => {
+                        encoder.clear_buffer(&buffer, 0, Some(bytes));
+                    }
+                    PendingOp::MapOnSubmit { staging, callback } => {
+                        encoder.map_buffer_on_submit(&staging, wgpu::MapMode::Read, .., callback);
+                    }
+                }
+            }
+        }
         let serial = ctx
             .submissions
             .checked_add(1)
@@ -621,7 +701,14 @@ impl DeviceInner {
         let pipeline = self.pipeline(kernel);
         let mut ctx = self.ctx.borrow_mut();
         let offset = self.uniform_slot(&mut ctx)?;
-        self.queue.write_buffer(&self.uniform, offset, params);
+        let offset_usize = usize::try_from(offset)
+            .map_err(|_| ExecutorError::Overflow("wgpu uniform offset exceeds usize"))?;
+        ctx.uniform_staging.resize(offset_usize, 0);
+        ctx.uniform_staging.extend_from_slice(params);
+        // Keep the staged bytes slot-sized so offsets stay ring-aligned.
+        let aligned_end = usize::try_from(ctx.uniform_cursor)
+            .map_err(|_| ExecutorError::Overflow("wgpu uniform cursor exceeds usize"))?;
+        ctx.uniform_staging.resize(aligned_end, 0);
 
         let mut entries = Vec::with_capacity(storages.len() + 1);
         entries.push(wgpu::BindGroupEntry {
@@ -647,16 +734,12 @@ impl DeviceInner {
 
         let dynamic_offset = u32::try_from(offset)
             .map_err(|_| ExecutorError::Overflow("wgpu uniform offset exceeds u32"))?;
-        {
-            let encoder = self.encoder(&mut ctx);
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some(kernel.name()),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&pipeline);
-            pass.set_bind_group(0, &bind_group, &[dynamic_offset]);
-            pass.dispatch_workgroups(grid.0, grid.1, grid.2);
-        }
+        ctx.ops.push(PendingOp::Dispatch {
+            pipeline,
+            bind_group,
+            dynamic_offset,
+            grid,
+        });
         Ok(())
     }
 
@@ -673,13 +756,13 @@ impl DeviceInner {
             return;
         }
         let mut ctx = self.ctx.borrow_mut();
-        self.encoder(&mut ctx).copy_buffer_to_buffer(
-            source,
+        ctx.ops.push(PendingOp::Copy {
+            source: source.clone(),
             source_offset,
-            destination,
+            destination: destination.clone(),
             destination_offset,
             bytes,
-        );
+        });
     }
 
     /// Record a zero fill of `buffer[0..bytes]` into the pending batch.
@@ -688,7 +771,10 @@ impl DeviceInner {
             return;
         }
         let mut ctx = self.ctx.borrow_mut();
-        self.encoder(&mut ctx).clear_buffer(buffer, 0, Some(bytes));
+        ctx.ops.push(PendingOp::Clear {
+            buffer: buffer.clone(),
+            bytes,
+        });
     }
 
     /// Attach a deferred map request to the pending batch. The map executes
@@ -699,7 +785,9 @@ impl DeviceInner {
         callback: impl FnOnce(std::result::Result<(), wgpu::BufferAsyncError>) + Send + 'static,
     ) {
         let mut ctx = self.ctx.borrow_mut();
-        self.encoder(&mut ctx)
-            .map_buffer_on_submit(staging, wgpu::MapMode::Read, .., callback);
+        ctx.ops.push(PendingOp::MapOnSubmit {
+            staging: staging.clone(),
+            callback: Box::new(callback),
+        });
     }
 }

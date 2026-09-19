@@ -32,7 +32,7 @@ use minifield_engine_api::{
     BufferDescriptor, CompletionPoll, DType, DTypeSet, ExecutorError, FenceRetirement,
     GatedShortConvSpec, GqaSpec, InferenceCompletion, InferenceOps, OperationKind, OperationSet,
     PackedHeadSpec, PrecisionPolicy, RectCopy2d, ResourceLimits, ResourceReport, Result,
-    RotarySpec, Shape, TensorLayout,
+    RotarySpec, Shape, TensorLayout, TokenIds,
 };
 
 pub use completion::{WgpuFence, WgpuFenceRetirement, WgpuReadback};
@@ -167,7 +167,8 @@ impl WgpuBackend {
             .with(OperationKind::PackedLinearPair)
             .with(OperationKind::PackedSwigluLinear)
             .with(OperationKind::AddRowRmsNorm)
-            .with(OperationKind::QkNormRope);
+            .with(OperationKind::QkNormRope)
+            .with(OperationKind::Argmax);
         let capabilities = BackendCapabilities {
             dtypes: DTypeSet::only(DType::F32).with(DType::U8),
             operations,
@@ -632,11 +633,65 @@ impl WgpuBackend {
     }
 
     /// Gather selected rows from a contiguous [rows, columns] f32 table.
+    /// Resolve gather row selectors into a device f32 id buffer.
+    ///
+    /// Host ids are bounds-checked, staged as exact f32 integers into pooled
+    /// scratch, and returned with the scratch allocation to defer. Device ids
+    /// bind the caller's buffer directly (typically an `argmax` output), so a
+    /// sampled token feeds embedding without a host roundtrip; the kernel
+    /// writes NaN rows for invalid selectors.
+    #[allow(clippy::cast_precision_loss)]
+    fn stage_token_ids(
+        &self,
+        ids: &TokenIds<'_, Self>,
+        rows: u64,
+    ) -> Result<(wgpu::Buffer, u64, Option<PooledBuf>)> {
+        match ids {
+            TokenIds::Host(ids) => {
+                for id in *ids {
+                    if u64::from(*id) >= rows || *id >= (1 << 24) {
+                        return Err(ExecutorError::OutOfBounds(
+                            "gather identifier exceeds row count",
+                        ));
+                    }
+                }
+                // ids is host data: stage it into a pooled scratch buffer that
+                // stays alive until this batch's submission is confirmed.
+                let id_bytes = u64::try_from(ids.len())
+                    .map_err(|_| ExecutorError::Overflow("gather ids overflow u64"))?
+                    .checked_mul(4)
+                    .ok_or(ExecutorError::Overflow(
+                        "gather ids byte count overflows u64",
+                    ))?;
+                let scratch = self.device.alloc_storage(id_bytes)?;
+                let mut bytes = Vec::with_capacity(ids.len() * 4);
+                for id in *ids {
+                    bytes.extend_from_slice(&(*id as f32).to_le_bytes());
+                }
+                self.device.queue.write_buffer(&scratch.buffer, 0, &bytes);
+                let count = u64::try_from(ids.len())
+                    .map_err(|_| ExecutorError::Overflow("id count overflows u64"))?;
+                Ok((scratch.buffer.clone(), count, Some(scratch)))
+            }
+            TokenIds::Device(buffer) => {
+                self.check_f32_buffer(buffer)?;
+                let shape = buffer.descriptor.layout.shape();
+                if shape.rank() != 1 {
+                    return Err(ExecutorError::InvalidShape(
+                        "device token-id buffer must be rank one",
+                    ));
+                }
+                Ok((buffer.wgpu_buffer()?.clone(), shape.dim(0)?, None))
+            }
+        }
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
     pub fn gather_rows(
         &self,
         output: &mut WgpuBuffer,
         table: &WgpuBuffer,
-        ids: &[u32],
+        ids: TokenIds<'_, Self>,
     ) -> Result<()> {
         self.check_operation(OperationKind::GatherRows)?;
         self.check_f32_buffer(table)?;
@@ -646,59 +701,26 @@ impl WgpuBackend {
         }
         let rows = table_shape.dim(0)?;
         let columns = table_shape.dim(1)?;
-        for id in ids {
-            if u64::from(*id) >= rows {
-                return Err(ExecutorError::OutOfBounds(
-                    "gather identifier exceeds row count",
-                ));
-            }
-        }
-        let output_shape = Shape::new(&[
-            u64::try_from(ids.len())
-                .map_err(|_| ExecutorError::Overflow("id count overflows u64"))?,
-            columns,
-        ])?;
+        let (id_buffer, id_count, staged) = self.stage_token_ids(&ids, rows)?;
+        let output_shape = Shape::new(&[id_count, columns])?;
         self.check_output_shape(output, output_shape)?;
-        if ids.is_empty() || columns == 0 {
+        if id_count == 0 || columns == 0 {
             return Ok(());
         }
-        // ids is host data: stage it into a pooled scratch buffer that stays
-        // alive until this batch's submission is confirmed.
-        let id_bytes = u64::try_from(ids.len())
-            .map_err(|_| ExecutorError::Overflow("gather ids overflow u64"))?
-            .checked_mul(4)
-            .ok_or(ExecutorError::Overflow(
-                "gather ids byte count overflows u64",
-            ))?;
-        let scratch = self.device.alloc_storage(id_bytes)?;
-        let mut bytes = Vec::with_capacity(ids.len() * 4);
-        for id in ids {
-            bytes.extend_from_slice(&id.to_le_bytes());
-        }
-        self.device.queue.write_buffer(&scratch.buffer, 0, &bytes);
-        let groups = element_groups(
-            u64::try_from(ids.len())
-                .map_err(|_| ExecutorError::Overflow("gather row count overflows u64"))?
-                .checked_mul(columns)
-                .ok_or(ExecutorError::Overflow(
-                    "gather element count overflows u64",
-                ))?,
-        );
+        let groups = element_groups(id_count.checked_mul(columns).ok_or(
+            ExecutorError::Overflow("gather element count overflows u64"),
+        )?);
         let source = table.wgpu_buffer()?.clone();
         let destination = output.wgpu_buffer()?.clone();
         let result = self.device.dispatch(
             Kernel::Gather,
-            &[&source, &scratch.buffer, &destination],
-            &params(&[
-                param32(
-                    u64::try_from(ids.len())
-                        .map_err(|_| ExecutorError::Overflow("gather row count overflows u64"))?,
-                )?,
-                param32(columns)?,
-            ]),
+            &[&source, &id_buffer, &destination],
+            &params(&[param32(id_count)?, param32(columns)?, param32(rows)?]),
             flat_grid(groups)?,
         );
-        self.device.defer_free(scratch);
+        if let Some(scratch) = staged {
+            self.device.defer_free(scratch);
+        }
         result
     }
 
@@ -922,70 +944,72 @@ impl WgpuBackend {
 
     /// Packed ternary gather: dequantize the selected `minifield.ternary.v1`
     /// weight rows into an f32 [ids, k] output.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn packed_gather_rows(
         &self,
         output: &mut WgpuBuffer,
         codes: &WgpuBuffer,
         scales: &WgpuBuffer,
-        ids: &[u32],
+        ids: TokenIds<'_, Self>,
     ) -> Result<()> {
         self.check_operation(OperationKind::PackedGatherRows)?;
         let (rows, inner) = self.check_packed_operands(codes, scales)?;
-        for id in ids {
-            if u64::from(*id) >= rows {
-                return Err(ExecutorError::OutOfBounds(
-                    "gather identifier exceeds row count",
-                ));
-            }
-        }
-        let output_shape = Shape::new(&[
-            u64::try_from(ids.len())
-                .map_err(|_| ExecutorError::Overflow("id count overflows u64"))?,
-            inner,
-        ])?;
+        let (id_buffer, id_count, staged) = self.stage_token_ids(&ids, rows)?;
+        let output_shape = Shape::new(&[id_count, inner])?;
         self.check_output_shape(output, output_shape)?;
-        if ids.is_empty() || inner == 0 {
+        if id_count == 0 || inner == 0 {
             return Ok(());
         }
-        // ids is host data: stage it into a pooled scratch buffer that stays
-        // alive until this batch's submission is confirmed.
-        let id_bytes = u64::try_from(ids.len())
-            .map_err(|_| ExecutorError::Overflow("gather ids overflow u64"))?
-            .checked_mul(4)
-            .ok_or(ExecutorError::Overflow(
-                "gather ids byte count overflows u64",
-            ))?;
-        let scratch = self.device.alloc_storage(id_bytes)?;
-        let mut bytes = Vec::with_capacity(ids.len() * 4);
-        for id in ids {
-            bytes.extend_from_slice(&id.to_le_bytes());
-        }
-        self.device.queue.write_buffer(&scratch.buffer, 0, &bytes);
-        let groups = element_groups(
-            u64::try_from(ids.len())
-                .map_err(|_| ExecutorError::Overflow("gather row count overflows u64"))?
-                .checked_mul(inner)
-                .ok_or(ExecutorError::Overflow(
-                    "gather element count overflows u64",
-                ))?,
-        );
+        let groups = element_groups(id_count.checked_mul(inner).ok_or(ExecutorError::Overflow(
+            "gather element count overflows u64",
+        ))?);
         let c = codes.wgpu_buffer()?.clone();
         let s = scales.wgpu_buffer()?.clone();
         let destination = output.wgpu_buffer()?.clone();
         let result = self.device.dispatch(
             Kernel::PackedGather,
-            &[&destination, &scratch.buffer, &c, &s],
-            &params(&[
-                param32(
-                    u64::try_from(ids.len())
-                        .map_err(|_| ExecutorError::Overflow("gather row count overflows u64"))?,
-                )?,
-                param32(inner)?,
-            ]),
+            &[&destination, &id_buffer, &c, &s],
+            &params(&[param32(id_count)?, param32(inner)?, param32(rows)?]),
             flat_grid(groups)?,
         );
-        self.device.defer_free(scratch);
+        if let Some(scratch) = staged {
+            self.device.defer_free(scratch);
+        }
         result
+    }
+
+    /// Row-wise argmax over f32 `[T, V]` logits: `output[t]` is the index of
+    /// the first strict maximum in row `t` as an exact f32 integer, or NaN
+    /// when the row contains any non-finite element. The output feeds the
+    /// f32-id gather path directly, so greedy decode keeps token selection on
+    /// device. `V` must be at most `1 << 24` so indices stay exactly
+    /// representable.
+    pub fn argmax(&self, output: &mut WgpuBuffer, input: &WgpuBuffer) -> Result<()> {
+        self.check_operation(OperationKind::Argmax)?;
+        self.check_f32_buffer(input)?;
+        let input_shape = input.descriptor.layout.shape();
+        if input_shape.rank() != 2 {
+            return Err(ExecutorError::InvalidShape("argmax input must be rank two"));
+        }
+        let rows = input_shape.dim(0)?;
+        let columns = input_shape.dim(1)?;
+        if columns == 0 || columns > (1 << 24) {
+            return Err(ExecutorError::Unsupported(
+                "argmax width must be in [1, 2^24] for exact f32 indices",
+            ));
+        }
+        self.check_output_shape(output, Shape::new(&[rows])?)?;
+        if rows == 0 {
+            return Ok(());
+        }
+        let source = input.wgpu_buffer()?.clone();
+        let destination = output.wgpu_buffer()?.clone();
+        self.device.dispatch(
+            Kernel::Argmax,
+            &[&destination, &source],
+            &params(&[param32(rows)?, param32(columns)?]),
+            flat_grid(rows)?,
+        )
     }
 
     /// Paired packed ternary linear over one shared input: workgroup (i, j)
@@ -1899,9 +1923,13 @@ impl InferenceOps for WgpuBackend {
         &self,
         output: &mut Self::Buffer,
         table: &Self::Buffer,
-        ids: &[u32],
+        ids: TokenIds<'_, Self>,
     ) -> Result<()> {
         WgpuBackend::gather_rows(self, output, table, ids)
+    }
+
+    fn argmax(&self, output: &mut Self::Buffer, input: &Self::Buffer) -> Result<()> {
+        WgpuBackend::argmax(self, output, input)
     }
 
     fn add(
@@ -1946,7 +1974,7 @@ impl InferenceOps for WgpuBackend {
         output: &mut Self::Buffer,
         codes: &Self::Buffer,
         scales: &Self::Buffer,
-        ids: &[u32],
+        ids: TokenIds<'_, Self>,
     ) -> Result<()> {
         WgpuBackend::packed_gather_rows(self, output, codes, scales, ids)
     }

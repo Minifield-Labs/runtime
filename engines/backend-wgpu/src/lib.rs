@@ -163,7 +163,11 @@ impl WgpuBackend {
             .with(OperationKind::GatedShortConvolution)
             .with(OperationKind::SwiGlu)
             .with(OperationKind::PackedGatherRows)
-            .with(OperationKind::PackedLinear);
+            .with(OperationKind::PackedLinear)
+            .with(OperationKind::PackedLinearPair)
+            .with(OperationKind::PackedSwigluLinear)
+            .with(OperationKind::AddRowRmsNorm)
+            .with(OperationKind::QkNormRope);
         let capabilities = BackendCapabilities {
             dtypes: DTypeSet::only(DType::F32).with(DType::U8),
             operations,
@@ -984,6 +988,346 @@ impl WgpuBackend {
         result
     }
 
+    /// Paired packed ternary linear over one shared input: workgroup (i, j)
+    /// computes both output elements, halving dispatches for projection pairs
+    /// that share an activation (K/V, gate/up).
+    #[allow(clippy::too_many_arguments)]
+    pub fn packed_linear_pair(
+        &self,
+        out_a: &mut WgpuBuffer,
+        out_b: &mut WgpuBuffer,
+        input: &WgpuBuffer,
+        codes_a: &WgpuBuffer,
+        scales_a: &WgpuBuffer,
+        codes_b: &WgpuBuffer,
+        scales_b: &WgpuBuffer,
+    ) -> Result<()> {
+        self.check_operation(OperationKind::PackedLinearPair)?;
+        self.check_f32_buffer(input)?;
+        if codes_a.descriptor.layout.shape() != codes_b.descriptor.layout.shape()
+            || scales_a.descriptor.layout.shape() != scales_b.descriptor.layout.shape()
+        {
+            return Err(ExecutorError::InvalidShape(
+                "packed linear pair requires equal weight shapes",
+            ));
+        }
+        let (output_width, inner) = self.check_packed_operands(codes_a, scales_a)?;
+        self.check_packed_operands(codes_b, scales_b)?;
+        let input_shape = input.descriptor.layout.shape();
+        if input_shape.rank() != 2 {
+            return Err(ExecutorError::InvalidShape(
+                "packed linear pair input must be rank two",
+            ));
+        }
+        if input_shape.dim(1)? != inner {
+            return Err(ExecutorError::InvalidShape(
+                "packed linear pair input width differs from weight width",
+            ));
+        }
+        let rows = input_shape.dim(0)?;
+        let output_shape = Shape::new(&[rows, output_width])?;
+        self.check_output_shape(out_a, output_shape)?;
+        self.check_output_shape(out_b, output_shape)?;
+        if rows == 0 || output_width == 0 {
+            return Ok(());
+        }
+        if inner == 0 {
+            self.device
+                .record_clear(out_a.wgpu_buffer()?, out_a.byte_len());
+            self.device
+                .record_clear(out_b.wgpu_buffer()?, out_b.byte_len());
+            return Ok(());
+        }
+        let da = out_a.wgpu_buffer()?.clone();
+        let db = out_b.wgpu_buffer()?.clone();
+        let x = input.wgpu_buffer()?.clone();
+        let ca = codes_a.wgpu_buffer()?.clone();
+        let sa = scales_a.wgpu_buffer()?.clone();
+        let cb = codes_b.wgpu_buffer()?.clone();
+        let sb = scales_b.wgpu_buffer()?.clone();
+        let workgroups = rows
+            .checked_mul(output_width)
+            .ok_or(ExecutorError::Overflow(
+                "packed linear pair output count overflows u64",
+            ))?;
+        self.device.dispatch(
+            Kernel::PackedGemvPair,
+            &[&da, &db, &x, &ca, &sa, &cb, &sb],
+            &params(&[param32(output_width)?, param32(inner)?, param32(rows)?]),
+            flat_grid(workgroups)?,
+        )
+    }
+
+    /// Packed ternary linear over an on-the-fly `SiLU(gate) * up` activation:
+    /// the down projection consumes the activation without a materialized
+    /// intermediate tensor.
+    pub fn packed_swiglu_linear(
+        &self,
+        output: &mut WgpuBuffer,
+        gate: &WgpuBuffer,
+        up: &WgpuBuffer,
+        codes: &WgpuBuffer,
+        scales: &WgpuBuffer,
+    ) -> Result<()> {
+        self.check_operation(OperationKind::PackedSwigluLinear)?;
+        self.check_f32_buffer(gate)?;
+        self.check_f32_buffer(up)?;
+        let (output_width, inner) = self.check_packed_operands(codes, scales)?;
+        let gate_shape = gate.descriptor.layout.shape();
+        if gate_shape.rank() != 2 || up.descriptor.layout.shape() != gate_shape {
+            return Err(ExecutorError::InvalidShape(
+                "packed SwiGLU gate and up layouts must match and be rank two",
+            ));
+        }
+        if gate_shape.dim(1)? != inner {
+            return Err(ExecutorError::InvalidShape(
+                "packed SwiGLU input width differs from weight width",
+            ));
+        }
+        let rows = gate_shape.dim(0)?;
+        self.check_output_shape(output, Shape::new(&[rows, output_width])?)?;
+        if rows == 0 || output_width == 0 {
+            return Ok(());
+        }
+        if inner == 0 {
+            self.device
+                .record_clear(output.wgpu_buffer()?, output.byte_len());
+            return Ok(());
+        }
+        let destination = output.wgpu_buffer()?.clone();
+        let g = gate.wgpu_buffer()?.clone();
+        let u = up.wgpu_buffer()?.clone();
+        let c = codes.wgpu_buffer()?.clone();
+        let s = scales.wgpu_buffer()?.clone();
+        let workgroups = rows
+            .checked_mul(output_width)
+            .ok_or(ExecutorError::Overflow(
+                "packed SwiGLU output count overflows u64",
+            ))?;
+        self.device.dispatch(
+            Kernel::PackedSwigluGemv,
+            &[&destination, &g, &u, &c, &s],
+            &params(&[param32(output_width)?, param32(inner)?, param32(rows)?]),
+            flat_grid(workgroups)?,
+        )
+    }
+
+    /// Fused residual add plus row RMS norm: `sum = left + right` written
+    /// beside `normed = rmsnorm(sum) * weight` in one workgroup per row.
+    pub fn add_row_rms_norm(
+        &self,
+        sum: &mut WgpuBuffer,
+        normed: &mut WgpuBuffer,
+        left: &WgpuBuffer,
+        right: &WgpuBuffer,
+        weight: &WgpuBuffer,
+        epsilon: f32,
+    ) -> Result<()> {
+        self.check_operation(OperationKind::AddRowRmsNorm)?;
+        if !epsilon.is_finite() || epsilon <= 0.0 {
+            return Err(ExecutorError::InvalidArgument(
+                "RMS epsilon must be finite and positive",
+            ));
+        }
+        self.check_f32_buffer(left)?;
+        self.check_f32_buffer(right)?;
+        self.check_f32_buffer(weight)?;
+        let input_shape = left.descriptor.layout.shape();
+        if input_shape.rank() != 2 || right.descriptor.layout.shape() != input_shape {
+            return Err(ExecutorError::InvalidShape(
+                "add-norm inputs must share a rank-two layout",
+            ));
+        }
+        let ncols = input_shape.dim(1)?;
+        if weight.descriptor.layout.shape() != Shape::new(&[ncols])? {
+            return Err(ExecutorError::InvalidShape(
+                "add-norm weight must have one entry per column",
+            ));
+        }
+        self.check_output_shape(sum, input_shape)?;
+        self.check_output_shape(normed, input_shape)?;
+        let nrows = input_shape.dim(0)?;
+        if nrows == 0 || ncols == 0 {
+            return Ok(());
+        }
+        let sum_buf = sum.wgpu_buffer()?.clone();
+        let normed_buf = normed.wgpu_buffer()?.clone();
+        let left_buf = left.wgpu_buffer()?.clone();
+        let right_buf = right.wgpu_buffer()?.clone();
+        let weight_buf = weight.wgpu_buffer()?.clone();
+        self.device.dispatch(
+            Kernel::AddNorm,
+            &[&sum_buf, &normed_buf, &left_buf, &right_buf, &weight_buf],
+            &params(&[param32(ncols)?, param32(nrows)?, epsilon.to_bits()]),
+            flat_grid(nrows)?,
+        )
+    }
+
+    /// Fused per-head RMS norm plus split-half rotary for query and key rows:
+    /// one workgroup per [token, head] slice. The cos/sin table is the same
+    /// host-computed layout `split_half_rotary` stages.
+    #[allow(clippy::too_many_arguments)]
+    pub fn qk_norm_rope(
+        &self,
+        query_out: &mut WgpuBuffer,
+        key_out: &mut WgpuBuffer,
+        query: &WgpuBuffer,
+        key: &WgpuBuffer,
+        query_weight: &WgpuBuffer,
+        key_weight: &WgpuBuffer,
+        positions: &[u64],
+        rope: RotarySpec,
+        key_value_heads: PackedHeadSpec,
+        epsilon: f32,
+    ) -> Result<()> {
+        self.check_operation(OperationKind::QkNormRope)?;
+        if !epsilon.is_finite() || epsilon <= 0.0 {
+            return Err(ExecutorError::InvalidArgument(
+                "RMS epsilon must be finite and positive",
+            ));
+        }
+        self.check_f32_buffer(query)?;
+        self.check_f32_buffer(key)?;
+        self.check_f32_buffer(query_weight)?;
+        self.check_f32_buffer(key_weight)?;
+        if key_value_heads.head_dim() != rope.heads().head_dim() {
+            return Err(ExecutorError::InvalidShape(
+                "RoPE head dimensions must match for query and key",
+            ));
+        }
+        let query_tokens = rope
+            .heads()
+            .validate_packed(query.descriptor.layout.shape())?;
+        let key_tokens = key_value_heads.validate_packed(key.descriptor.layout.shape())?;
+        if query_tokens != key_tokens {
+            return Err(ExecutorError::InvalidShape(
+                "RoPE query and key token counts differ",
+            ));
+        }
+        let token_count = usize::try_from(query_tokens)
+            .map_err(|_| ExecutorError::Overflow("RoPE token count exceeds usize"))?;
+        if positions.len() != token_count {
+            return Err(ExecutorError::InvalidShape(
+                "RoPE position count differs from token count",
+            ));
+        }
+        self.check_output_shape(query_out, query.descriptor.layout.shape())?;
+        self.check_output_shape(key_out, key.descriptor.layout.shape())?;
+        let head_dim = u64::from(rope.heads().head_dim());
+        if head_dim == 0 || head_dim > 512 {
+            return Err(ExecutorError::Unsupported(
+                "RoPE head dimension exceeds shared-memory bound",
+            ));
+        }
+        let head_dim_u64 = u64::from(rope.heads().head_dim());
+        for weight in [query_weight, key_weight] {
+            if weight.descriptor.layout.shape() != Shape::new(&[head_dim_u64])? {
+                return Err(ExecutorError::InvalidShape(
+                    "RoPE norm weight must have head_dim entries",
+                ));
+            }
+        }
+        if query_tokens == 0 {
+            return Ok(());
+        }
+        let table = self.upload_rope_table(positions, rope.heads().head_dim(), rope.theta())?;
+        let q_heads = u64::from(rope.heads().heads());
+        let kv_heads = u64::from(key_value_heads.heads());
+        let heads_total = q_heads
+            .checked_add(kv_heads)
+            .ok_or(ExecutorError::Overflow("RoPE head count overflows u64"))?;
+        let q_width = rope.heads().packed_width()?;
+        let kv_width = key_value_heads.packed_width()?;
+        let workgroups = query_tokens
+            .checked_mul(heads_total)
+            .ok_or(ExecutorError::Overflow(
+                "RoPE workgroup count overflows u64",
+            ))?;
+        let t = table.buffer.clone();
+        let qo = query_out.wgpu_buffer()?.clone();
+        let ko = key_out.wgpu_buffer()?.clone();
+        let q = query.wgpu_buffer()?.clone();
+        let k = key.wgpu_buffer()?.clone();
+        let qw = query_weight.wgpu_buffer()?.clone();
+        let kw = key_weight.wgpu_buffer()?.clone();
+        let result = self.device.dispatch(
+            Kernel::QkNormRope,
+            &[&t, &qo, &ko, &q, &k, &qw, &kw],
+            &params(&[
+                param32(q_heads)?,
+                param32(heads_total)?,
+                param32(head_dim)?,
+                param32(q_width)?,
+                param32(kv_width)?,
+                param32(query_tokens)?,
+                epsilon.to_bits(),
+            ]),
+            flat_grid(workgroups)?,
+        );
+        self.device.defer_free(table);
+        result
+    }
+
+    /// Host-computed split-half cos/sin table staged into a pooled scratch
+    /// buffer. Layout: `[tokens * half]` cosines then `[tokens * half]` sines,
+    /// evaluated at the same f64-to-f32 boundaries as the scalar reference.
+    fn upload_rope_table(&self, positions: &[u64], head_dim: u32, theta: f32) -> Result<PooledBuf> {
+        let tokens = u64::try_from(positions.len())
+            .map_err(|_| ExecutorError::Overflow("RoPE token count exceeds u64"))?;
+        let half = u64::from(head_dim) / 2;
+        let half_usize = usize::try_from(half)
+            .map_err(|_| ExecutorError::Overflow("RoPE half width exceeds usize"))?;
+        let table_len = usize::try_from(
+            tokens
+                .checked_mul(half)
+                .ok_or(ExecutorError::Overflow("RoPE table size overflows u64"))?,
+        )
+        .map_err(|_| ExecutorError::Overflow("RoPE table size exceeds usize"))?;
+        let mut table = Vec::new();
+        table
+            .try_reserve_exact(
+                table_len
+                    .checked_mul(2)
+                    .ok_or(ExecutorError::Overflow("RoPE table length overflows usize"))?,
+            )
+            .map_err(|_| ExecutorError::ResourceLimit("RoPE table allocation failed"))?;
+        table.resize(table_len * 2, 0.0_f32);
+        for (token, position) in positions.iter().copied().enumerate() {
+            #[allow(clippy::cast_precision_loss)]
+            let position_f32 = position as f32;
+            if !position_f32.is_finite() {
+                return Err(ExecutorError::InvalidArgument(
+                    "RoPE position is not representable as finite f32",
+                ));
+            }
+            for column in 0..half_usize {
+                #[allow(clippy::cast_precision_loss)]
+                let exponent = -2.0_f64 * (column as f64) / f64::from(head_dim);
+                #[allow(clippy::cast_possible_truncation)]
+                let frequency = (f64::from(theta).powf(exponent)) as f32;
+                let angle = position_f32 * frequency;
+                #[allow(clippy::cast_possible_truncation)]
+                let cos = f64::from(angle).cos() as f32;
+                #[allow(clippy::cast_possible_truncation)]
+                let sin = f64::from(angle).sin() as f32;
+                table[token * half_usize + column] = cos;
+                table[table_len + token * half_usize + column] = sin;
+            }
+        }
+        let scratch = self.device.alloc_storage(
+            u64::try_from(table.len())
+                .map_err(|_| ExecutorError::Overflow("RoPE table length overflows u64"))?
+                .checked_mul(4)
+                .ok_or(ExecutorError::Overflow("RoPE table bytes overflow u64"))?,
+        )?;
+        let mut bytes = Vec::with_capacity(table.len() * 4);
+        for value in &table {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        self.device.queue.write_buffer(&scratch.buffer, 0, &bytes);
+        Ok(scratch)
+    }
+
     /// Row RMS norm over a [rows, width] input and a [width] weight.
     pub fn row_rms_norm(
         &self,
@@ -1107,56 +1451,7 @@ impl WgpuBackend {
         if tokens == 0 || half == 0 {
             return Ok(());
         }
-        let half_usize = usize::try_from(half)
-            .map_err(|_| ExecutorError::Overflow("RoPE half width exceeds usize"))?;
-        let table_len = usize::try_from(
-            tokens
-                .checked_mul(half)
-                .ok_or(ExecutorError::Overflow("RoPE table size overflows u64"))?,
-        )
-        .map_err(|_| ExecutorError::Overflow("RoPE table size exceeds usize"))?;
-        let mut table = Vec::new();
-        table
-            .try_reserve_exact(
-                table_len
-                    .checked_mul(2)
-                    .ok_or(ExecutorError::Overflow("RoPE table length overflows usize"))?,
-            )
-            .map_err(|_| ExecutorError::ResourceLimit("RoPE table allocation failed"))?;
-        table.resize(table_len * 2, 0.0_f32);
-        for (token, position) in positions.iter().copied().enumerate() {
-            #[allow(clippy::cast_precision_loss)]
-            let position_f32 = position as f32;
-            if !position_f32.is_finite() {
-                return Err(ExecutorError::InvalidArgument(
-                    "RoPE position is not representable as finite f32",
-                ));
-            }
-            for column in 0..half_usize {
-                #[allow(clippy::cast_precision_loss)]
-                let exponent = -2.0_f64 * (column as f64) / f64::from(head_dim);
-                #[allow(clippy::cast_possible_truncation)]
-                let frequency = (f64::from(spec.theta()).powf(exponent)) as f32;
-                let angle = position_f32 * frequency;
-                #[allow(clippy::cast_possible_truncation)]
-                let cos = f64::from(angle).cos() as f32;
-                #[allow(clippy::cast_possible_truncation)]
-                let sin = f64::from(angle).sin() as f32;
-                table[token * half_usize + column] = cos;
-                table[table_len + token * half_usize + column] = sin;
-            }
-        }
-        let scratch = self.device.alloc_storage(
-            u64::try_from(table.len())
-                .map_err(|_| ExecutorError::Overflow("RoPE table length overflows u64"))?
-                .checked_mul(4)
-                .ok_or(ExecutorError::Overflow("RoPE table bytes overflow u64"))?,
-        )?;
-        let mut bytes = Vec::with_capacity(table.len() * 4);
-        for value in &table {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-        self.device.queue.write_buffer(&scratch.buffer, 0, &bytes);
+        let scratch = self.upload_rope_table(positions, head_dim, spec.theta())?;
         let groups = element_groups(
             tokens
                 .checked_mul(u64::from(heads))
@@ -1327,31 +1622,26 @@ impl WgpuBackend {
     pub fn gated_short_convolution(
         &self,
         output: &mut WgpuBuffer,
-        b: &WgpuBuffer,
-        c: &WgpuBuffer,
-        v: &WgpuBuffer,
+        projection: &WgpuBuffer,
         kernel: &WgpuBuffer,
         history: &mut WgpuBuffer,
         spec: GatedShortConvSpec,
     ) -> Result<()> {
         self.check_operation(OperationKind::GatedShortConvolution)?;
-        self.check_f32_buffer(b)?;
-        self.check_f32_buffer(c)?;
-        self.check_f32_buffer(v)?;
+        self.check_f32_buffer(projection)?;
         self.check_f32_buffer(kernel)?;
         self.check_f32_buffer(history)?;
-        let token_shape = b.descriptor.layout.shape();
-        if token_shape.rank() != 2 || token_shape.dim(1)? != u64::from(spec.hidden()) {
+        let hidden = u64::from(spec.hidden());
+        let projection_width = hidden.checked_mul(3).ok_or(ExecutorError::Overflow(
+            "short convolution projection width overflows u64",
+        ))?;
+        let projection_shape = projection.descriptor.layout.shape();
+        if projection_shape.rank() != 2 || projection_shape.dim(1)? != projection_width {
             return Err(ExecutorError::InvalidShape(
-                "short convolution B must be [tokens, hidden]",
+                "short convolution projection must be [tokens, 3 * hidden]",
             ));
         }
-        if c.descriptor.layout.shape() != token_shape || v.descriptor.layout.shape() != token_shape
-        {
-            return Err(ExecutorError::InvalidShape(
-                "short convolution B, C, and V layouts must match",
-            ));
-        }
+        let token_shape = Shape::new(&[projection_shape.dim(0)?, hidden])?;
         self.check_output_shape(output, token_shape)?;
         if kernel.descriptor.layout.shape()
             != Shape::new(&[u64::from(spec.hidden()), u64::from(spec.width())])?
@@ -1374,7 +1664,6 @@ impl WgpuBackend {
             ));
         }
         let tokens = token_shape.dim(0)?;
-        let hidden = u64::from(spec.hidden());
         let width = u64::from(spec.width());
         if tokens == 0 || hidden == 0 {
             return Ok(());
@@ -1402,23 +1691,31 @@ impl WgpuBackend {
         } else {
             None
         };
-        let hb = b.wgpu_buffer()?.clone();
-        let hc = c.wgpu_buffer()?.clone();
-        let hv = v.wgpu_buffer()?.clone();
+        let hp = projection.wgpu_buffer()?.clone();
         let hk = kernel.wgpu_buffer()?.clone();
         let hh = history.wgpu_buffer()?.clone();
         let destination = output.wgpu_buffer()?.clone();
         let result = (|| {
             self.device.dispatch(
                 Kernel::ConvGate,
-                &[&hh, &hb, &hv, &u_ext.buffer],
-                &params(&[param32(hist_elems)?, param32(ext_elems)?]),
+                &[&hh, &hp, &u_ext.buffer],
+                &params(&[
+                    param32(hist_elems)?,
+                    param32(ext_elems)?,
+                    param32(hidden)?,
+                    param32(projection_width)?,
+                ]),
                 flat_grid(element_groups(ext_elems))?,
             )?;
             self.device.dispatch(
                 Kernel::Conv,
-                &[&u_ext.buffer, &hk, &hc, &destination],
-                &params(&[param32(tokens)?, param32(hidden)?, param32(width)?]),
+                &[&u_ext.buffer, &hk, &hp, &destination],
+                &params(&[
+                    param32(tokens)?,
+                    param32(hidden)?,
+                    param32(width)?,
+                    param32(projection_width)?,
+                ]),
                 flat_grid(element_groups(token_elems))?,
             )
         })();
@@ -1712,14 +2009,12 @@ impl InferenceOps for WgpuBackend {
     fn gated_short_convolution(
         &self,
         output: &mut Self::Buffer,
-        b: &Self::Buffer,
-        c: &Self::Buffer,
-        v: &Self::Buffer,
+        projection: &Self::Buffer,
         kernel: &Self::Buffer,
         history: &mut Self::Buffer,
         spec: GatedShortConvSpec,
     ) -> Result<()> {
-        WgpuBackend::gated_short_convolution(self, output, b, c, v, kernel, history, spec)
+        WgpuBackend::gated_short_convolution(self, output, projection, kernel, history, spec)
     }
 
     fn swiglu(
@@ -1729,5 +2024,71 @@ impl InferenceOps for WgpuBackend {
         up: &Self::Buffer,
     ) -> Result<()> {
         WgpuBackend::swiglu(self, output, gate, up)
+    }
+
+    fn packed_linear_pair(
+        &self,
+        out_a: &mut Self::Buffer,
+        out_b: &mut Self::Buffer,
+        input: &Self::Buffer,
+        codes_a: &Self::Buffer,
+        scales_a: &Self::Buffer,
+        codes_b: &Self::Buffer,
+        scales_b: &Self::Buffer,
+    ) -> Result<()> {
+        WgpuBackend::packed_linear_pair(
+            self, out_a, out_b, input, codes_a, scales_a, codes_b, scales_b,
+        )
+    }
+
+    fn packed_swiglu_linear(
+        &self,
+        output: &mut Self::Buffer,
+        gate: &Self::Buffer,
+        up: &Self::Buffer,
+        codes: &Self::Buffer,
+        scales: &Self::Buffer,
+    ) -> Result<()> {
+        WgpuBackend::packed_swiglu_linear(self, output, gate, up, codes, scales)
+    }
+
+    fn add_row_rms_norm(
+        &self,
+        sum: &mut Self::Buffer,
+        normed: &mut Self::Buffer,
+        left: &Self::Buffer,
+        right: &Self::Buffer,
+        weight: &Self::Buffer,
+        epsilon: f32,
+    ) -> Result<()> {
+        WgpuBackend::add_row_rms_norm(self, sum, normed, left, right, weight, epsilon)
+    }
+
+    fn qk_norm_rope(
+        &self,
+        query_out: &mut Self::Buffer,
+        key_out: &mut Self::Buffer,
+        query: &Self::Buffer,
+        key: &Self::Buffer,
+        query_weight: &Self::Buffer,
+        key_weight: &Self::Buffer,
+        positions: &[u64],
+        rope: RotarySpec,
+        key_value_heads: PackedHeadSpec,
+        epsilon: f32,
+    ) -> Result<()> {
+        WgpuBackend::qk_norm_rope(
+            self,
+            query_out,
+            key_out,
+            query,
+            key,
+            query_weight,
+            key_weight,
+            positions,
+            rope,
+            key_value_heads,
+            epsilon,
+        )
     }
 }

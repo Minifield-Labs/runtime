@@ -257,6 +257,264 @@ fn main(
 }
 ";
 
+/// Paired packed ternary GEMV over one shared input: workgroup (i, j) computes
+/// `dst_a[i,j]` and `dst_b[i,j]` with independent accumulators over the same
+/// x row. Weight decode matches `PACKED_GEMV`; outputs share one `[m, n]`
+/// shape.
+const PACKED_GEMV_PAIR: &str = r"
+struct Params { p: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read_write> dst_a: array<f32>;
+@group(0) @binding(2) var<storage, read_write> dst_b: array<f32>;
+@group(0) @binding(3) var<storage, read_write> x: array<f32>;
+@group(0) @binding(4) var<storage, read_write> codes_a: array<u32>;
+@group(0) @binding(5) var<storage, read_write> scales_a: array<f32>;
+@group(0) @binding(6) var<storage, read_write> codes_b: array<u32>;
+@group(0) @binding(7) var<storage, read_write> scales_b: array<f32>;
+
+var<workgroup> sh_a: array<f32, 256>;
+var<workgroup> sh_b: array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let flat = flat_wg(wid, numw);
+    let n = pc.p.x;
+    let k = pc.p.y;
+    let m = pc.p.z;
+    if flat >= m * n { return; }
+    let i = flat / n;
+    let j = flat - i * n;
+    let tid = lid.x;
+    let code_words = k >> 4u;
+    let groups = k >> 7u;
+    let cabase = j * code_words;
+    let cbbase = j * code_words;
+    let sbase = j * groups;
+    let xbase = i * k;
+    var acc_a = 0.0;
+    var acc_b = 0.0;
+    for (var l = tid; l < k; l = l + 256u) {
+        let xv = x[xbase + l];
+        let word_a = codes_a[cabase + (l >> 4u)];
+        let word_b = codes_b[cbbase + (l >> 4u)];
+        let shift = ((l >> 2u) & 3u) << 3u;
+        let lane = (l & 3u) << 1u;
+        let code_a = (((word_a >> shift) & 0xFFu) >> lane) & 3u;
+        let code_b = (((word_b >> shift) & 0xFFu) >> lane) & 3u;
+        acc_a = acc_a + xv * (f32(i32(code_a) - 1) * scales_a[sbase + (l >> 7u)]);
+        acc_b = acc_b + xv * (f32(i32(code_b) - 1) * scales_b[sbase + (l >> 7u)]);
+    }
+    sh_a[tid] = acc_a;
+    sh_b[tid] = acc_b;
+    workgroupBarrier();
+    for (var s = 128u; s > 0u; s = s >> 1u) {
+        if tid < s {
+            sh_a[tid] = sh_a[tid] + sh_a[tid + s];
+            sh_b[tid] = sh_b[tid] + sh_b[tid + s];
+        }
+        workgroupBarrier();
+    }
+    if tid == 0u {
+        dst_a[i * n + j] = sh_a[0];
+        dst_b[i * n + j] = sh_b[0];
+    }
+}
+";
+
+/// Packed ternary GEMV over an on-the-fly SiLU(gate) * up activation:
+/// dst[i*n + j] = `sum_l` (silu(gate[i,l]) * up[i,l]) * (code(j,l) - 1) *
+/// scale(j, l/128). Same workgroup layout and decode as `PACKED_GEMV`.
+const PACKED_SWIGLU_GEMV: &str = r"
+struct Params { p: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<storage, read_write> gate: array<f32>;
+@group(0) @binding(3) var<storage, read_write> up: array<f32>;
+@group(0) @binding(4) var<storage, read_write> codes: array<u32>;
+@group(0) @binding(5) var<storage, read_write> scales: array<f32>;
+
+var<workgroup> sh: array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let flat = flat_wg(wid, numw);
+    let n = pc.p.x;
+    let k = pc.p.y;
+    let m = pc.p.z;
+    if flat >= m * n { return; }
+    let i = flat / n;
+    let j = flat - i * n;
+    let tid = lid.x;
+    let code_words = k >> 4u;
+    let groups = k >> 7u;
+    let cbase = j * code_words;
+    let sbase = j * groups;
+    let xbase = i * k;
+    var acc = 0.0;
+    for (var l = tid; l < k; l = l + 256u) {
+        let g = gate[xbase + l];
+        let sigmoid = 1.0 / (1.0 + exp(-g));
+        let xv = (g * sigmoid) * up[xbase + l];
+        let word = codes[cbase + (l >> 4u)];
+        let byte = (word >> (((l >> 2u) & 3u) << 3u)) & 0xFFu;
+        let code = (byte >> ((l & 3u) << 1u)) & 3u;
+        acc = acc + xv * (f32(i32(code) - 1) * scales[sbase + (l >> 7u)]);
+    }
+    sh[tid] = acc;
+    workgroupBarrier();
+    for (var s = 128u; s > 0u; s = s >> 1u) {
+        if tid < s { sh[tid] = sh[tid] + sh[tid + s]; }
+        workgroupBarrier();
+    }
+    if tid == 0u {
+        dst[i * n + j] = sh[0];
+    }
+}
+";
+
+/// Fused residual add plus row RMS norm: `sum[r,c] = a[r,c] + b[r,c]` then
+/// `normed[r,c] = sum[r,c] * rsqrt(mean(sum[r,:]^2) + eps) * alpha[c]`.
+/// One workgroup per row; the two passes share one dispatch.
+const ADD_NORM: &str = r"
+struct Params { p: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read_write> sum: array<f32>;
+@group(0) @binding(2) var<storage, read_write> normed: array<f32>;
+@group(0) @binding(3) var<storage, read_write> a: array<f32>;
+@group(0) @binding(4) var<storage, read_write> b: array<f32>;
+@group(0) @binding(5) var<storage, read_write> alpha: array<f32>;
+
+var<workgroup> sh: array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let row = flat_wg(wid, numw);
+    let tid = lid.x;
+    let ncols = pc.p.x;
+    let nrows = pc.p.y;
+    if row >= nrows { return; }
+    let eps = bitcast<f32>(pc.p.z);
+    let base = row * ncols;
+
+    var acc = 0.0;
+    for (var c = tid; c < ncols; c = c + 256u) {
+        let v = a[base + c] + b[base + c];
+        sum[base + c] = v;
+        acc = acc + v * v;
+    }
+    sh[tid] = acc;
+    workgroupBarrier();
+    for (var s = 128u; s > 0u; s = s >> 1u) {
+        if tid < s { sh[tid] = sh[tid] + sh[tid + s]; }
+        workgroupBarrier();
+    }
+    let mean = sh[0] / f32(ncols);
+    let scale = inverseSqrt(mean + eps);
+    workgroupBarrier();
+
+    for (var c = tid; c < ncols; c = c + 256u) {
+        normed[base + c] = scale * sum[base + c] * alpha[c];
+    }
+}
+";
+
+/// Fused per-head RMS norm plus split-half rotary for query and key rows.
+/// Workgroup `w` handles one [token, head] slice: `w / heads_total` is the
+/// token, heads `0..q_heads` map to query, the rest to key. The normed head
+/// is staged in shared memory so both rotation halves read final values.
+/// `table` is the same host cos/sin layout `ROTARY` uses; `head_dim <= 512`.
+const QK_NORM_ROPE: &str = r"
+struct Params { p0: vec4<u32>, p1: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read_write> table: array<f32>;
+@group(0) @binding(2) var<storage, read_write> q_out: array<f32>;
+@group(0) @binding(3) var<storage, read_write> k_out: array<f32>;
+@group(0) @binding(4) var<storage, read_write> q: array<f32>;
+@group(0) @binding(5) var<storage, read_write> k: array<f32>;
+@group(0) @binding(6) var<storage, read_write> qw: array<f32>;
+@group(0) @binding(7) var<storage, read_write> kw: array<f32>;
+
+var<workgroup> sh: array<f32, 256>;
+var<workgroup> nd: array<f32, 512>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let w = flat_wg(wid, numw);
+    let tid = lid.x;
+    let q_heads = pc.p0.x;
+    let heads_total = pc.p0.y;
+    let head_dim = pc.p0.z;
+    let half = head_dim >> 1u;
+    let q_width = pc.p0.w;
+    let kv_width = pc.p1.x;
+    let tokens = pc.p1.y;
+    let eps = bitcast<f32>(pc.p1.z);
+    if w >= tokens * heads_total { return; }
+    let t = w / heads_total;
+    let h = w - t * heads_total;
+    let is_q = h < q_heads;
+    let head = select(h - q_heads, h, is_q);
+    let width = select(kv_width, q_width, is_q);
+    let base = t * width + head * head_dim;
+
+    var acc = 0.0;
+    for (var d = tid; d < head_dim; d = d + 256u) {
+        let v = select(k[base + d], q[base + d], is_q);
+        acc = acc + v * v;
+        nd[d] = v;
+    }
+    sh[tid] = acc;
+    workgroupBarrier();
+    for (var s = 128u; s > 0u; s = s >> 1u) {
+        if tid < s { sh[tid] = sh[tid] + sh[tid + s]; }
+        workgroupBarrier();
+    }
+    let scale = inverseSqrt(sh[0] / f32(head_dim) + eps);
+    workgroupBarrier();
+    for (var d = tid; d < head_dim; d = d + 256u) {
+        let wv = select(kw[d], qw[d], is_q);
+        nd[d] = nd[d] * scale * wv;
+    }
+    workgroupBarrier();
+
+    let table_len = tokens * half;
+    for (var c = tid; c < half; c = c + 256u) {
+        let cs = t * half + c;
+        let co = table[cs];
+        let si = table[table_len + cs];
+        let a = nd[c];
+        let bv = nd[half + c];
+        let i1 = base + c;
+        let i2 = base + half + c;
+        let r1 = a * co - bv * si;
+        let r2 = bv * co + a * si;
+        if is_q {
+            q_out[i1] = r1;
+            q_out[i2] = r2;
+        } else {
+            k_out[i1] = r1;
+            k_out[i2] = r2;
+        }
+    }
+}
+";
+
 /// Tiled shared-memory GEMM for m > 1: dst[i,j] = `sum_l` x[i,l] * w[j,l].
 /// Tiles are 16x16; the weight tile is transposed on load because W is packed
 /// [n, k] while the tile needs [k, n]. Grid: (ceil(n/16), ceil(m/16) split over
@@ -506,14 +764,14 @@ fn main(
 ";
 
 /// Gate + history concatenation for the gated short convolution.
-/// `u_ext[i]` is `history[i]` for `i < hist_elems`, else `b[j] * v[j]`.
+/// `u_ext[i]` is `history[i]` for `i < hist_elems`, else `b[j] * v[j]` read
+/// from the fused `[tokens, 3 * hidden]` projection at offsets `{0, 2h}`.
 const CONV_GATE: &str = r"
 struct Params { p: vec4<u32> };
 @group(0) @binding(0) var<uniform> pc: Params;
 @group(0) @binding(1) var<storage, read_write> hist: array<f32>;
-@group(0) @binding(2) var<storage, read_write> b: array<f32>;
-@group(0) @binding(3) var<storage, read_write> v: array<f32>;
-@group(0) @binding(4) var<storage, read_write> u_ext: array<f32>;
+@group(0) @binding(2) var<storage, read_write> proj: array<f32>;
+@group(0) @binding(3) var<storage, read_write> u_ext: array<f32>;
 
 @compute @workgroup_size(256)
 fn main(
@@ -524,24 +782,30 @@ fn main(
     let i = flat_wg(wid, numw) * 256u + lid.x;
     let hist_elems = pc.p.x;
     let total = pc.p.y;
+    let hidden = pc.p.z;
+    let stride = pc.p.w;
     if i >= total { return; }
     if i < hist_elems {
         u_ext[i] = hist[i];
     } else {
         let j = i - hist_elems;
-        u_ext[i] = b[j] * v[j];
+        let t = j / hidden;
+        let c = j - t * hidden;
+        let base = t * stride + c;
+        u_ext[i] = proj[base] * proj[base + 2u * hidden];
     }
 }
 ";
 
 /// Depthwise gated short convolution over the concatenated history + gate rows.
-/// `dst[t*hidden + c]` is `cgate[t,c]` times the tapped sum over `u_ext` rows.
+/// `dst[t*hidden + c]` is `proj[t, h + c]` (the fused C gate) times the tapped
+/// sum over `u_ext` rows.
 const CONV: &str = r"
 struct Params { p: vec4<u32> };
 @group(0) @binding(0) var<uniform> pc: Params;
 @group(0) @binding(1) var<storage, read_write> u_ext: array<f32>;
 @group(0) @binding(2) var<storage, read_write> kernel: array<f32>;
-@group(0) @binding(3) var<storage, read_write> cgate: array<f32>;
+@group(0) @binding(3) var<storage, read_write> proj: array<f32>;
 @group(0) @binding(4) var<storage, read_write> dst: array<f32>;
 
 @compute @workgroup_size(256)
@@ -554,6 +818,7 @@ fn main(
     let tokens = pc.p.x;
     let hidden = pc.p.y;
     let width = pc.p.z;
+    let stride = pc.p.w;
     if i >= tokens * hidden { return; }
     let t = i / hidden;
     let c = i - t * hidden;
@@ -561,7 +826,7 @@ fn main(
     for (var tap = 0u; tap < width; tap = tap + 1u) {
         acc = acc + kernel[c * width + tap] * u_ext[(t + tap) * hidden + c];
     }
-    dst[i] = acc * cgate[i];
+    dst[i] = acc * proj[t * stride + hidden + c];
 }
 ";
 
@@ -604,6 +869,10 @@ pub enum Kernel {
     SwiGlu,
     PackedGemv,
     PackedGather,
+    PackedGemvPair,
+    PackedSwigluGemv,
+    AddNorm,
+    QkNormRope,
 }
 
 impl Kernel {
@@ -624,6 +893,10 @@ impl Kernel {
             Self::SwiGlu => SWIGLU,
             Self::PackedGemv => PACKED_GEMV,
             Self::PackedGather => PACKED_GATHER,
+            Self::PackedGemvPair => PACKED_GEMV_PAIR,
+            Self::PackedSwigluGemv => PACKED_SWIGLU_GEMV,
+            Self::AddNorm => ADD_NORM,
+            Self::QkNormRope => QK_NORM_ROPE,
         };
         let mut source = String::with_capacity(WGSL_INDEX.len() + body.len() + 1);
         source.push_str(WGSL_INDEX);
@@ -641,9 +914,11 @@ impl Kernel {
             | Self::Gemm
             | Self::RmsNorm
             | Self::Rotary
+            | Self::ConvGate
             | Self::SwiGlu => 3,
-            Self::Gemv | Self::ConvGate | Self::Conv | Self::PackedGemv | Self::PackedGather => 4,
-            Self::Gqa => 7,
+            Self::Gemv | Self::Conv | Self::PackedGemv | Self::PackedGather => 4,
+            Self::AddNorm | Self::PackedSwigluGemv => 5,
+            Self::Gqa | Self::PackedGemvPair | Self::QkNormRope => 7,
         }
     }
 
@@ -663,6 +938,10 @@ impl Kernel {
             Self::SwiGlu => "swiglu",
             Self::PackedGemv => "packed_gemv",
             Self::PackedGather => "packed_gather",
+            Self::PackedGemvPair => "packed_gemv_pair",
+            Self::PackedSwigluGemv => "packed_swiglu_gemv",
+            Self::AddNorm => "add_norm",
+            Self::QkNormRope => "qk_norm_rope",
         }
     }
 }

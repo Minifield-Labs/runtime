@@ -1358,18 +1358,80 @@ impl InferenceOps for DeferredFenceBackend {
     fn gated_short_convolution(
         &self,
         output: &mut CpuBuffer,
-        b: &CpuBuffer,
-        c: &CpuBuffer,
-        v: &CpuBuffer,
+        projection: &CpuBuffer,
         kernel: &CpuBuffer,
         history: &mut CpuBuffer,
         spec: GatedShortConvSpec,
     ) -> Result<()> {
         self.cpu
-            .gated_short_convolution(output, b, c, v, kernel, history, spec)
+            .gated_short_convolution(output, projection, kernel, history, spec)
     }
     fn swiglu(&self, output: &mut CpuBuffer, gate: &CpuBuffer, up: &CpuBuffer) -> Result<()> {
         self.cpu.swiglu(output, gate, up)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn packed_linear_pair(
+        &self,
+        out_a: &mut CpuBuffer,
+        out_b: &mut CpuBuffer,
+        input: &CpuBuffer,
+        codes_a: &CpuBuffer,
+        scales_a: &CpuBuffer,
+        codes_b: &CpuBuffer,
+        scales_b: &CpuBuffer,
+    ) -> Result<()> {
+        self.cpu
+            .packed_linear_pair(out_a, out_b, input, codes_a, scales_a, codes_b, scales_b)
+    }
+    fn packed_swiglu_linear(
+        &self,
+        output: &mut CpuBuffer,
+        gate: &CpuBuffer,
+        up: &CpuBuffer,
+        codes: &CpuBuffer,
+        scales: &CpuBuffer,
+    ) -> Result<()> {
+        self.cpu
+            .packed_swiglu_linear(output, gate, up, codes, scales)
+    }
+    fn add_row_rms_norm(
+        &self,
+        sum: &mut CpuBuffer,
+        normed: &mut CpuBuffer,
+        left: &CpuBuffer,
+        right: &CpuBuffer,
+        weight: &CpuBuffer,
+        epsilon: f32,
+    ) -> Result<()> {
+        self.cpu
+            .add_row_rms_norm(sum, normed, left, right, weight, epsilon)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn qk_norm_rope(
+        &self,
+        query_out: &mut CpuBuffer,
+        key_out: &mut CpuBuffer,
+        query: &CpuBuffer,
+        key: &CpuBuffer,
+        query_weight: &CpuBuffer,
+        key_weight: &CpuBuffer,
+        positions: &[u64],
+        rope: RotarySpec,
+        key_value_heads: PackedHeadSpec,
+        epsilon: f32,
+    ) -> Result<()> {
+        self.cpu.qk_norm_rope(
+            query_out,
+            key_out,
+            query,
+            key,
+            query_weight,
+            key_weight,
+            positions,
+            rope,
+            key_value_heads,
+            epsilon,
+        )
     }
 }
 

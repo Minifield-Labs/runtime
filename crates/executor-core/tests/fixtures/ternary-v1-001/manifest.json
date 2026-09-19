@@ -1,0 +1,18 @@
+{
+  "fixture": "ternary-v1-001",
+  "format": "minifield.ternary.v1",
+  "purpose": "Hand-packed reference vectors for the packing and kernel gates in docs/ternary-format-v1.md.",
+  "files": {
+    "packed.safetensors": "demo.weight packed per v1 ([5,128] source -> codes [5,32] + scales [5,1]) plus dense.weight [5] F32 and __metadata__.",
+    "vectors.json": "Per-row input weights, expected codes (hex + list), expected scales, expected dequantized output.",
+    "manifest.json": "This file."
+  },
+  "row_behaviors": {
+    "0": "all-zero group: scale 0, all codes 1 (0x55 bytes)",
+    "1": "+d first half, -d second half: codes 2 then 0",
+    "2": "[d,-d,0,0.5d] quarter pattern: 0.5d rounds to +d (worked example in spec)",
+    "3": "rounding boundaries: -0.49d->0, -0.51d->-d, 0.49d->0, 0.51d->+d, 0.5d->+d",
+    "4": "non-unit fp16 scale d=1.5: [1.5,-1.5,0,0.75]->[d,-d,0,0.5d] same codes as row 2"
+  },
+  "notes": "Generated deterministically by a throwaway script. Asserts the spec byte order: weight j at bits 2*(j%4) of byte j/4."
+}

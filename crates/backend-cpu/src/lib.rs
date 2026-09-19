@@ -1094,16 +1094,13 @@ impl CpuBackend {
                 let input_start = row.checked_mul(inner).ok_or(ExecutorError::Overflow(
                     "packed input offset overflows usize",
                 ))?;
-                let mut accumulator = 0.0_f32;
-                for index in 0..inner {
-                    let group = index / 128;
-                    let within = index % 128;
-                    let code = (codes.bytes[code_start + group * 32 + within / 4]
-                        >> (2 * (within % 4)))
-                        & 0x3;
-                    let weight = (f32::from(code) - 1.0) * scales.values[scale_start + group];
-                    accumulator += input.values[input_start + index] * weight;
-                }
+                // SIMD group dot (NEON on aarch64, scalar elsewhere) computes
+                // the same products; only f32 accumulation order differs.
+                let accumulator = minifield_kernels_simd::ternary_row_dot(
+                    &codes.bytes[code_start..code_start + code_width],
+                    &scales.values[scale_start..scale_start + groups],
+                    &input.values[input_start..input_start + inner],
+                );
                 if !accumulator.is_finite() {
                     return Err(ExecutorError::BackendFailure(
                         "packed linear projection produced a non-finite value",

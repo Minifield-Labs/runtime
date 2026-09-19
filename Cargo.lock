@@ -439,6 +439,7 @@ name = "minifield-backend-cpu"
 version = "0.1.0"
 dependencies = [
  "minifield-engine-api",
+ "minifield-kernels-simd",
  "serde_json",
 ]
 
@@ -492,6 +493,10 @@ dependencies = [
  "serde_json",
  "sha2",
 ]
+
+[[package]]
+name = "minifield-kernels-simd"
+version = "0.1.0"
 
 [[package]]
 name = "minifield-text-generation"

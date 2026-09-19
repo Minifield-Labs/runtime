@@ -140,7 +140,12 @@ struct Params { p: vec4<u32> };
 @group(0) @binding(3) var<storage, read_write> w: array<f32>;
 @group(0) @binding(4) var<storage, read_write> w4: array<vec4<f32>>;
 
-var<workgroup> sh: array<f32, 256>;
+// Groups of `G` lanes each reduce one output row; the workgroup covers
+// `256/G` rows so narrow matrices still launch enough workgroups to fill the
+// GPU. Each lane strides the row's vec4 words so weight loads stay coalesced,
+// then one barrier hands each row's G partials to a single thread for a short
+// serial reduce. Replaces the per-output workgroup and its barrier tree.
+var<workgroup> part: array<f32, 256>;
 
 @compute @workgroup_size(256)
 fn main(
@@ -148,42 +153,51 @@ fn main(
     @builtin(num_workgroups) numw: vec3<u32>,
     @builtin(local_invocation_id) lid: vec3<u32>,
 ) {
-    let j = flat_wg(wid, numw);
-    let tid = lid.x;
     let n = pc.p.x;
     let k = pc.p.y;
-    if j >= n { return; }
-
-    let rbase = j * k;
+    let lanes = pc.p.z;
+    let rows_per_wg = 256u / lanes;
+    let row0 = flat_wg(wid, numw) * rows_per_wg;
+    let tid = lid.x;
+    let group = tid / lanes;
+    let lane = tid - group * lanes;
+    let j = row0 + group;
+    let k4 = k >> 2u;
+    let kbulk = k4 << 2u;
     var acc = 0.0;
-    if k >= 4u && (rbase & 3u) == 0u {
-        let k4 = k >> 2u;
-        let kbulk = k4 << 2u;
-        let base4 = rbase >> 2u;
-        for (var g = tid; g < k4; g = g + 256u) {
-            let rv = w4[base4 + g];
-            let l = g * 4u;
-            acc = acc + rv.x * x[l + 0u];
-            acc = acc + rv.y * x[l + 1u];
-            acc = acc + rv.z * x[l + 2u];
-            acc = acc + rv.w * x[l + 3u];
-        }
-        for (var l = kbulk + tid; l < k; l = l + 256u) {
-            acc = acc + x[l] * w[rbase + l];
-        }
-    } else {
-        for (var l = tid; l < k; l = l + 256u) {
-            acc = acc + x[l] * w[rbase + l];
+    if (j < n) {
+        let rbase = j * k;
+        if (rbase & 3u) == 0u {
+            let base4 = rbase >> 2u;
+            for (var g = lane; g < k4; g = g + lanes) {
+                let rv = w4[base4 + g];
+                let l = g << 2u;
+                acc = acc + rv.x * x[l];
+                acc = acc + rv.y * x[l + 1u];
+                acc = acc + rv.z * x[l + 2u];
+                acc = acc + rv.w * x[l + 3u];
+            }
+            for (var l = kbulk + lane; l < k; l = l + lanes) {
+                acc = acc + x[l] * w[rbase + l];
+            }
+        } else {
+            for (var l = lane; l < k; l = l + lanes) {
+                acc = acc + x[l] * w[rbase + l];
+            }
         }
     }
-    sh[tid] = acc;
+    part[tid] = acc;
     workgroupBarrier();
-    for (var s = 128u; s > 0u; s = s >> 1u) {
-        if tid < s { sh[tid] = sh[tid] + sh[tid + s]; }
-        workgroupBarrier();
-    }
-    if tid == 0u {
-        dst[j] = sh[0];
+    if (tid < rows_per_wg) {
+        let o = row0 + tid;
+        if (o < n) {
+            var s = 0.0;
+            let pbase = tid * lanes;
+            for (var l = 0u; l < lanes; l = l + 1u) {
+                s = s + part[pbase + l];
+            }
+            dst[o] = s;
+        }
     }
 }
 ";
@@ -195,14 +209,23 @@ fn main(
 /// Codes bind as u32 words over the byte stream: weight l lives in byte l/4
 /// of the row, i.e. bits [8*((l/4)%4) + 2*(l%4)] of word l/16.
 const PACKED_GEMV: &str = r"
-struct Params { p: vec4<u32> };
+struct Params { p: vec4<u32>, q: vec4<u32> };
 @group(0) @binding(0) var<uniform> pc: Params;
 @group(0) @binding(1) var<storage, read_write> dst: array<f32>;
 @group(0) @binding(2) var<storage, read_write> x: array<f32>;
 @group(0) @binding(3) var<storage, read_write> codes: array<u32>;
 @group(0) @binding(4) var<storage, read_write> scales: array<f32>;
+@group(0) @binding(5) var<storage, read_write> x4: array<vec4<f32>>;
 
-var<workgroup> sh: array<f32, 256>;
+// Groups of `G` lanes each reduce one output row; the workgroup covers
+// `256/G` rows so narrow matrices still launch enough workgroups to fill the
+// GPU. Each lane strides the row's u32 code words (16 weights per word), so
+// code loads are coalesced and each lane's activation reads form a contiguous
+// 64-byte chunk. The word's scale applies to its 16-weight dot once, matching
+// the CPU group-then-scale accumulation. One barrier, then each row's G
+// partials reduce serially on a single thread. Replaces the per-output
+// workgroup and its barrier tree.
+var<workgroup> part: array<f32, 256>;
 
 @compute @workgroup_size(256)
 fn main(
@@ -213,31 +236,62 @@ fn main(
     let flat = flat_wg(wid, numw);
     let n = pc.p.x;
     let k = pc.p.y;
-    let m = pc.p.z;
-    if flat >= m * n { return; }
-    let i = flat / n;
-    let j = flat - i * n;
+    let lanes = pc.p.z;
+    let tiles = pc.p.w;
+    let rows_per_wg = 256u / lanes;
+    let i = flat / tiles;
+    let row0 = (flat - i * tiles) * rows_per_wg;
     let tid = lid.x;
-    let code_words = k >> 4u;
-    let groups = k >> 7u;
-    let cbase = j * code_words;
-    let sbase = j * groups;
+    let group = tid / lanes;
+    let lane = tid - group * lanes;
+    let j = row0 + group;
+    let words = (k + 15u) >> 4u;
+    let groups = (k + 127u) >> 7u;
     let xbase = i * k;
     var acc = 0.0;
-    for (var l = tid; l < k; l = l + 256u) {
-        let word = codes[cbase + (l >> 4u)];
-        let byte = (word >> (((l >> 2u) & 3u) << 3u)) & 0xFFu;
-        let code = (byte >> ((l & 3u) << 1u)) & 3u;
-        acc = acc + x[xbase + l] * (f32(i32(code) - 1) * scales[sbase + (l >> 7u)]);
+    if (j < n) {
+        let cbase = j * words;
+        let sbase = j * groups;
+        let vec_ok = pc.q.x != 0u;
+        for (var w = lane; w < words; w = w + lanes) {
+            let word = codes[cbase + w];
+            let scale = scales[sbase + (w >> 3u)];
+            let base = w << 4u;
+            var dot = 0.0;
+            if (vec_ok && base + 16u <= k) {
+                // Whole word: four 128-bit activation loads cover 16 elements.
+                let b4 = (xbase + base) >> 2u;
+                for (var q = 0u; q < 4u; q = q + 1u) {
+                    let xv = x4[b4 + q];
+                    let sh = q << 3u;
+                    dot = dot
+                        + xv.x * f32(i32((word >> sh) & 3u) - 1)
+                        + xv.y * f32(i32((word >> (sh + 2u)) & 3u) - 1)
+                        + xv.z * f32(i32((word >> (sh + 4u)) & 3u) - 1)
+                        + xv.w * f32(i32((word >> (sh + 6u)) & 3u) - 1);
+                }
+            } else {
+                let count = k - base;
+                for (var e = 0u; e < count; e = e + 1u) {
+                    let code = (word >> (e * 2u)) & 3u;
+                    dot = dot + x[xbase + base + e] * f32(i32(code) - 1);
+                }
+            }
+            acc = acc + dot * scale;
+        }
     }
-    sh[tid] = acc;
+    part[tid] = acc;
     workgroupBarrier();
-    for (var s = 128u; s > 0u; s = s >> 1u) {
-        if tid < s { sh[tid] = sh[tid] + sh[tid + s]; }
-        workgroupBarrier();
-    }
-    if tid == 0u {
-        dst[i * n + j] = sh[0];
+    if (tid < rows_per_wg) {
+        let o = row0 + tid;
+        if (o < n) {
+            var s = 0.0;
+            let pbase = tid * lanes;
+            for (var l = 0u; l < lanes; l = l + 1u) {
+                s = s + part[pbase + l];
+            }
+            dst[i * n + o] = s;
+        }
     }
 }
 ";
@@ -346,12 +400,143 @@ fn main(
 }
 ";
 
+/// Argmax stage 1 for wide rows: each workgroup reduces one 2048-element
+/// block of a row to a `(value, first-index)` partial in `partials`. A
+/// non-finite element in the block writes NaN, which stage 2 propagates. The
+/// single-workgroup `ARGMAX` path is kept for narrow rows.
+const ARGMAX_BLOCKS: &str = r"
+struct Params { p: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read_write> partials: array<vec2<f32>>;
+@group(0) @binding(2) var<storage, read_write> src: array<f32>;
+
+var<workgroup> sh_v: array<f32, 256>;
+var<workgroup> sh_i: array<u32, 256>;
+var<workgroup> sh_b: array<u32, 256>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let flat = flat_wg(wid, numw);
+    let cols = pc.p.y;
+    let blocks = pc.p.z;
+    let row = flat / blocks;
+    let block = flat - row * blocks;
+    if row >= pc.p.x { return; }
+    let tid = lid.x;
+    let row_base = row * cols;
+    let start = block * 2048u;
+    let stop = min(start + 2048u, cols);
+    var best = bitcast<f32>(0xFF800000u);
+    var idx = 0u;
+    var bad = 0u;
+    for (var c = start + tid; c < stop; c = c + 256u) {
+        let v = src[row_base + c];
+        if v == v && abs(v) <= 3.4028234663852886e38 {
+            if v > best {
+                best = v;
+                idx = c;
+            }
+        } else {
+            bad = 1u;
+        }
+    }
+    sh_v[tid] = best;
+    sh_i[tid] = idx;
+    sh_b[tid] = bad;
+    workgroupBarrier();
+    for (var s = 128u; s > 0u; s = s >> 1u) {
+        if tid < s {
+            let ov = sh_v[tid + s];
+            let oi = sh_i[tid + s];
+            if ov > sh_v[tid] || (ov == sh_v[tid] && oi < sh_i[tid]) {
+                sh_v[tid] = ov;
+                sh_i[tid] = oi;
+            }
+            sh_b[tid] = sh_b[tid] | sh_b[tid + s];
+        }
+        workgroupBarrier();
+    }
+    if tid == 0u {
+        if sh_b[0] != 0u {
+            partials[flat] = vec2<f32>(bitcast<f32>(0x7FC00000u), 0.0);
+        } else {
+            partials[flat] = vec2<f32>(sh_v[0], f32(sh_i[0]));
+        }
+    }
+}
+";
+
+/// Argmax stage 2: one workgroup per row reduces the stage-1 partials to the
+/// row's first strict maximum index, or NaN when any partial is NaN.
+const ARGMAX_FINAL: &str = r"
+struct Params { p: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<storage, read_write> partials: array<vec2<f32>>;
+
+var<workgroup> sh_v: array<f32, 256>;
+var<workgroup> sh_i: array<u32, 256>;
+var<workgroup> sh_b: array<u32, 256>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let row = flat_wg(wid, numw);
+    let blocks = pc.p.z;
+    if row >= pc.p.x { return; }
+    let tid = lid.x;
+    let base = row * blocks;
+    var best = bitcast<f32>(0xFF800000u);
+    var idx = 0u;
+    var bad = 0u;
+    for (var b = tid; b < blocks; b = b + 256u) {
+        let p = partials[base + b];
+        if p.x != p.x {
+            bad = 1u;
+        } else if p.x > best || (p.x == best && u32(p.y) < idx) {
+            best = p.x;
+            idx = u32(p.y);
+        }
+    }
+    sh_v[tid] = best;
+    sh_i[tid] = idx;
+    sh_b[tid] = bad;
+    workgroupBarrier();
+    for (var s = 128u; s > 0u; s = s >> 1u) {
+        if tid < s {
+            let ov = sh_v[tid + s];
+            let oi = sh_i[tid + s];
+            if ov > sh_v[tid] || (ov == sh_v[tid] && oi < sh_i[tid]) {
+                sh_v[tid] = ov;
+                sh_i[tid] = oi;
+            }
+            sh_b[tid] = sh_b[tid] | sh_b[tid + s];
+        }
+        workgroupBarrier();
+    }
+    if tid == 0u {
+        if sh_b[0] != 0u {
+            dst[row] = bitcast<f32>(0x7FC00000u);
+        } else {
+            dst[row] = f32(sh_i[0]);
+        }
+    }
+}
+";
+
 /// Paired packed ternary GEMV over one shared input: workgroup (i, j) computes
 /// `dst_a[i,j]` and `dst_b[i,j]` with independent accumulators over the same
 /// x row. Weight decode matches `PACKED_GEMV`; outputs share one `[m, n]`
 /// shape.
 const PACKED_GEMV_PAIR: &str = r"
-struct Params { p: vec4<u32> };
+struct Params { p: vec4<u32>, q: vec4<u32> };
 @group(0) @binding(0) var<uniform> pc: Params;
 @group(0) @binding(1) var<storage, read_write> dst_a: array<f32>;
 @group(0) @binding(2) var<storage, read_write> dst_b: array<f32>;
@@ -360,9 +545,13 @@ struct Params { p: vec4<u32> };
 @group(0) @binding(5) var<storage, read_write> scales_a: array<f32>;
 @group(0) @binding(6) var<storage, read_write> codes_b: array<u32>;
 @group(0) @binding(7) var<storage, read_write> scales_b: array<f32>;
+@group(0) @binding(8) var<storage, read_write> x4: array<vec4<f32>>;
 
-var<workgroup> sh_a: array<f32, 256>;
-var<workgroup> sh_b: array<f32, 256>;
+// Same lane-grouped layout as `PACKED_GEMV`: each group of `G` lanes reduces
+// one output row for both weight sets, so the shared x stream is read once
+// per element for both dots. `part` holds the A partials in [0, 256) and the
+// B partials in [256, 512); one barrier, then each row's thread reduces both.
+var<workgroup> part: array<f32, 512>;
 
 @compute @workgroup_size(256)
 fn main(
@@ -373,60 +562,99 @@ fn main(
     let flat = flat_wg(wid, numw);
     let n = pc.p.x;
     let k = pc.p.y;
-    let m = pc.p.z;
-    if flat >= m * n { return; }
-    let i = flat / n;
-    let j = flat - i * n;
+    let lanes = pc.p.z;
+    let tiles = pc.p.w;
+    let rows_per_wg = 256u / lanes;
+    let i = flat / tiles;
+    let row0 = (flat - i * tiles) * rows_per_wg;
     let tid = lid.x;
-    let code_words = k >> 4u;
-    let groups = k >> 7u;
-    let cabase = j * code_words;
-    let cbbase = j * code_words;
-    let sbase = j * groups;
+    let group = tid / lanes;
+    let lane = tid - group * lanes;
+    let j = row0 + group;
+    let words = (k + 15u) >> 4u;
+    let groups = (k + 127u) >> 7u;
     let xbase = i * k;
     var acc_a = 0.0;
     var acc_b = 0.0;
-    for (var l = tid; l < k; l = l + 256u) {
-        let xv = x[xbase + l];
-        let word_a = codes_a[cabase + (l >> 4u)];
-        let word_b = codes_b[cbbase + (l >> 4u)];
-        let shift = ((l >> 2u) & 3u) << 3u;
-        let lane = (l & 3u) << 1u;
-        let code_a = (((word_a >> shift) & 0xFFu) >> lane) & 3u;
-        let code_b = (((word_b >> shift) & 0xFFu) >> lane) & 3u;
-        acc_a = acc_a + xv * (f32(i32(code_a) - 1) * scales_a[sbase + (l >> 7u)]);
-        acc_b = acc_b + xv * (f32(i32(code_b) - 1) * scales_b[sbase + (l >> 7u)]);
-    }
-    sh_a[tid] = acc_a;
-    sh_b[tid] = acc_b;
-    workgroupBarrier();
-    for (var s = 128u; s > 0u; s = s >> 1u) {
-        if tid < s {
-            sh_a[tid] = sh_a[tid] + sh_a[tid + s];
-            sh_b[tid] = sh_b[tid] + sh_b[tid + s];
+    if (j < n) {
+        let cbase = j * words;
+        let sbase = j * groups;
+        let vec_ok = pc.q.x != 0u;
+        for (var w = lane; w < words; w = w + lanes) {
+            let word_a = codes_a[cbase + w];
+            let word_b = codes_b[cbase + w];
+            let scale_a = scales_a[sbase + (w >> 3u)];
+            let scale_b = scales_b[sbase + (w >> 3u)];
+            let base = w << 4u;
+            var dot_a = 0.0;
+            var dot_b = 0.0;
+            if (vec_ok && base + 16u <= k) {
+                let b4 = (xbase + base) >> 2u;
+                for (var q = 0u; q < 4u; q = q + 1u) {
+                    let xv = x4[b4 + q];
+                    let sh = q << 3u;
+                    let ca0 = f32(i32((word_a >> sh) & 3u) - 1);
+                    let ca1 = f32(i32((word_a >> (sh + 2u)) & 3u) - 1);
+                    let ca2 = f32(i32((word_a >> (sh + 4u)) & 3u) - 1);
+                    let ca3 = f32(i32((word_a >> (sh + 6u)) & 3u) - 1);
+                    let cb0 = f32(i32((word_b >> sh) & 3u) - 1);
+                    let cb1 = f32(i32((word_b >> (sh + 2u)) & 3u) - 1);
+                    let cb2 = f32(i32((word_b >> (sh + 4u)) & 3u) - 1);
+                    let cb3 = f32(i32((word_b >> (sh + 6u)) & 3u) - 1);
+                    dot_a = dot_a + xv.x * ca0 + xv.y * ca1 + xv.z * ca2 + xv.w * ca3;
+                    dot_b = dot_b + xv.x * cb0 + xv.y * cb1 + xv.z * cb2 + xv.w * cb3;
+                }
+            } else {
+                let count = k - base;
+                for (var e = 0u; e < count; e = e + 1u) {
+                    let xv = x[xbase + base + e];
+                    let code_a = (word_a >> (e * 2u)) & 3u;
+                    let code_b = (word_b >> (e * 2u)) & 3u;
+                    dot_a = dot_a + xv * f32(i32(code_a) - 1);
+                    dot_b = dot_b + xv * f32(i32(code_b) - 1);
+                }
+            }
+            acc_a = acc_a + dot_a * scale_a;
+            acc_b = acc_b + dot_b * scale_b;
         }
-        workgroupBarrier();
     }
-    if tid == 0u {
-        dst_a[i * n + j] = sh_a[0];
-        dst_b[i * n + j] = sh_b[0];
+    part[tid] = acc_a;
+    part[256u + tid] = acc_b;
+    workgroupBarrier();
+    if (tid < rows_per_wg) {
+        let o = row0 + tid;
+        if (o < n) {
+            var s_a = 0.0;
+            var s_b = 0.0;
+            let pbase = tid * lanes;
+            for (var l = 0u; l < lanes; l = l + 1u) {
+                s_a = s_a + part[pbase + l];
+                s_b = s_b + part[256u + pbase + l];
+            }
+            dst_a[i * n + o] = s_a;
+            dst_b[i * n + o] = s_b;
+        }
     }
 }
 ";
 
 /// Packed ternary GEMV over an on-the-fly SiLU(gate) * up activation:
 /// dst[i*n + j] = `sum_l` (silu(gate[i,l]) * up[i,l]) * (code(j,l) - 1) *
-/// scale(j, l/128). Same workgroup layout and decode as `PACKED_GEMV`.
+/// scale(j, l/128). Same lane-grouped layout as `PACKED_GEMV`; the activation
+/// is computed inline from coalesced gate/up loads so no shared staging or
+/// extra barrier is needed.
 const PACKED_SWIGLU_GEMV: &str = r"
-struct Params { p: vec4<u32> };
+struct Params { p: vec4<u32>, q: vec4<u32> };
 @group(0) @binding(0) var<uniform> pc: Params;
 @group(0) @binding(1) var<storage, read_write> dst: array<f32>;
 @group(0) @binding(2) var<storage, read_write> gate: array<f32>;
 @group(0) @binding(3) var<storage, read_write> up: array<f32>;
 @group(0) @binding(4) var<storage, read_write> codes: array<u32>;
 @group(0) @binding(5) var<storage, read_write> scales: array<f32>;
+@group(0) @binding(6) var<storage, read_write> gate4: array<vec4<f32>>;
+@group(0) @binding(7) var<storage, read_write> up4: array<vec4<f32>>;
 
-var<workgroup> sh: array<f32, 256>;
+var<workgroup> part: array<f32, 256>;
 
 @compute @workgroup_size(256)
 fn main(
@@ -437,34 +665,67 @@ fn main(
     let flat = flat_wg(wid, numw);
     let n = pc.p.x;
     let k = pc.p.y;
-    let m = pc.p.z;
-    if flat >= m * n { return; }
-    let i = flat / n;
-    let j = flat - i * n;
+    let lanes = pc.p.z;
+    let tiles = pc.p.w;
+    let rows_per_wg = 256u / lanes;
+    let i = flat / tiles;
+    let row0 = (flat - i * tiles) * rows_per_wg;
     let tid = lid.x;
-    let code_words = k >> 4u;
-    let groups = k >> 7u;
-    let cbase = j * code_words;
-    let sbase = j * groups;
+    let group = tid / lanes;
+    let lane = tid - group * lanes;
+    let j = row0 + group;
+    let words = (k + 15u) >> 4u;
+    let groups = (k + 127u) >> 7u;
     let xbase = i * k;
     var acc = 0.0;
-    for (var l = tid; l < k; l = l + 256u) {
-        let g = gate[xbase + l];
-        let sigmoid = 1.0 / (1.0 + exp(-g));
-        let xv = (g * sigmoid) * up[xbase + l];
-        let word = codes[cbase + (l >> 4u)];
-        let byte = (word >> (((l >> 2u) & 3u) << 3u)) & 0xFFu;
-        let code = (byte >> ((l & 3u) << 1u)) & 3u;
-        acc = acc + xv * (f32(i32(code) - 1) * scales[sbase + (l >> 7u)]);
+    if (j < n) {
+        let cbase = j * words;
+        let sbase = j * groups;
+        let vec_ok = pc.q.x != 0u;
+        for (var w = lane; w < words; w = w + lanes) {
+            let word = codes[cbase + w];
+            let scale = scales[sbase + (w >> 3u)];
+            let base = w << 4u;
+            var dot = 0.0;
+            if (vec_ok && base + 16u <= k) {
+                let b4 = (xbase + base) >> 2u;
+                for (var q = 0u; q < 4u; q = q + 1u) {
+                    let g = gate4[b4 + q];
+                    let sigmoid = vec4(1.0) / (vec4(1.0) + exp(-g));
+                    let xv = (g * sigmoid) * up4[b4 + q];
+                    let sh = q << 3u;
+                    dot = dot
+                        + xv.x * f32(i32((word >> sh) & 3u) - 1)
+                        + xv.y * f32(i32((word >> (sh + 2u)) & 3u) - 1)
+                        + xv.z * f32(i32((word >> (sh + 4u)) & 3u) - 1)
+                        + xv.w * f32(i32((word >> (sh + 6u)) & 3u) - 1);
+                }
+            } else {
+                let count = k - base;
+                for (var e = 0u; e < count; e = e + 1u) {
+                    let l = xbase + base + e;
+                    let g = gate[l];
+                    let sigmoid = 1.0 / (1.0 + exp(-g));
+                    let xv = (g * sigmoid) * up[l];
+                    let code = (word >> (e * 2u)) & 3u;
+                    dot = dot + xv * f32(i32(code) - 1);
+                }
+            }
+            acc = acc + dot * scale;
+        }
     }
-    sh[tid] = acc;
+    part[tid] = acc;
     workgroupBarrier();
-    for (var s = 128u; s > 0u; s = s >> 1u) {
-        if tid < s { sh[tid] = sh[tid] + sh[tid + s]; }
-        workgroupBarrier();
-    }
-    if tid == 0u {
-        dst[i * n + j] = sh[0];
+    if (tid < rows_per_wg) {
+        let o = row0 + tid;
+        if (o < n) {
+            var s = 0.0;
+            let pbase = tid * lanes;
+            for (var l = 0u; l < lanes; l = l + 1u) {
+                s = s + part[pbase + l];
+            }
+            dst[i * n + o] = s;
+        }
     }
 }
 ";
@@ -919,6 +1180,43 @@ fn main(
 }
 ";
 
+/// Fused single-token gated short convolution. Computes u = B * V for the new
+/// token, the tapped conv sum scaled by the C gate, and writes the shifted
+/// history `hist_out = [hist rows 1..m | u]` so the caller can swap it into the
+/// history buffer without same-buffer copies.
+const CONV_STEP: &str = r"
+struct Params { p: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read_write> hist: array<f32>;
+@group(0) @binding(2) var<storage, read_write> proj: array<f32>;
+@group(0) @binding(3) var<storage, read_write> kern: array<f32>;
+@group(0) @binding(4) var<storage, read_write> hist_out: array<f32>;
+@group(0) @binding(5) var<storage, read_write> dst: array<f32>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let c = flat_wg(wid, numw) * 256u + lid.x;
+    let hidden = pc.p.x;
+    let m = pc.p.y;
+    let stride = pc.p.z;
+    if c >= hidden { return; }
+    let u = proj[c] * proj[c + 2u * hidden];
+    var acc = kern[c * (m + 1u) + m] * u;
+    for (var j = 0u; j < m; j = j + 1u) {
+        acc = acc + kern[c * (m + 1u) + j] * hist[j * hidden + c];
+    }
+    dst[c] = acc * proj[hidden + c];
+    for (var r = 0u; r + 1u < m; r = r + 1u) {
+        hist_out[r * hidden + c] = hist[(r + 1u) * hidden + c];
+    }
+    hist_out[(m - 1u) * hidden + c] = u;
+}
+";
+
 /// `SiLU`(gate) * up over equal contiguous layouts.
 const SWIGLU: &str = r"
 struct Params { p: vec4<u32> };
@@ -955,6 +1253,7 @@ pub enum Kernel {
     Gqa,
     ConvGate,
     Conv,
+    ConvStep,
     SwiGlu,
     PackedGemv,
     PackedGather,
@@ -963,6 +1262,8 @@ pub enum Kernel {
     AddNorm,
     QkNormRope,
     Argmax,
+    ArgmaxBlocks,
+    ArgmaxFinal,
 }
 
 impl Kernel {
@@ -980,6 +1281,7 @@ impl Kernel {
             Self::Gqa => GQA,
             Self::ConvGate => CONV_GATE,
             Self::Conv => CONV,
+            Self::ConvStep => CONV_STEP,
             Self::SwiGlu => SWIGLU,
             Self::PackedGemv => PACKED_GEMV,
             Self::PackedGather => PACKED_GATHER,
@@ -988,6 +1290,8 @@ impl Kernel {
             Self::AddNorm => ADD_NORM,
             Self::QkNormRope => QK_NORM_ROPE,
             Self::Argmax => ARGMAX,
+            Self::ArgmaxBlocks => ARGMAX_BLOCKS,
+            Self::ArgmaxFinal => ARGMAX_FINAL,
         };
         let mut source = String::with_capacity(WGSL_INDEX.len() + body.len() + 1);
         source.push_str(WGSL_INDEX);
@@ -999,7 +1303,7 @@ impl Kernel {
     pub const fn storage_bindings(self) -> u32 {
         match self {
             Self::Fill => 1,
-            Self::Argmax | Self::Copy2d => 2,
+            Self::Argmax | Self::ArgmaxBlocks | Self::ArgmaxFinal | Self::Copy2d => 2,
             Self::Binary
             | Self::Gather
             | Self::Gemm
@@ -1007,9 +1311,10 @@ impl Kernel {
             | Self::Rotary
             | Self::ConvGate
             | Self::SwiGlu => 3,
-            Self::Gemv | Self::Conv | Self::PackedGemv | Self::PackedGather => 4,
-            Self::AddNorm | Self::PackedSwigluGemv => 5,
-            Self::Gqa | Self::PackedGemvPair | Self::QkNormRope => 7,
+            Self::Gemv | Self::Conv | Self::PackedGather => 4,
+            Self::AddNorm | Self::ConvStep | Self::PackedGemv => 5,
+            Self::Gqa | Self::PackedSwigluGemv | Self::QkNormRope => 7,
+            Self::PackedGemvPair => 8,
         }
     }
 
@@ -1026,6 +1331,7 @@ impl Kernel {
             Self::Gqa => "gqa",
             Self::ConvGate => "conv_gate",
             Self::Conv => "conv",
+            Self::ConvStep => "conv_step",
             Self::SwiGlu => "swiglu",
             Self::PackedGemv => "packed_gemv",
             Self::PackedGather => "packed_gather",
@@ -1034,6 +1340,8 @@ impl Kernel {
             Self::AddNorm => "add_norm",
             Self::QkNormRope => "qk_norm_rope",
             Self::Argmax => "argmax",
+            Self::ArgmaxBlocks => "argmax_blocks",
+            Self::ArgmaxFinal => "argmax_final",
         }
     }
 }

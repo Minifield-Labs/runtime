@@ -1046,6 +1046,18 @@ pub trait InferenceOps {
         self.allocate_f32_classified(shape, AllocationClass::Scratch)
     }
 
+    /// Allocate f32 storage whose initial contents are unspecified. Callers
+    /// must fully overwrite the buffer before any consumer reads it. The
+    /// default forwards to the zero-initializing classified allocation;
+    /// backends that pay a per-allocation zeroing cost can override it.
+    fn allocate_f32_uninit(
+        &mut self,
+        shape: Shape,
+        class: AllocationClass,
+    ) -> Result<Self::Buffer> {
+        self.allocate_f32_classified(shape, class)
+    }
+
     /// Upload transient work storage. Model/prefix loaders must use the classified form.
     fn upload_f32(&mut self, shape: Shape, values: &[f32]) -> Result<Self::Buffer> {
         self.upload_f32_classified(shape, values, AllocationClass::Scratch)
@@ -1590,9 +1602,11 @@ pub trait TokenExecutor {
     fn sampled_token(&mut self, prefix: &Self::Prefix) -> Result<Option<TokenId>>;
     /// Append the token currently reported by `sampled_token`. The sampled id
     /// stays backend-resident through the embedding gather, so greedy decode
-    /// never reads a full logits row to the host. Returns `InvalidArgument`
-    /// when the prefix has no resolved greedy sample.
-    fn append_argmax(&mut self, prefix: &Self::Prefix) -> Result<Self::Append>;
+    /// never reads a full logits row to the host. Takes the prefix by value:
+    /// when the caller hands over the last reference, implementations may
+    /// reuse its cache storage in place instead of deep-copying it. Returns
+    /// `InvalidArgument` when the prefix has no resolved greedy sample.
+    fn append_argmax(&mut self, prefix: Self::Prefix) -> Result<Self::Append>;
     fn fork(&mut self, prefix: &Self::Prefix) -> Result<Self::Fork>;
     fn next_logits(&mut self, prefix: &Self::Prefix) -> Result<Self::Logits>;
     fn score_candidates(

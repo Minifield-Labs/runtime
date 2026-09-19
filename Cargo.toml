@@ -3,6 +3,7 @@ members = [
     "engines/engine-api",
     "engines/backend-wgpu",
     "crates/backend-cpu",
+    "crates/kernels-simd",
     "crates/executor-core",
     "crates/text-tokenizer",
     "crates/text-generation",

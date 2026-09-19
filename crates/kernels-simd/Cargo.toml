@@ -1,0 +1,22 @@
+[package]
+name = "minifield-kernels-simd"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Platform SIMD kernels for the packed ternary weight path"
+
+# Workspace lints forbid unsafe_code, which cannot be lowered inside a member
+# crate. This crate opts out of workspace lints and instead denies unsafe at
+# the crate level, with an explicit per-module allow on each intrinsics
+# implementation. That keeps the default strong and scopes unsafe to reviewed
+# SIMD code only.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"

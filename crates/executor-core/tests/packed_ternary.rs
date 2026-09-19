@@ -1,13 +1,14 @@
 //! T4 packed ternary path: `packed_linear`/`packed_gather_rows` must equal the
 //! dequantized `minifield.ternary.v1` weights through the dense f32 ops, and a
-//! fully packed LFM2 model must produce bit-identical logits to the same
+//! fully packed LFM2 model must produce matching logits to the same
 //! dequantized weights through the dense executor.
 //!
 //! The kernel vectors come from the committed `ternary-v1-001` fixture. The
 //! end-to-end check builds a tiny packed + dequantized-dense safetensors pair
-//! in memory, so no large artifacts are committed. Equality is bitwise: the
-//! packed kernel computes `(code - 1) * scale` in the same accumulation order
-//! as the dense matvec, and the fixture's decoded scales feed both sides.
+//! in memory, so no large artifacts are committed. Gather is bitwise (decode
+//! only); linear uses a declared tolerance because the SIMD kernel accumulates
+//! f32 in a different order than the dense matvec. All products are exact, so
+//! only reorder error is possible.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -33,6 +34,23 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 const VECTORS: &str = include_str!("fixtures/ternary-v1-001/vectors.json");
+
+/// SIMD accumulation reorders the f32 sum; products are exact so only reorder
+/// error is possible. Generous vs observed ~1e-6, tight vs a real weight bug.
+const REORDER_TOLERANCE: f32 = 1e-4;
+
+fn assert_within_reorder(actual: &[f32], expected: &[f32], context: &str) {
+    assert_eq!(actual.len(), expected.len(), "{context}: length");
+    let max_delta = actual
+        .iter()
+        .zip(expected)
+        .map(|(a, e)| (a - e).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        max_delta <= REORDER_TOLERANCE,
+        "{context}: max|delta| {max_delta} exceeds {REORDER_TOLERANCE}"
+    );
+}
 
 fn digest(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
@@ -172,10 +190,10 @@ fn packed_linear_and_gather_match_dequantized_reference() {
         .expect("packed linear");
         cpu.linear(&mut dense_out, &input_buffer, &dense_buffer)
             .expect("dense linear");
-        assert_eq!(
+        assert_within_reorder(
             packed_out.as_slice(),
             dense_out.as_slice(),
-            "row {row} packed_linear diverged"
+            &format!("row {row} packed_linear diverged"),
         );
 
         // packed_gather_rows must equal the dequantized row bitwise.
@@ -239,10 +257,10 @@ fn packed_linear_multiple_groups_per_row() {
     .expect("packed linear");
     cpu.linear(&mut dense_out, &input_buffer, &dense_buffer)
         .expect("dense linear");
-    assert_eq!(
+    assert_within_reorder(
         packed_out.as_slice(),
         dense_out.as_slice(),
-        "multi-group packed_linear diverged"
+        "multi-group packed_linear diverged",
     );
 }
 
@@ -585,9 +603,10 @@ fn packed_executor_matches_dequantized_dense_executor() {
         let mut dl = dense_exec.next_logits(&dense_prefix).expect("logits");
         let packed_logits = ready(&mut pl);
         let dense_logits = ready(&mut dl);
-        assert_eq!(
-            packed_logits, dense_logits,
-            "step {step}: packed executor logits diverged from dequantized dense"
+        assert_within_reorder(
+            &packed_logits,
+            &dense_logits,
+            &format!("step {step}: packed executor logits diverged from dequantized dense"),
         );
     }
 }

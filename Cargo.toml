@@ -9,6 +9,7 @@ members = [
     "crates/text-generation",
     "crates/infer-cli",
     "engines/decoding-protocol",
+    "web",
 ]
 exclude = [
     "engines/quant-reference",

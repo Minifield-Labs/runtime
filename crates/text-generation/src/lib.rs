@@ -7,7 +7,8 @@
 use core::fmt;
 
 use minifield_engine_api::{
-    CompletionPoll, ExecutorError, InferenceCompletion, TokenChunk, TokenExecutor, TokenId,
+    CompletionPoll, DecodeConstraint, ExecutorError, InferenceCompletion, TokenChunk,
+    TokenExecutor, TokenId,
 };
 use minifield_text_tokenizer::{EncodeOptions, Tokenizer, TokenizerError};
 
@@ -170,6 +171,43 @@ where
     E: TokenExecutor,
     C: Cancellation,
 {
+    generate_impl(executor, tokenizer, request, None, cancellation)
+}
+
+/// `generate` under a per-step token constraint: before each sampled step the
+/// constraint's bitset gates the executor's argmax, so only an allowed id can
+/// be emitted. Stop-token handling is unchanged: a constraint that allows the
+/// stop id when complete lets generation end naturally.
+///
+/// # Errors
+///
+/// Same as [`generate`], plus `Unsupported` when the executor has no masked
+/// prefill/append implementation.
+pub fn generate_constrained<E, C>(
+    executor: &mut E,
+    tokenizer: &Tokenizer,
+    request: &GenerationRequest<'_>,
+    constraint: &mut dyn DecodeConstraint,
+    cancellation: &mut C,
+) -> Result<GenerationResult, GenerationError>
+where
+    E: TokenExecutor,
+    C: Cancellation,
+{
+    generate_impl(executor, tokenizer, request, Some(constraint), cancellation)
+}
+
+fn generate_impl<E, C>(
+    executor: &mut E,
+    tokenizer: &Tokenizer,
+    request: &GenerationRequest<'_>,
+    mut constraint: Option<&mut dyn DecodeConstraint>,
+    cancellation: &mut C,
+) -> Result<GenerationResult, GenerationError>
+where
+    E: TokenExecutor,
+    C: Cancellation,
+{
     if request.policy != GenerationPolicy::Greedy {
         return Err(GenerationError::Executor(ExecutorError::Unsupported(
             "only greedy generation is implemented",
@@ -191,7 +229,12 @@ where
         });
     }
 
-    let mut prefill = executor.prefill(TokenChunk::all(&input_ids))?;
+    let mut prefill = match constraint.as_deref_mut() {
+        Some(constraint) => {
+            executor.prefill_masked(TokenChunk::all(&input_ids), constraint.allowed())?
+        }
+        None => executor.prefill(TokenChunk::all(&input_ids))?,
+    };
     let mut prefix = complete(&mut prefill, cancellation)?;
     let mut generated_ids = Vec::new();
     let mut decoded = tokenizer.streaming_decoder(request.skip_special_tokens);
@@ -229,7 +272,13 @@ where
         if cancellation.is_cancelled() {
             return Err(GenerationError::Cancelled);
         }
-        let mut append_task = executor.append_argmax(prefix)?;
+        let mut append_task = match constraint.as_deref_mut() {
+            Some(constraint) => {
+                constraint.advance(next_id);
+                executor.append_argmax_masked(prefix, constraint.allowed())?
+            }
+            None => executor.append_argmax(prefix)?,
+        };
         let candidate_prefix = complete(&mut append_task, cancellation)?;
         prefix = candidate_prefix;
         decoded = candidate_decoder;

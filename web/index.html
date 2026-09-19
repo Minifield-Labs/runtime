@@ -52,6 +52,11 @@
     cursor: pointer;
   }
   button:disabled { opacity: 0.45; cursor: default; }
+  button.ghost {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
   input[type="number"] {
     width: 72px;
     background: #101114;
@@ -61,6 +66,17 @@
     padding: 8px 10px;
     font: inherit;
   }
+  input[type="text"] {
+    flex: 1;
+    min-width: 120px;
+    background: #101114;
+    color: var(--fg);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font: inherit;
+  }
+  input:focus { outline: none; border-color: var(--accent); }
   #status { color: var(--dim); white-space: pre-wrap; }
   #status .ok { color: var(--accent); }
   #out {
@@ -95,7 +111,10 @@
   <textarea id="prompt">The meeting has been moved to</textarea>
   <div class="row">
     <button id="go" disabled>Generate</button>
-    <span>max tokens</span>
+    <button id="goJson" disabled class="ghost">Tool call</button>
+    <input id="tools" type="text" value="create_task, archive_task, reorder_list, assign_owner"
+      title="registered tool names, comma-separated">
+    <span>max</span>
     <input id="max" type="number" value="80" min="1" max="400">
     <span id="status">loading&hellip;</span>
   </div>

@@ -1047,6 +1047,15 @@ impl WgpuBackend {
     /// device. `V` must be at most `1 << 24` so indices stay exactly
     /// representable.
     pub fn argmax(&self, output: &mut WgpuBuffer, input: &WgpuBuffer) -> Result<()> {
+        self.argmax_impl(output, input, None)
+    }
+
+    fn argmax_impl(
+        &self,
+        output: &mut WgpuBuffer,
+        input: &WgpuBuffer,
+        mask: Option<&PooledBuf>,
+    ) -> Result<()> {
         self.check_operation(OperationKind::Argmax)?;
         self.check_f32_buffer(input)?;
         let input_shape = input.descriptor.layout.shape();
@@ -1066,11 +1075,22 @@ impl WgpuBackend {
         }
         let source = input.wgpu_buffer()?.clone();
         let destination = output.wgpu_buffer()?.clone();
+        // The unmasked path rebinds `source` at the `allow` slot (both are
+        // read-only, so the alias is legal) and clears the mask flag.
+        let (mask_binding, use_mask) = match mask {
+            Some(scratch) => (scratch.buffer.clone(), 1_u32),
+            None => (source.clone(), 0_u32),
+        };
         if columns <= 2048 {
             return self.device.dispatch(
                 Kernel::Argmax,
-                &[&destination, &source],
-                &params(&[param32(rows)?, param32(columns)?, 0, f32::NAN.to_bits()]),
+                &[&destination, &source, &mask_binding],
+                &params(&[
+                    param32(rows)?,
+                    param32(columns)?,
+                    use_mask,
+                    f32::NAN.to_bits(),
+                ]),
                 flat_grid(rows)?,
             );
         }
@@ -1087,12 +1107,13 @@ impl WgpuBackend {
         )?;
         let result = self.device.dispatch(
             Kernel::ArgmaxBlocks,
-            &[&partials.buffer, &source],
+            &[&partials.buffer, &source, &mask_binding],
             &params(&[
                 param32(rows)?,
                 param32(columns)?,
                 param32(blocks)?,
                 f32::NAN.to_bits(),
+                use_mask,
             ]),
             flat_grid(
                 rows.checked_mul(blocks)
@@ -1115,6 +1136,38 @@ impl WgpuBackend {
             flat_grid(rows)?,
         );
         self.device.defer_free(partials);
+        result
+    }
+
+    /// Masked variant of [`Self::argmax`]: only positions whose bit is set in
+    /// `mask` (LSB-first u64 words, `ceil(columns / 64)` long) are candidates.
+    /// Masked-out values are skipped entirely, so their NaN or infinity cannot
+    /// poison the row; a row with no allowed candidate yields NaN.
+    pub fn argmax_masked(
+        &self,
+        output: &mut WgpuBuffer,
+        input: &WgpuBuffer,
+        mask: &[u64],
+    ) -> Result<()> {
+        let columns = input.descriptor.layout.shape().dim(1).unwrap_or(0);
+        let words = usize::try_from(columns)
+            .map_err(|_| ExecutorError::Overflow("argmax width exceeds usize"))?
+            .div_ceil(64);
+        if mask.len() != words {
+            return Err(ExecutorError::InvalidArgument(
+                "argmax mask length must be ceil(width / 64)",
+            ));
+        }
+        let bytes = u64::try_from(mask.len() * 8)
+            .map_err(|_| ExecutorError::Overflow("argmax mask bytes overflow u64"))?;
+        let scratch = self.device.alloc_storage(bytes)?;
+        let mut raw = Vec::with_capacity(mask.len() * 8);
+        for word in mask {
+            raw.extend_from_slice(&word.to_le_bytes());
+        }
+        self.device.queue.write_buffer(&scratch.buffer, 0, &raw);
+        let result = self.argmax_impl(output, input, Some(&scratch));
+        self.device.defer_free(scratch);
         result
     }
 
@@ -2098,6 +2151,15 @@ impl InferenceOps for WgpuBackend {
 
     fn argmax(&self, output: &mut Self::Buffer, input: &Self::Buffer) -> Result<()> {
         WgpuBackend::argmax(self, output, input)
+    }
+
+    fn argmax_masked(
+        &self,
+        output: &mut Self::Buffer,
+        input: &Self::Buffer,
+        mask: &[u64],
+    ) -> Result<()> {
+        WgpuBackend::argmax_masked(self, output, input, mask)
     }
 
     fn add(

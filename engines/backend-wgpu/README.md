@@ -33,8 +33,14 @@ host-table split-half RoPE, per-token causal GQA with recorded cache appends,
 gated short convolution (single-dispatch `conv_step` for decode; staged
 history assembly for multi-token prefill), SwiGLU, packed ternary GEMV /
 pair / SwiGLU / gather, fused add-RMS-norm, fused QK-norm+RoPE, and a
-two-stage argmax for wide rows. Grids flatten workgroup IDs so n up to 65_536
-and beyond fits WebGPU's 65_535 workgroups-per-dimension limit.
+two-stage argmax for wide rows. `argmax_masked` adds a read-only u32
+candidate bitset binding (LSB-first over `ceil(width / 64)` u64 words on the
+host) gated by a params flag: masked-out elements are skipped before the
+finiteness check, so their NaN or infinity cannot poison the row, and a fully
+masked row yields NaN. The unmasked path rebinds the logits buffer at the
+mask slot and clears the flag, so both paths share one pipeline. Grids
+flatten workgroup IDs so n up to 65_536 and beyond fits WebGPU's 65_535
+workgroups-per-dimension limit.
 
 ## Diagnostics
 

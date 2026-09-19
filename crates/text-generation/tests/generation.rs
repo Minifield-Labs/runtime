@@ -1,11 +1,13 @@
 use std::collections::VecDeque;
+use std::rc::Rc;
 
 use minifield_engine_api::{
-    CandidateScore, ExecutorError, ReadyCompletion, Result as ExecutorResult, TokenChunk,
-    TokenExecutor, TokenId,
+    CandidateScore, DecodeConstraint, ExecutorError, ReadyCompletion, Result as ExecutorResult,
+    TokenChunk, TokenExecutor, TokenId,
 };
 use minifield_text_generation::{
     GenerationError, GenerationPolicy, GenerationRequest, NeverCancel, StopReason, generate,
+    generate_constrained,
 };
 use minifield_text_tokenizer::{MODEL_VOCAB_SIZE, Tokenizer, TokenizerLimits};
 
@@ -16,6 +18,8 @@ struct FakeExecutor {
     logits: VecDeque<ExecutorResult<Vec<f32>>>,
     appended: Vec<TokenId>,
     pending_sample: Option<TokenId>,
+    pending_mask: Option<Rc<[u64]>>,
+    masked_calls: usize,
     prefill_calls: usize,
     logits_calls: usize,
     fail_append: bool,
@@ -27,6 +31,8 @@ impl FakeExecutor {
             logits: logits.into(),
             appended: Vec::new(),
             pending_sample: None,
+            pending_mask: None,
+            masked_calls: 0,
             prefill_calls: 0,
             logits_calls: 0,
             fail_append: false,
@@ -44,7 +50,19 @@ impl TokenExecutor for FakeExecutor {
 
     fn prefill(&mut self, input: TokenChunk<'_>) -> ExecutorResult<Self::Prefill> {
         self.prefill_calls += 1;
+        self.pending_mask = None;
         Ok(ReadyCompletion::new(Ok(Prefix(input.ids.to_vec()))))
+    }
+
+    fn prefill_masked(
+        &mut self,
+        input: TokenChunk<'_>,
+        mask: Rc<[u64]>,
+    ) -> ExecutorResult<Self::Prefill> {
+        self.masked_calls += 1;
+        let result = self.prefill(input);
+        self.pending_mask = Some(mask);
+        result
     }
 
     fn append_known(
@@ -71,21 +89,32 @@ impl TokenExecutor for FakeExecutor {
             .unwrap_or(Err(ExecutorError::BackendFailure(
                 "unexpected logits request",
             )))?;
-        let mut best_id = 0_u32;
-        let mut best = logits[0];
-        if !best.is_finite() {
-            return Err(ExecutorError::BackendFailure("non-finite test logit"));
-        }
-        for (index, &value) in logits.iter().enumerate().skip(1) {
+        let mask = self.pending_mask.take();
+        let mut best_id = None;
+        let mut best = f32::NEG_INFINITY;
+        for (index, &value) in logits.iter().enumerate() {
+            if let Some(mask) = &mask {
+                let allowed = mask
+                    .get(index / 64)
+                    .is_some_and(|word| word & (1_u64 << (index % 64)) != 0);
+                if !allowed {
+                    continue;
+                }
+            }
             if !value.is_finite() {
                 return Err(ExecutorError::BackendFailure("non-finite test logit"));
             }
-            if value > best {
+            if best_id.is_none() || value > best {
                 best = value;
-                best_id = u32::try_from(index)
-                    .map_err(|_| ExecutorError::Overflow("test logit index overflows u32"))?;
+                best_id = Some(
+                    u32::try_from(index)
+                        .map_err(|_| ExecutorError::Overflow("test logit index overflows u32"))?,
+                );
             }
         }
+        let best_id = best_id.ok_or(ExecutorError::BackendFailure(
+            "mask excluded every candidate",
+        ))?;
         self.pending_sample = Some(best_id);
         Ok(Some(best_id))
     }
@@ -102,10 +131,24 @@ impl TokenExecutor for FakeExecutor {
             .ok_or(ExecutorError::BackendFailure(
                 "append_argmax without a resolved sample",
             ))?;
+        self.pending_mask = None;
         let mut next = prefix.0.clone();
         next.push(token);
         self.appended.push(token);
         Ok(ReadyCompletion::new(Ok(Prefix(next))))
+    }
+
+    fn append_argmax_masked(
+        &mut self,
+        prefix: Self::Prefix,
+        mask: Rc<[u64]>,
+    ) -> ExecutorResult<Self::Append> {
+        self.masked_calls += 1;
+        let result = self.append_argmax(prefix);
+        if result.is_ok() {
+            self.pending_mask = Some(mask);
+        }
+        result
     }
 
     fn fork(&mut self, prefix: &Self::Prefix) -> ExecutorResult<Self::Fork> {
@@ -129,6 +172,35 @@ impl TokenExecutor for FakeExecutor {
         _candidates: &[&[TokenId]],
     ) -> ExecutorResult<Self::Scores> {
         Ok(ReadyCompletion::new(Ok(Vec::new())))
+    }
+}
+
+/// Test constraint allowing a fixed id set; records every advanced token.
+struct AllowList {
+    mask: Rc<[u64]>,
+    advanced: Vec<TokenId>,
+}
+
+impl AllowList {
+    fn new(ids: &[TokenId]) -> Self {
+        let mut mask = vec![0_u64; (MODEL_VOCAB_SIZE as usize).div_ceil(64)];
+        for &id in ids {
+            mask[id as usize / 64] |= 1_u64 << (id as usize % 64);
+        }
+        Self {
+            mask: mask.into(),
+            advanced: Vec::new(),
+        }
+    }
+}
+
+impl DecodeConstraint for AllowList {
+    fn allowed(&mut self) -> Rc<[u64]> {
+        Rc::clone(&self.mask)
+    }
+
+    fn advance(&mut self, token: TokenId) {
+        self.advanced.push(token);
     }
 }
 
@@ -306,4 +378,76 @@ fn cancellation_and_context_limits_are_checked_before_next_token() {
     );
     assert_eq!(bounded.prefill_calls, 1);
     assert_eq!(bounded.logits_calls, 0);
+}
+
+#[test]
+fn constrained_generate_skips_masked_out_argmax_winners() {
+    let tokenizer = tokenizer();
+    // Step 1: id 5 has the top logit but is masked out; id 2 wins instead.
+    // Step 2: the stop token wins and is allowed, so generation ends.
+    let mut executor = FakeExecutor::new(vec![
+        Ok(logits(&[(5, 2.0), (2, 1.0)])),
+        Ok(logits(&[(7, 1.0)])),
+    ]);
+    let mut constraint = AllowList::new(&[2, 7]);
+    let mut cancellation = NeverCancel;
+    let result = generate_constrained(
+        &mut executor,
+        &tokenizer,
+        &request("a", 3, &[7]),
+        &mut constraint,
+        &mut cancellation,
+    )
+    .unwrap_or_else(|error| panic!("constrained generation should succeed: {error}"));
+
+    assert_eq!(result.generated_ids, vec![2]);
+    assert_eq!(result.text, "b");
+    assert_eq!(result.stop_reason, StopReason::StopToken(7));
+    assert_eq!(executor.appended, vec![2]);
+    // prefill_masked plus one append_argmax_masked carried the mask.
+    assert_eq!(executor.masked_calls, 2);
+    assert_eq!(constraint.advanced, vec![2]);
+}
+
+#[test]
+fn constrained_generate_continues_when_the_stop_token_is_masked_out() {
+    let tokenizer = tokenizer();
+    let mut executor = FakeExecutor::new(vec![Ok(logits(&[(2, 1.0)])), Ok(logits(&[(2, 1.0)]))]);
+    let mut constraint = AllowList::new(&[2]);
+    let mut cancellation = NeverCancel;
+    let result = generate_constrained(
+        &mut executor,
+        &tokenizer,
+        &request("a", 2, &[7]),
+        &mut constraint,
+        &mut cancellation,
+    )
+    .unwrap_or_else(|error| panic!("constrained generation should succeed: {error}"));
+
+    assert_eq!(result.generated_ids, vec![2, 2]);
+    assert_eq!(result.stop_reason, StopReason::MaxOutputTokens);
+    // prefill_masked plus two append_argmax_masked calls.
+    assert_eq!(executor.masked_calls, 3);
+    assert_eq!(constraint.advanced, vec![2, 2]);
+}
+
+#[test]
+fn constrained_generate_surfaces_an_empty_candidate_row() {
+    let tokenizer = tokenizer();
+    let mut executor = FakeExecutor::new(vec![Ok(logits(&[(2, 1.0)]))]);
+    let mut constraint = AllowList::new(&[]);
+    let mut cancellation = NeverCancel;
+    let result = generate_constrained(
+        &mut executor,
+        &tokenizer,
+        &request("a", 1, &[7]),
+        &mut constraint,
+        &mut cancellation,
+    );
+    assert_eq!(
+        result,
+        Err(GenerationError::Executor(ExecutorError::BackendFailure(
+            "mask excluded every candidate"
+        )))
+    );
 }

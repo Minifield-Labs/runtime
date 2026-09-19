@@ -14,6 +14,7 @@ crate-type = ["cdylib", "rlib"]
 minifield-engine-api = { path = "../engines/engine-api" }
 minifield-backend-wgpu = { path = "../engines/backend-wgpu" }
 minifield-executor-core = { path = "../crates/executor-core" }
+minifield-json-grammar = { path = "../crates/json-grammar" }
 minifield-text-tokenizer = { path = "../crates/text-tokenizer" }
 wasm-bindgen = "=0.2.127"
 wasm-bindgen-futures = "=0.4.77"

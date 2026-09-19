@@ -4,7 +4,7 @@
 //! `MINIFIELD_LFM25_BUNDLE_DIR` or a usable GPU adapter.
 #![allow(clippy::cast_possible_truncation, clippy::expect_used)]
 
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, rc::Rc};
 
 use minifield_backend_cpu::CpuBackend;
 use minifield_backend_wgpu::WgpuBackend;
@@ -280,11 +280,93 @@ fn wgpu_packed_executor_matches_cpu_on_real_model() {
         .prefill(TokenChunk::all(&tokens[..1]))
         .expect("prefill");
     let mut prefix = ready(&mut prefill);
+    let mut unmasked_ids = vec![
+        gpu_exec
+            .sampled_token(&prefix)
+            .expect("sampled")
+            .expect("sample"),
+    ];
     let decode_start = std::time::Instant::now();
     for _ in 0..12 {
         let mut task = gpu_exec.append_argmax(prefix).expect("append_argmax");
         prefix = ready(&mut task);
+        unmasked_ids.push(
+            gpu_exec
+                .sampled_token(&prefix)
+                .expect("sampled")
+                .expect("sample"),
+        );
     }
     let decode = decode_start.elapsed();
     println!("wgpu packed append_argmax loop: 12 tokens in {decode:?}");
+
+    // Same loop under an all-ones mask: identical ids, per-step overhead is
+    // only the 8KB mask upload plus the argmax flag read.
+    let all_ones: Rc<[u64]> = vec![u64::MAX; 65_536_usize.div_ceil(64)].into();
+    let mut masked_prefill = gpu_exec
+        .prefill_masked(TokenChunk::all(&tokens[..1]), Rc::clone(&all_ones))
+        .expect("masked prefill");
+    let mut masked_prefix = ready(&mut masked_prefill);
+    let mut masked_ids = Vec::new();
+    masked_ids.push(
+        gpu_exec
+            .sampled_token(&masked_prefix)
+            .expect("sampled")
+            .expect("sample"),
+    );
+    let masked_start = std::time::Instant::now();
+    for _ in 0..12 {
+        let mut task = gpu_exec
+            .append_argmax_masked(masked_prefix, Rc::clone(&all_ones))
+            .expect("masked append_argmax");
+        masked_prefix = ready(&mut task);
+        masked_ids.push(
+            gpu_exec
+                .sampled_token(&masked_prefix)
+                .expect("sampled")
+                .expect("sample"),
+        );
+    }
+    let masked = masked_start.elapsed();
+    println!("wgpu packed append_argmax_masked loop: 12 tokens in {masked:?}");
+    assert_eq!(
+        masked_ids, unmasked_ids,
+        "all-ones mask must not change the greedy stream"
+    );
+
+    // Masked decode end to end: a mask allowing only id 42 must produce 42
+    // on both backends regardless of the logits. Mask width is the model
+    // vocab (65,536 ids -> 1,024 u64 words).
+    let mut words = vec![0_u64; 65_536_usize.div_ceil(64)];
+    words[42 / 64] |= 1_u64 << (42 % 64);
+    let only_42: Rc<[u64]> = words.into();
+
+    let mut gpu_prefill = gpu_exec
+        .prefill_masked(TokenChunk::all(&tokens[..1]), Rc::clone(&only_42))
+        .expect("gpu prefill_masked");
+    let mut gpu_prefix = ready(&mut gpu_prefill);
+    assert_eq!(
+        gpu_exec.sampled_token(&gpu_prefix).expect("gpu sampled"),
+        Some(42),
+        "gpu masked prefill must emit the only allowed id"
+    );
+    let mut gpu_append = gpu_exec
+        .append_argmax_masked(gpu_prefix, Rc::clone(&only_42))
+        .expect("gpu append_argmax_masked");
+    gpu_prefix = ready(&mut gpu_append);
+    assert_eq!(
+        gpu_exec.sampled_token(&gpu_prefix).expect("gpu sampled"),
+        Some(42),
+        "gpu masked append must emit the only allowed id"
+    );
+
+    let mut cpu_prefill = cpu_exec
+        .prefill_masked(TokenChunk::all(&tokens[..1]), Rc::clone(&only_42))
+        .expect("cpu prefill_masked");
+    let cpu_prefix = ready(&mut cpu_prefill);
+    assert_eq!(
+        cpu_exec.sampled_token(&cpu_prefix).expect("cpu sampled"),
+        Some(42),
+        "cpu masked prefill must emit the only allowed id"
+    );
 }

@@ -22,7 +22,9 @@ const FILES = {
 const status = document.getElementById("status");
 const out = document.getElementById("out");
 const go = document.getElementById("go");
+const goJson = document.getElementById("goJson");
 const prompt = document.getElementById("prompt");
+const tools = document.getElementById("tools");
 const max = document.getElementById("max");
 
 function fail(what, error) {
@@ -74,41 +76,50 @@ async function boot() {
     demo = await load(config, weights, tokenizer);
     status.innerHTML = `<span class="ok">model loaded in ${((performance.now() - t0) / 1000).toFixed(1)}s</span>`;
     go.disabled = false;
+    goJson.disabled = false;
   } catch (error) {
     fail("load failed", error);
   }
 }
 
-go.addEventListener("click", async () => {
-  go.disabled = true;
-  out.textContent = "";
-  const t0 = performance.now();
-  let tokens = 0;
-  try {
-    const stats = await demo.generate(
-      prompt.value,
-      Number(max.value),
-      (fragment, id) => {
-        const chip = document.createElement("span");
-        chip.className = "tok";
-        const idEl = document.createElement("span");
-        idEl.className = "id";
-        idEl.textContent = id;
-        chip.append(idEl, document.createTextNode(fragment || "∅"));
-        out.appendChild(chip);
-        tokens += 1;
-      },
-    );
-    const seconds = (performance.now() - t0) / 1000;
-    status.textContent =
-      `${stats.tokens} tokens in ${seconds.toFixed(1)}s ` +
-      `(${(stats.tokens / seconds).toFixed(1)} tok/s` +
-      `${stats.stopped ? ", EOS" : ""})`;
-  } catch (error) {
-    fail("generate failed", error);
-  } finally {
-    go.disabled = false;
-  }
-});
+function run(generate, label) {
+  return async () => {
+    go.disabled = true;
+    goJson.disabled = true;
+    out.textContent = "";
+    const t0 = performance.now();
+    try {
+      const stats = await generate(
+        prompt.value,
+        Number(max.value),
+        (fragment, id) => {
+          const chip = document.createElement("span");
+          chip.className = "tok";
+          const idEl = document.createElement("span");
+          idEl.className = "id";
+          idEl.textContent = id;
+          chip.append(idEl, document.createTextNode(fragment || "∅"));
+          out.appendChild(chip);
+        },
+      );
+      const seconds = (performance.now() - t0) / 1000;
+      status.textContent =
+        `${label} · ${stats.tokens} tokens in ${seconds.toFixed(1)}s ` +
+        `(${(stats.tokens / seconds).toFixed(1)} tok/s` +
+        `${stats.stopped ? ", stopped" : ""})`;
+    } catch (error) {
+      fail("generate failed", error);
+    } finally {
+      go.disabled = false;
+      goJson.disabled = false;
+    }
+  };
+}
+
+go.addEventListener("click", run((p, m, cb) => demo.generate(p, m, cb), "free"));
+goJson.addEventListener(
+  "click",
+  run((p, m, cb) => demo.generate_json(p, tools.value, m, cb), "tool"),
+);
 
 boot();

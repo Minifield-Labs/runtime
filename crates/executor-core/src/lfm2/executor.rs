@@ -555,6 +555,7 @@ fn append_token<B: InferenceOps>(
     state: &mut PrefixStorage<B>,
     token: TokenId,
     ids: TokenIds<'_, B>,
+    mask: Option<&[u64]>,
     scratch: &mut Vec<B::Buffer>,
 ) -> Result<()> {
     let config = context.config();
@@ -914,7 +915,10 @@ fn append_token<B: InferenceOps>(
         )?);
     }
     if let Some(sampled) = state.sampled.as_mut() {
-        backend.argmax(&mut sampled.buffer, &logits.buffer)?;
+        match mask {
+            Some(mask) => backend.argmax_masked(&mut sampled.buffer, &logits.buffer, mask)?,
+            None => backend.argmax(&mut sampled.buffer, &logits.buffer)?,
+        }
     }
     state.sampled_id = None;
     state.next_logits = Some(logits);
@@ -926,13 +930,20 @@ fn append_token<B: InferenceOps>(
 }
 
 enum PrefixAction<B: InferenceOps> {
-    Prefill(Vec<TokenId>),
+    Prefill {
+        tokens: Vec<TokenId>,
+        /// Allowed-token bitset applied to the final token's epilogue argmax.
+        mask: Option<Rc<[u64]>>,
+    },
     Append {
         tokens: Vec<TokenId>,
     },
     /// Single-token greedy append: the token is the source prefix's resolved
     /// argmax sample, embedded directly from its device-resident id buffer.
-    AppendArgmax,
+    AppendArgmax {
+        /// Allowed-token bitset applied to this step's epilogue argmax.
+        mask: Option<Rc<[u64]>>,
+    },
     Fork {
         source: Lfm2Prefix<B>,
     },
@@ -964,9 +975,21 @@ pub struct PrefixTask<B: InferenceOps> {
 
 impl<B: InferenceOps> PrefixTask<B> {
     fn prefill(context: Rc<ModelContext<B>>, tokens: Vec<TokenId>) -> Self {
+        Self::prefill_impl(context, tokens, None)
+    }
+
+    fn prefill_masked(context: Rc<ModelContext<B>>, tokens: Vec<TokenId>, mask: Rc<[u64]>) -> Self {
+        Self::prefill_impl(context, tokens, Some(mask))
+    }
+
+    fn prefill_impl(
+        context: Rc<ModelContext<B>>,
+        tokens: Vec<TokenId>,
+        mask: Option<Rc<[u64]>>,
+    ) -> Self {
         Self {
             context,
-            action: Some(PrefixAction::Prefill(tokens)),
+            action: Some(PrefixAction::Prefill { tokens, mask }),
             phase: PrefixPhase::New,
             staged: None,
             source: None,
@@ -992,9 +1015,25 @@ impl<B: InferenceOps> PrefixTask<B> {
     }
 
     fn append_argmax(context: Rc<ModelContext<B>>, source: Lfm2Prefix<B>) -> Self {
+        Self::append_argmax_impl(context, source, None)
+    }
+
+    fn append_argmax_masked(
+        context: Rc<ModelContext<B>>,
+        source: Lfm2Prefix<B>,
+        mask: Rc<[u64]>,
+    ) -> Self {
+        Self::append_argmax_impl(context, source, Some(mask))
+    }
+
+    fn append_argmax_impl(
+        context: Rc<ModelContext<B>>,
+        source: Lfm2Prefix<B>,
+        mask: Option<Rc<[u64]>>,
+    ) -> Self {
         Self {
             context,
-            action: Some(PrefixAction::AppendArgmax),
+            action: Some(PrefixAction::AppendArgmax { mask }),
             phase: PrefixPhase::New,
             staged: None,
             source: Some(source),
@@ -1069,7 +1108,7 @@ impl<B: InferenceOps> PrefixTask<B> {
             return Err(ExecutorError::CompletionConsumed);
         };
         match action {
-            PrefixAction::Prefill(tokens) => {
+            PrefixAction::Prefill { tokens, .. } => {
                 let mut backend = self.context.borrow_backend()?;
                 let staged = allocate_empty(&self.context, &mut *backend)?;
                 drop(backend);
@@ -1096,7 +1135,7 @@ impl<B: InferenceOps> PrefixTask<B> {
                 self.phase = PrefixPhase::Building;
                 Ok(None)
             }
-            PrefixAction::AppendArgmax => {
+            PrefixAction::AppendArgmax { .. } => {
                 let Some(source) = self.source.take() else {
                     return Err(ExecutorError::BackendFailure(
                         "append source was already consumed",
@@ -1171,17 +1210,29 @@ impl<B: InferenceOps> PrefixTask<B> {
             Device(TokenId, Tensor<B>),
         }
         self.context.validate_backend()?;
-        let step: Option<Step<B>> = match self.action.as_ref() {
-            Some(PrefixAction::Prefill(tokens) | PrefixAction::Append { tokens }) => {
-                tokens.get(self.next_token).copied().map(Step::Host)
+        // The mask constrains only the argmax that publishes the next greedy
+        // sample: for prefill that's the final prompt token's epilogue, for
+        // append_argmax the single appended token's.
+        let (step, mask): (Option<Step<B>>, Option<Rc<[u64]>>) = match self.action.as_ref() {
+            Some(PrefixAction::Prefill { tokens, mask }) => {
+                let last = self.next_token + 1 == tokens.len();
+                (
+                    tokens.get(self.next_token).copied().map(Step::Host),
+                    last.then(|| mask.clone()).flatten(),
+                )
             }
-            Some(PrefixAction::AppendArgmax) => {
+            Some(PrefixAction::Append { tokens }) => {
+                (tokens.get(self.next_token).copied().map(Step::Host), None)
+            }
+            Some(PrefixAction::AppendArgmax { mask }) => {
                 if self.next_token == 0 {
                     let staged = self.staged.as_mut().ok_or(ExecutorError::BackendFailure(
                         "staged prefix state is unavailable while building",
                     ))?;
                     match (staged.sampled_id, staged.sampled.take()) {
-                        (Some(id), Some(sampled)) => Some(Step::Device(id, sampled)),
+                        (Some(id), Some(sampled)) => {
+                            (Some(Step::Device(id, sampled)), mask.clone())
+                        }
                         _ => {
                             return Err(ExecutorError::BackendFailure(
                                 "append source lost its resolved greedy sample",
@@ -1189,7 +1240,7 @@ impl<B: InferenceOps> PrefixTask<B> {
                         }
                     }
                 } else {
-                    None
+                    (None, None)
                 }
             }
             Some(PrefixAction::Fork { .. }) | None => {
@@ -1206,6 +1257,7 @@ impl<B: InferenceOps> PrefixTask<B> {
                 "staged prefix state is unavailable while building",
             ));
         };
+        let mask = mask.as_deref();
         match step {
             Step::Host(token) => append_token(
                 &self.context,
@@ -1213,6 +1265,7 @@ impl<B: InferenceOps> PrefixTask<B> {
                 staged,
                 token,
                 TokenIds::Host(&[token]),
+                mask,
                 &mut self.scratch,
             )?,
             Step::Device(token, sampled) => {
@@ -1222,6 +1275,7 @@ impl<B: InferenceOps> PrefixTask<B> {
                     staged,
                     token,
                     TokenIds::Device(&sampled.buffer),
+                    mask,
                     &mut self.scratch,
                 )?;
                 // The embedding gather just read this id buffer; keep it alive
@@ -1238,13 +1292,13 @@ impl<B: InferenceOps> PrefixTask<B> {
             ))?;
         if matches!(
             self.action.as_ref(),
-            Some(PrefixAction::Prefill(tokens)) if self.next_token == tokens.len()
+            Some(PrefixAction::Prefill { tokens, .. }) if self.next_token == tokens.len()
         ) || matches!(
             self.action.as_ref(),
             Some(PrefixAction::Append { tokens }) if self.next_token == tokens.len()
         ) || matches!(
             self.action.as_ref(),
-            Some(PrefixAction::AppendArgmax) if self.next_token == 1
+            Some(PrefixAction::AppendArgmax { .. }) if self.next_token == 1
         ) {
             self.action = None;
             self.submit_fence()?;
@@ -1812,6 +1866,13 @@ impl<B: InferenceOps> TokenExecutor for Lfm2Executor<B> {
             self.accepted_tokens(input, 0)?,
         ))
     }
+    fn prefill_masked(&mut self, input: TokenChunk<'_>, mask: Rc<[u64]>) -> Result<Self::Prefill> {
+        Ok(PrefixTask::prefill_masked(
+            Rc::clone(&self.context),
+            self.accepted_tokens(input, 0)?,
+            mask,
+        ))
+    }
     fn append_known(
         &mut self,
         prefix: &Self::Prefix,
@@ -1836,6 +1897,23 @@ impl<B: InferenceOps> TokenExecutor for Lfm2Executor<B> {
             ));
         }
         Ok(PrefixTask::append_argmax(Rc::clone(&self.context), prefix))
+    }
+    fn append_argmax_masked(
+        &mut self,
+        prefix: Self::Prefix,
+        mask: Rc<[u64]>,
+    ) -> Result<Self::Append> {
+        self.context.validate_prefix(&prefix)?;
+        if prefix.storage.sampled.is_none() || prefix.storage.sampled_id.is_none() {
+            return Err(ExecutorError::InvalidArgument(
+                "prefix has no resolved greedy sample to append",
+            ));
+        }
+        Ok(PrefixTask::append_argmax_masked(
+            Rc::clone(&self.context),
+            prefix,
+            mask,
+        ))
     }
     fn fork(&mut self, prefix: &Self::Prefix) -> Result<Self::Fork> {
         self.context.validate_prefix(prefix)?;

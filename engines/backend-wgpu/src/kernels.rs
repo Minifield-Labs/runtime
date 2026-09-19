@@ -345,7 +345,8 @@ const ARGMAX: &str = r"
 struct Params { p: vec4<u32> };
 @group(0) @binding(0) var<uniform> pc: Params;
 @group(0) @binding(1) var<storage, read_write> dst: array<f32>;
-@group(0) @binding(2) var<storage, read_write> src: array<f32>;
+@group(0) @binding(2) var<storage, read> src: array<f32>;
+@group(0) @binding(3) var<storage, read> allow: array<u32>;
 
 var<workgroup> sh_v: array<f32, 256>;
 var<workgroup> sh_i: array<u32, 256>;
@@ -364,10 +365,14 @@ fn main(
     let base = row * cols;
     // Dawn rejects -inf/NaN bitcast constants; lowest f32 plus a sentinel
     // index preserves first-strict-max semantics, and NaN rides pc.p.w.
+    // `allow` gates candidacy: masked-out elements are skipped, so their
+    // non-finite values cannot poison the row.
     var best = -3.4028234663852886e38;
     var idx = 0xFFFFFFFFu;
     var bad = 0u;
+    let use_mask = pc.p.z != 0u;
     for (var c = tid; c < cols; c = c + 256u) {
+        if use_mask && (allow[c >> 5u] & (1u << (c & 31u))) == 0u { continue; }
         let v = src[base + c];
         if v == v && abs(v) <= 3.4028234663852886e38 {
             if v > best || (v == best && c < idx) {
@@ -395,7 +400,7 @@ fn main(
         workgroupBarrier();
     }
     if tid == 0u {
-        if sh_b[0] != 0u {
+        if sh_b[0] != 0u || sh_i[0] == 0xFFFFFFFFu {
             dst[row] = bitcast<f32>(pc.p.w);
         } else {
             dst[row] = f32(sh_i[0]);
@@ -409,10 +414,11 @@ fn main(
 /// non-finite element in the block writes NaN, which stage 2 propagates. The
 /// single-workgroup `ARGMAX` path is kept for narrow rows.
 const ARGMAX_BLOCKS: &str = r"
-struct Params { p: vec4<u32> };
+struct Params { p: vec4<u32>, q: vec4<u32> };
 @group(0) @binding(0) var<uniform> pc: Params;
 @group(0) @binding(1) var<storage, read_write> partials: array<vec2<f32>>;
-@group(0) @binding(2) var<storage, read_write> src: array<f32>;
+@group(0) @binding(2) var<storage, read> src: array<f32>;
+@group(0) @binding(3) var<storage, read> allow: array<u32>;
 
 var<workgroup> sh_v: array<f32, 256>;
 var<workgroup> sh_i: array<u32, 256>;
@@ -434,10 +440,14 @@ fn main(
     let row_base = row * cols;
     let start = block * 2048u;
     let stop = min(start + 2048u, cols);
+    // `allow` gates candidacy per element; a fully masked block emits the
+    // f32-safe index sentinel (2^24) that stage 2 never selects.
     var best = -3.4028234663852886e38;
     var idx = 0xFFFFFFFFu;
     var bad = 0u;
+    let use_mask = pc.q.x != 0u;
     for (var c = start + tid; c < stop; c = c + 256u) {
+        if use_mask && (allow[c >> 5u] & (1u << (c & 31u))) == 0u { continue; }
         let v = src[row_base + c];
         if v == v && abs(v) <= 3.4028234663852886e38 {
             if v > best || (v == best && c < idx) {
@@ -468,19 +478,20 @@ fn main(
         if sh_b[0] != 0u {
             partials[flat] = vec2<f32>(bitcast<f32>(pc.p.w), 0.0);
         } else {
-            partials[flat] = vec2<f32>(sh_v[0], f32(sh_i[0]));
+            partials[flat] = vec2<f32>(sh_v[0], min(f32(sh_i[0]), 16777216.0));
         }
     }
 }
 ";
 
 /// Argmax stage 2: one workgroup per row reduces the stage-1 partials to the
-/// row's first strict maximum index, or NaN when any partial is NaN.
+/// row's first strict maximum index, or NaN when any partial is NaN or every
+/// block reported the 2^24 empty-candidate sentinel.
 const ARGMAX_FINAL: &str = r"
 struct Params { p: vec4<u32> };
 @group(0) @binding(0) var<uniform> pc: Params;
 @group(0) @binding(1) var<storage, read_write> dst: array<f32>;
-@group(0) @binding(2) var<storage, read_write> partials: array<vec2<f32>>;
+@group(0) @binding(2) var<storage, read> partials: array<vec2<f32>>;
 
 var<workgroup> sh_v: array<f32, 256>;
 var<workgroup> sh_i: array<u32, 256>;
@@ -526,7 +537,7 @@ fn main(
         workgroupBarrier();
     }
     if tid == 0u {
-        if sh_b[0] != 0u {
+        if sh_b[0] != 0u || sh_i[0] >= 16777216u {
             dst[row] = bitcast<f32>(pc.p.w);
         } else {
             dst[row] = f32(sh_i[0]);
@@ -1302,10 +1313,12 @@ impl Kernel {
     /// declare the same positions read-only.
     pub const fn read_only_mask(self) -> u32 {
         match self {
-            Self::Gemv => 0b11100,                // x, w, w4
-            Self::PackedGemv => 0b111100,         // x, codes, scales, x4
-            Self::PackedGemvPair => 0b111111000,  // x, codes/scales a+b, x4
-            Self::PackedSwigluGemv => 0b11111100, // gate, up, codes, scales, gate4, up4
+            Self::Gemv => 0b11100,                       // x, w, w4
+            Self::PackedGemv => 0b111100,                // x, codes, scales, x4
+            Self::PackedGemvPair => 0b111111000,         // x, codes/scales a+b, x4
+            Self::PackedSwigluGemv => 0b11111100,        // gate, up, codes, scales, gate4, up4
+            Self::Argmax | Self::ArgmaxBlocks => 0b1100, // src, allow
+            Self::ArgmaxFinal => 0b100,                  // partials
             _ => 0,
         }
     }
@@ -1346,8 +1359,10 @@ impl Kernel {
     pub const fn storage_bindings(self) -> u32 {
         match self {
             Self::Fill => 1,
-            Self::Argmax | Self::ArgmaxBlocks | Self::ArgmaxFinal | Self::Copy2d => 2,
-            Self::Binary
+            Self::ArgmaxFinal | Self::Copy2d => 2,
+            Self::Argmax
+            | Self::ArgmaxBlocks
+            | Self::Binary
             | Self::Gather
             | Self::Gemm
             | Self::RmsNorm

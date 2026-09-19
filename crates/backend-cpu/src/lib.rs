@@ -15,7 +15,7 @@ use minifield_engine_api::{
     BufferDescriptor, CompletionPoll, DType, DTypeSet, ExecutorError, FenceRetirement,
     GatedShortConvSpec, GqaSpec, InferenceCompletion, InferenceOps, OperationKind, OperationSet,
     PackedHeadSpec, PrecisionPolicy, RectCopy2d, ResourceLimits, ResourceReport, Result,
-    RetirementRejection, RotarySpec, Shape, TensorLayout,
+    RetirementRejection, RotarySpec, Shape, TensorLayout, TokenIds,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -373,7 +373,8 @@ impl CpuBackend {
             .with(OperationKind::PackedLinearPair)
             .with(OperationKind::PackedSwigluLinear)
             .with(OperationKind::AddRowRmsNorm)
-            .with(OperationKind::QkNormRope);
+            .with(OperationKind::QkNormRope)
+            .with(OperationKind::Argmax);
         let capabilities = BackendCapabilities {
             dtypes: DTypeSet::only(DType::F32).with(DType::U8),
             operations,
@@ -819,12 +820,51 @@ impl CpuBackend {
         Ok(())
     }
 
+    /// Resolve gather row selectors into per-row `Option<u32>` values.
+    ///
+    /// Host ids pass through unchanged. Device ids are f32 buffer values
+    /// produced by `argmax`: each must be finite, integral, and within
+    /// `[0, 2^24)`; anything else resolves to `None`, which callers turn into
+    /// a NaN-filled output row so invalid device ids propagate as poisoned
+    /// activations rather than host-side panics.
+    fn resolve_token_ids(&self, ids: &TokenIds<'_, Self>) -> Result<Vec<Option<u32>>> {
+        match ids {
+            TokenIds::Host(ids) => Ok(ids.iter().map(|id| Some(*id)).collect()),
+            TokenIds::Device(buffer) => {
+                self.check_f32_buffer(buffer)?;
+                let shape = buffer.descriptor.layout.shape();
+                if shape.rank() != 1 {
+                    return Err(ExecutorError::InvalidShape(
+                        "device token-id buffer must be rank one",
+                    ));
+                }
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                Ok(buffer
+                    .values
+                    .iter()
+                    .map(|value| {
+                        if value.is_finite()
+                            && *value >= 0.0
+                            && value.fract() == 0.0
+                            && *value < 16_777_216.0
+                        {
+                            Some(*value as u32)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect())
+            }
+        }
+    }
+
     /// Gather selected rows from a contiguous [rows, columns] f32 table.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn gather_rows(
         &self,
         output: &mut CpuBuffer,
         table: &CpuBuffer,
-        ids: &[u32],
+        ids: TokenIds<'_, Self>,
     ) -> Result<()> {
         self.check_operation(OperationKind::GatherRows)?;
         self.check_f32_buffer(table)?;
@@ -836,6 +876,7 @@ impl CpuBackend {
             .map_err(|_| ExecutorError::Overflow("row count exceeds usize"))?;
         let columns = usize::try_from(table_shape.dim(1)?)
             .map_err(|_| ExecutorError::Overflow("column count exceeds usize"))?;
+        let ids = self.resolve_token_ids(&ids)?;
         let output_shape = Shape::new(&[
             u64::try_from(ids.len())
                 .map_err(|_| ExecutorError::Overflow("id count overflows u64"))?,
@@ -844,6 +885,11 @@ impl CpuBackend {
         ])?;
         self.check_output_shape(output, output_shape)?;
         for (destination_row, id) in ids.iter().copied().enumerate() {
+            let Some(id) = id else {
+                output.values[destination_row * columns..(destination_row + 1) * columns]
+                    .fill(f32::NAN);
+                continue;
+            };
             let source_row = usize::try_from(id)
                 .map_err(|_| ExecutorError::OutOfBounds("gather identifier exceeds usize"))?;
             if source_row >= rows {
@@ -991,16 +1037,18 @@ impl CpuBackend {
     /// Codes are the `minifield.ternary.v1` U8 stream: 128 weights per group,
     /// 32 bytes per group, weight j at byte `j / 4` bits `2 * (j % 4)`.
     /// Decoded weight `w = (code - 1) * scale`.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn packed_gather_rows(
         &self,
         output: &mut CpuBuffer,
         codes: &CpuBuffer,
         scales: &CpuBuffer,
-        ids: &[u32],
+        ids: TokenIds<'_, Self>,
     ) -> Result<()> {
         self.check_operation(OperationKind::PackedGatherRows)?;
         let (rows, inner) = self.check_packed_operands(codes, scales)?;
         self.check_f32_buffer(output)?;
+        let ids = self.resolve_token_ids(&ids)?;
         let output_shape = Shape::new(&[
             u64::try_from(ids.len())
                 .map_err(|_| ExecutorError::Overflow("id count overflows u64"))?,
@@ -1013,6 +1061,11 @@ impl CpuBackend {
         }
         let code_width = inner / 4;
         for (destination_row, id) in ids.iter().copied().enumerate() {
+            let Some(id) = id else {
+                output.values[destination_row * inner..(destination_row + 1) * inner]
+                    .fill(f32::NAN);
+                continue;
+            };
             let source_row = usize::try_from(id)
                 .map_err(|_| ExecutorError::OutOfBounds("gather identifier exceeds usize"))?;
             if source_row >= rows {
@@ -2075,6 +2128,50 @@ impl CpuBackend {
         apply(key, key_out, key_weight, key_value_heads)
     }
 
+    /// Row-wise argmax over f32 `[T, V]` logits: `output[t]` is the index of the
+    /// first strict maximum in row `t` as an exact f32 integer, or NaN when the
+    /// row contains any non-finite element. `V` must be at most `1 << 24` so
+    /// indices stay exactly representable in f32.
+    pub fn argmax(&self, output: &mut CpuBuffer, input: &CpuBuffer) -> Result<()> {
+        self.check_operation(OperationKind::Argmax)?;
+        self.check_f32_buffer(input)?;
+        let input_shape = input.descriptor.layout.shape();
+        if input_shape.rank() != 2 {
+            return Err(ExecutorError::InvalidShape("argmax input must be rank two"));
+        }
+        let rows = usize::try_from(input_shape.dim(0)?)
+            .map_err(|_| ExecutorError::Overflow("argmax row count exceeds usize"))?;
+        let width = usize::try_from(input_shape.dim(1)?)
+            .map_err(|_| ExecutorError::Overflow("argmax width exceeds usize"))?;
+        if width == 0 || width > (1_usize << 24) {
+            return Err(ExecutorError::Unsupported(
+                "argmax width must be in [1, 2^24] for exact f32 indices",
+            ));
+        }
+        self.check_output_shape(output, Shape::new(&[input_shape.dim(0)?])?)?;
+        #[allow(clippy::cast_precision_loss)]
+        for row in 0..rows {
+            let base = row * width;
+            let mut best = f32::NEG_INFINITY;
+            let mut best_index = 0_usize;
+            let mut poisoned = false;
+            for (index, value) in input.values[base..base + width].iter().enumerate() {
+                if !value.is_finite() {
+                    poisoned = true;
+                } else if *value > best {
+                    best = *value;
+                    best_index = index;
+                }
+            }
+            output.values[row] = if poisoned {
+                f32::NAN
+            } else {
+                best_index as f32
+            };
+        }
+        Ok(())
+    }
+
     /// Submit a CPU completion fence. This baseline is ready on its first poll.
     pub fn fence(&self) -> Result<CpuCompletion<()>> {
         self.submit_ready(Ok(()), Vec::new())
@@ -2205,7 +2302,7 @@ impl InferenceOps for CpuBackend {
         &self,
         output: &mut Self::Buffer,
         table: &Self::Buffer,
-        ids: &[u32],
+        ids: TokenIds<'_, Self>,
     ) -> Result<()> {
         CpuBackend::gather_rows(self, output, table, ids)
     }
@@ -2215,9 +2312,13 @@ impl InferenceOps for CpuBackend {
         output: &mut Self::Buffer,
         codes: &Self::Buffer,
         scales: &Self::Buffer,
-        ids: &[u32],
+        ids: TokenIds<'_, Self>,
     ) -> Result<()> {
         CpuBackend::packed_gather_rows(self, output, codes, scales, ids)
+    }
+
+    fn argmax(&self, output: &mut Self::Buffer, input: &Self::Buffer) -> Result<()> {
+        CpuBackend::argmax(self, output, input)
     }
 
     fn packed_linear(
@@ -2819,5 +2920,67 @@ mod tests {
             CompletionPoll::Ready(Ok(vec![8.0, 13.0]))
         );
         assert_eq!(backend.resource_report().pending_operation_bytes, 0);
+    }
+
+    #[test]
+    fn argmax_picks_first_strict_max_and_feeds_device_gather() {
+        let mut backend = CpuBackend::new(11, limits());
+        let logits = backend
+            .upload_f32(
+                Shape::new(&[3, 4]).expect("shape"),
+                &[
+                    0.0, 9.0, -1.0, 9.0, // tie at 1 and 3: first wins
+                    5.0, 1.0, 2.0, 3.0, // clean max at 0
+                    1.0, 2.0, 3.0, 4.0, // max at 3
+                ],
+            )
+            .expect("logits");
+        let mut out = backend
+            .allocate_f32(Shape::new(&[3]).expect("out"))
+            .expect("out");
+        backend.argmax(&mut out, &logits).expect("argmax");
+        assert_eq!(out.as_slice(), &[1.0, 0.0, 3.0]);
+
+        // The device-id path resolves the argmax buffer into gather selectors.
+        let table = backend
+            .upload_f32(
+                Shape::new(&[4, 2]).expect("table"),
+                &[1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5],
+            )
+            .expect("table");
+        let mut gathered = backend
+            .allocate_f32(Shape::new(&[3, 2]).expect("gathered"))
+            .expect("gathered");
+        backend
+            .gather_rows(&mut gathered, &table, TokenIds::Device(&out))
+            .expect("device gather");
+        assert_eq!(gathered.as_slice(), &[2.0, 2.5, 1.0, 1.5, 4.0, 4.5]);
+
+        // Invalid operands: rank-1 input, mismatched output. Non-finite input
+        // is rejected at operand validation on this eager backend rather than
+        // propagating NaN like the deferred wgpu path.
+        let flat = backend
+            .upload_f32(Shape::new(&[4]).expect("flat"), &[0.0; 4])
+            .expect("flat");
+        assert!(backend.argmax(&mut out, &flat).is_err());
+        let mut wrong = backend
+            .allocate_f32(Shape::new(&[2]).expect("wrong"))
+            .expect("wrong");
+        assert!(backend.argmax(&mut wrong, &logits).is_err());
+
+        let mut poisoned = backend
+            .upload_f32(Shape::new(&[3, 4]).expect("shape"), &[1.0; 12])
+            .expect("poisoned");
+        poisoned.values[5] = f32::NAN;
+        assert!(backend.argmax(&mut out, &poisoned).is_err());
+        let mut bad_ids = backend
+            .upload_f32(Shape::new(&[1]).expect("ids"), &[1.0])
+            .expect("ids");
+        bad_ids.values[0] = f32::NAN;
+        assert!(
+            backend
+                .gather_rows(&mut gathered, &table, TokenIds::Device(&bad_ids))
+                .is_err()
+        );
     }
 }

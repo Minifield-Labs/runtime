@@ -93,8 +93,19 @@ const GATHER: &str = r"
 struct Params { p: vec4<u32> };
 @group(0) @binding(0) var<uniform> pc: Params;
 @group(0) @binding(1) var<storage, read_write> table: array<f32>;
-@group(0) @binding(2) var<storage, read_write> ids: array<u32>;
+@group(0) @binding(2) var<storage, read_write> ids: array<f32>;
 @group(0) @binding(3) var<storage, read_write> dst: array<f32>;
+
+// ids are f32 so a device-side argmax output feeds this kernel directly. A
+// non-finite, fractional, or out-of-range selector poisons its output row
+// with NaN, which downstream finiteness checks surface as a failure.
+fn row_id(r: u32) -> u32 {
+    let idf = ids[r];
+    if idf < 0.0 || idf >= 16777216.0 || fract(idf) != 0.0 {
+        return 0xFFFFFFFFu;
+    }
+    return u32(idf);
+}
 
 @compute @workgroup_size(256)
 fn main(
@@ -107,7 +118,12 @@ fn main(
     if i >= total { return; }
     let r = i / pc.p.y;
     let c = i - r * pc.p.y;
-    dst[i] = table[ids[r] * pc.p.y + c];
+    let id = row_id(r);
+    if id >= pc.p.z {
+        dst[i] = bitcast<f32>(0x7FC00000u);
+        return;
+    }
+    dst[i] = table[id * pc.p.y + c];
 }
 ";
 
@@ -233,7 +249,7 @@ const PACKED_GATHER: &str = r"
 struct Params { p: vec4<u32> };
 @group(0) @binding(0) var<uniform> pc: Params;
 @group(0) @binding(1) var<storage, read_write> dst: array<f32>;
-@group(0) @binding(2) var<storage, read_write> ids: array<u32>;
+@group(0) @binding(2) var<storage, read_write> ids: array<f32>;
 @group(0) @binding(3) var<storage, read_write> codes: array<u32>;
 @group(0) @binding(4) var<storage, read_write> scales: array<f32>;
 
@@ -249,11 +265,84 @@ fn main(
     let k = pc.p.y;
     let r = i / k;
     let l = i - r * k;
-    let src = ids[r];
+    let srcf = ids[r];
+    var src = 0xFFFFFFFFu;
+    if srcf >= 0.0 && srcf < 16777216.0 && fract(srcf) == 0.0 {
+        src = u32(srcf);
+    }
+    if src >= pc.p.z {
+        dst[i] = bitcast<f32>(0x7FC00000u);
+        return;
+    }
     let word = codes[src * (k >> 4u) + (l >> 4u)];
     let byte = (word >> (((l >> 2u) & 3u) << 3u)) & 0xFFu;
     let code = (byte >> ((l & 3u) << 1u)) & 3u;
     dst[i] = f32(i32(code) - 1) * scales[src * (k >> 7u) + (l >> 7u)];
+}
+";
+
+/// Row-wise argmax over `[T, V]` f32 logits: one workgroup per row, 256
+/// threads tree-reduce (value, index) pairs keeping the smallest index on
+/// ties. `dst[r]` is the winning index as an exact f32 integer, or NaN when
+/// the row contains any non-finite element.
+const ARGMAX: &str = r"
+struct Params { p: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<storage, read_write> src: array<f32>;
+
+var<workgroup> sh_v: array<f32, 256>;
+var<workgroup> sh_i: array<u32, 256>;
+var<workgroup> sh_b: array<u32, 256>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let row = flat_wg(wid, numw);
+    let cols = pc.p.y;
+    if row >= pc.p.x { return; }
+    let tid = lid.x;
+    let base = row * cols;
+    var best = bitcast<f32>(0xFF800000u);
+    var idx = 0u;
+    var bad = 0u;
+    for (var c = tid; c < cols; c = c + 256u) {
+        let v = src[base + c];
+        if v == v && abs(v) <= 3.4028234663852886e38 {
+            if v > best {
+                best = v;
+                idx = c;
+            }
+        } else {
+            bad = 1u;
+        }
+    }
+    sh_v[tid] = best;
+    sh_i[tid] = idx;
+    sh_b[tid] = bad;
+    workgroupBarrier();
+    for (var s = 128u; s > 0u; s = s >> 1u) {
+        if tid < s {
+            let ov = sh_v[tid + s];
+            let oi = sh_i[tid + s];
+            if ov > sh_v[tid] || (ov == sh_v[tid] && oi < sh_i[tid]) {
+                sh_v[tid] = ov;
+                sh_i[tid] = oi;
+            }
+            sh_b[tid] = sh_b[tid] | sh_b[tid + s];
+        }
+        workgroupBarrier();
+    }
+    if tid == 0u {
+        if sh_b[0] != 0u {
+            dst[row] = bitcast<f32>(0x7FC00000u);
+        } else {
+            dst[row] = f32(sh_i[0]);
+        }
+    }
 }
 ";
 
@@ -873,6 +962,7 @@ pub enum Kernel {
     PackedSwigluGemv,
     AddNorm,
     QkNormRope,
+    Argmax,
 }
 
 impl Kernel {
@@ -897,6 +987,7 @@ impl Kernel {
             Self::PackedSwigluGemv => PACKED_SWIGLU_GEMV,
             Self::AddNorm => ADD_NORM,
             Self::QkNormRope => QK_NORM_ROPE,
+            Self::Argmax => ARGMAX,
         };
         let mut source = String::with_capacity(WGSL_INDEX.len() + body.len() + 1);
         source.push_str(WGSL_INDEX);
@@ -908,7 +999,7 @@ impl Kernel {
     pub const fn storage_bindings(self) -> u32 {
         match self {
             Self::Fill => 1,
-            Self::Copy2d => 2,
+            Self::Argmax | Self::Copy2d => 2,
             Self::Binary
             | Self::Gather
             | Self::Gemm
@@ -942,6 +1033,7 @@ impl Kernel {
             Self::PackedSwigluGemv => "packed_swiglu_gemv",
             Self::AddNorm => "add_norm",
             Self::QkNormRope => "qk_norm_rope",
+            Self::Argmax => "argmax",
         }
     }
 }

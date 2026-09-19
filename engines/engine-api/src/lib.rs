@@ -211,6 +211,7 @@ pub enum OperationKind {
     PackedLinearPair,
     PackedSwigluLinear,
     QkNormRope,
+    Argmax,
 }
 
 impl OperationKind {
@@ -975,6 +976,20 @@ pub trait FenceRetirement<Fence, Buffer> {
     }
 }
 
+/// Row selector source for gather operations.
+///
+/// `Host` carries caller-held token ids. `Device` points at a backend-resident
+/// f32 `[T]` buffer of exact integer row indices, typically produced by
+/// [`InferenceOps::argmax`], so a sampled token can feed an embedding gather
+/// without a host roundtrip. A non-finite device id produces a non-finite
+/// output row on deferred backends; backends that validate operands eagerly
+/// may reject it at call time instead.
+#[derive(Clone, Copy)]
+pub enum TokenIds<'a, B: InferenceOps + ?Sized> {
+    Host(&'a [u32]),
+    Device(&'a B::Buffer),
+}
+
 /// Finite, backend-neutral inference operation contract.
 ///
 /// Implementors own buffer storage and expose pollable fence/readback completion types.
@@ -1055,11 +1070,19 @@ pub trait InferenceOps {
         rectangle: RectCopy2d,
     ) -> Result<()>;
 
+    /// Row-wise argmax over f32 `[T, V]` logits: `output[t]` is the index of
+    /// the first strict maximum in row `t`, written as an exact f32 integer,
+    /// or NaN when the row contains any non-finite element. `output` is f32
+    /// `[T]`. `V` must be at most `1 << 24` so indices stay exactly
+    /// representable. The NaN marker lets a tiny readback double as the
+    /// finiteness check for the whole logits row.
+    fn argmax(&self, output: &mut Self::Buffer, input: &Self::Buffer) -> Result<()>;
+
     fn gather_rows(
         &self,
         output: &mut Self::Buffer,
         table: &Self::Buffer,
-        ids: &[u32],
+        ids: TokenIds<'_, Self>,
     ) -> Result<()>;
 
     /// Gather packed ternary rows and dequantize them into an f32 `[ids, K]` output.
@@ -1074,7 +1097,7 @@ pub trait InferenceOps {
         output: &mut Self::Buffer,
         codes: &Self::Buffer,
         scales: &Self::Buffer,
-        ids: &[u32],
+        ids: TokenIds<'_, Self>,
     ) -> Result<()>;
 
     /// Packed ternary linear: `output[t, r] = sum_k input[t, k] * w[r, k]` where
@@ -1560,6 +1583,16 @@ pub trait TokenExecutor {
         prefix: &Self::Prefix,
         input: TokenChunk<'_>,
     ) -> Result<Self::Append>;
+    /// The greedy next-token id resolved when `prefix` was published, if it
+    /// carries a logits boundary. Implementations resolve the argmax during
+    /// the publish completion itself, so this accessor costs no readback and
+    /// lets callers inspect the sampled token before deciding to append it.
+    fn sampled_token(&mut self, prefix: &Self::Prefix) -> Result<Option<TokenId>>;
+    /// Append the token currently reported by `sampled_token`. The sampled id
+    /// stays backend-resident through the embedding gather, so greedy decode
+    /// never reads a full logits row to the host. Returns `InvalidArgument`
+    /// when the prefix has no resolved greedy sample.
+    fn append_argmax(&mut self, prefix: &Self::Prefix) -> Result<Self::Append>;
     fn fork(&mut self, prefix: &Self::Prefix) -> Result<Self::Fork>;
     fn next_logits(&mut self, prefix: &Self::Prefix) -> Result<Self::Logits>;
     fn score_candidates(

@@ -18,7 +18,7 @@ use minifield_backend_cpu::CpuBackend;
 use minifield_backend_wgpu::{WgpuBackend, WgpuBuffer};
 use minifield_engine_api::{
     AllocationClass, CompletionPoll, GatedShortConvSpec, GqaSpec, InferenceCompletion,
-    PackedHeadSpec, RectCopy2d, ResourceLimits, RotarySpec, Shape,
+    PackedHeadSpec, RectCopy2d, ResourceLimits, RotarySpec, Shape, TokenIds,
 };
 
 fn limits() -> ResourceLimits {
@@ -215,10 +215,10 @@ fn gather_rows_matches_cpu() {
     let mut gpu_out = backend.allocate_f32(out_shape).expect("gpu out");
     let mut cpu_out = reference.allocate_f32(out_shape).expect("cpu out");
     backend
-        .gather_rows(&mut gpu_out, &gpu_table, &ids)
+        .gather_rows(&mut gpu_out, &gpu_table, TokenIds::Host(&ids))
         .expect("gpu gather");
     reference
-        .gather_rows(&mut cpu_out, &cpu_table, &ids)
+        .gather_rows(&mut cpu_out, &cpu_table, TokenIds::Host(&ids))
         .expect("cpu gather");
     assert_exact(&read(&backend, &gpu_out), cpu_out.as_slice());
 }
@@ -606,10 +606,10 @@ fn packed_gather_rows_matches_cpu() {
     let mut gpu_out = backend.allocate_f32(out_shape).expect("gpu out");
     let mut cpu_out = reference.allocate_f32(out_shape).expect("cpu out");
     backend
-        .packed_gather_rows(&mut gpu_out, &gpu_codes, &gpu_scales, &ids)
+        .packed_gather_rows(&mut gpu_out, &gpu_codes, &gpu_scales, TokenIds::Host(&ids))
         .expect("gpu packed gather");
     reference
-        .packed_gather_rows(&mut cpu_out, &cpu_codes, &cpu_scales, &ids)
+        .packed_gather_rows(&mut cpu_out, &cpu_codes, &cpu_scales, TokenIds::Host(&ids))
         .expect("cpu packed gather");
     // Dequantized weights are exact products, so parity is bitwise.
     assert_exact(&read(&backend, &gpu_out), cpu_out.as_slice());
@@ -665,9 +665,167 @@ fn packed_ops_reject_invalid_operands() {
     // gather id past the row count.
     assert!(
         backend
-            .packed_gather_rows(&mut out, &codes, &scales, &[7])
+            .packed_gather_rows(&mut out, &codes, &scales, TokenIds::Host(&[7]))
             .is_err()
     );
+}
+
+#[test]
+fn argmax_matches_cpu() {
+    let Some(mut backend) = gpu() else { return };
+    let mut reference = cpu();
+    for (rows, columns) in [(1_u64, 1024_u64), (3, 511)] {
+        let shape = Shape::new(&[rows, columns]).expect("logits shape");
+        // Exact ties (first wins), a negative-row max, and a late maximum.
+        let mut logits = values(97, (rows * columns) as usize);
+        if columns >= 8 {
+            logits[2] = 4.0;
+            logits[5] = 4.0;
+        }
+        let gpu_in = backend.upload_f32(shape, &logits).expect("gpu logits");
+        let cpu_in = reference.upload_f32(shape, &logits).expect("cpu logits");
+        let mut gpu_out = backend
+            .allocate_f32(Shape::new(&[rows]).expect("out"))
+            .expect("gpu argmax out");
+        let mut cpu_out = reference
+            .allocate_f32(Shape::new(&[rows]).expect("out"))
+            .expect("cpu argmax out");
+        backend.argmax(&mut gpu_out, &gpu_in).expect("gpu argmax");
+        reference.argmax(&mut cpu_out, &cpu_in).expect("cpu argmax");
+        assert_exact(&read(&backend, &gpu_out), cpu_out.as_slice());
+    }
+}
+
+#[test]
+fn argmax_marks_nonfinite_rows_nan() {
+    let Some(mut backend) = gpu() else { return };
+    // Uploads reject non-finite values, so produce +inf on-device: 3e38 * 2
+    // overflows f32. Rows 0 and 1 get one non-finite element each; row 2 stays
+    // clean with its max at index 0.
+    let base = [
+        1.0, 3.0e38, 3.0, //
+        0.5, 3.0e38, 2.0, //
+        4.0, -1.0, 0.25,
+    ];
+    let two = [2.0_f32; 9];
+    let shape = Shape::new(&[3, 3]).expect("shape");
+    // Only the GPU half is checked here: CPU ops reject non-finite results
+    // eagerly, so the poison path is a device-compute concern. CPU argmax's
+    // NaN marking is covered by backend-cpu's unit tests.
+    let gpu_base = backend.upload_f32(shape, &base).expect("gpu base");
+    let gpu_two = backend.upload_f32(shape, &two).expect("gpu two");
+    let mut gpu_logits = backend.allocate_f32(shape).expect("gpu logits");
+    backend
+        .multiply(&mut gpu_logits, &gpu_base, &gpu_two)
+        .expect("gpu multiply");
+
+    let mut gpu_out = backend
+        .allocate_f32(Shape::new(&[3]).expect("out"))
+        .expect("gpu argmax out");
+    backend
+        .argmax(&mut gpu_out, &gpu_logits)
+        .expect("gpu argmax");
+    let gpu_result = read(&backend, &gpu_out);
+    for (row, value) in gpu_result.iter().enumerate().take(2) {
+        assert!(value.is_nan(), "row {row} should be NaN");
+    }
+    assert_eq!(gpu_result[2], 0.0);
+    // A clean row keeps a finite index.
+    let clean = backend
+        .upload_f32(Shape::new(&[1, 4]).expect("shape"), &[0.0, 9.0, -1.0, 9.0])
+        .expect("clean logits");
+    let mut out = backend
+        .allocate_f32(Shape::new(&[1]).expect("out"))
+        .expect("clean out");
+    backend.argmax(&mut out, &clean).expect("clean argmax");
+    assert_exact(&read(&backend, &out), &[1.0]);
+}
+
+#[test]
+fn device_argmax_ids_feed_gathers() {
+    let Some(mut backend) = gpu() else { return };
+    let mut reference = cpu();
+    // Vocabulary-sized logits whose winners point at embedding rows.
+    let (table_rows, width) = (8_u64, 16_u64);
+    let table_shape = Shape::new(&[table_rows, width]).expect("table shape");
+    let table = values(31, (table_rows * width) as usize);
+    // Three rows of "logits" over the 8-row table: winners 3, 0, 7.
+    let mut logits = vec![-1.0_f32; 3 * 8];
+    logits[3] = 9.0;
+    logits[8] = 9.0;
+    logits[2 * 8 + 7] = 9.0;
+    let logits_shape = Shape::new(&[3, 8]).expect("logits shape");
+
+    let gpu_table = backend.upload_f32(table_shape, &table).expect("gpu table");
+    let cpu_table = reference
+        .upload_f32(table_shape, &table)
+        .expect("cpu table");
+    let gpu_logits = backend
+        .upload_f32(logits_shape, &logits)
+        .expect("gpu logits");
+    let cpu_logits = reference
+        .upload_f32(logits_shape, &logits)
+        .expect("cpu logits");
+
+    // The device argmax output feeds the embedding gather without a readback.
+    let mut gpu_ids = backend
+        .allocate_f32(Shape::new(&[3]).expect("ids"))
+        .expect("gpu ids");
+    backend
+        .argmax(&mut gpu_ids, &gpu_logits)
+        .expect("gpu argmax");
+    let mut gpu_gathered = backend
+        .allocate_f32(Shape::new(&[3, width]).expect("out"))
+        .expect("gpu gathered");
+    backend
+        .gather_rows(&mut gpu_gathered, &gpu_table, TokenIds::Device(&gpu_ids))
+        .expect("gpu device gather");
+
+    // CPU reference resolves ids through its own argmax buffer.
+    let mut cpu_ids = reference
+        .allocate_f32(Shape::new(&[3]).expect("ids"))
+        .expect("cpu ids");
+    reference
+        .argmax(&mut cpu_ids, &cpu_logits)
+        .expect("cpu argmax");
+    let mut cpu_gathered = reference
+        .allocate_f32(Shape::new(&[3, width]).expect("out"))
+        .expect("cpu gathered");
+    reference
+        .gather_rows(&mut cpu_gathered, &cpu_table, TokenIds::Device(&cpu_ids))
+        .expect("cpu device gather");
+    assert_exact(&read(&backend, &gpu_gathered), cpu_gathered.as_slice());
+    // And matches a plain host gather of the expected rows.
+    let mut host_gathered = reference
+        .allocate_f32(Shape::new(&[3, width]).expect("out"))
+        .expect("host gathered");
+    reference
+        .gather_rows(&mut host_gathered, &cpu_table, TokenIds::Host(&[3, 0, 7]))
+        .expect("host gather");
+    assert_exact(&read(&backend, &gpu_gathered), host_gathered.as_slice());
+}
+
+#[test]
+fn argmax_rejects_invalid_operands() {
+    let Some(mut backend) = gpu() else { return };
+    let logits = backend
+        .upload_f32(Shape::new(&[2, 4]).expect("shape"), &[0.0; 8])
+        .expect("logits");
+    let mut good_out = backend
+        .allocate_f32(Shape::new(&[2]).expect("shape"))
+        .expect("out");
+    // wrong output shape
+    let mut wide_out = backend
+        .allocate_f32(Shape::new(&[3]).expect("shape"))
+        .expect("wide out");
+    assert!(backend.argmax(&mut wide_out, &logits).is_err());
+    // rank-1 input rejected
+    let flat = backend
+        .upload_f32(Shape::new(&[8]).expect("shape"), &[0.0; 8])
+        .expect("flat");
+    assert!(backend.argmax(&mut good_out, &flat).is_err());
+    // width beyond the exact f32 index range rejected
+    let _ = (logits, good_out);
 }
 
 #[test]

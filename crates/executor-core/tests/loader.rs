@@ -8,6 +8,7 @@ use minifield_engine_api::{
     CompletionPoll, ExecutorError, FenceRetirement, GatedShortConvSpec, GqaSpec,
     InferenceCompletion, InferenceOps, MemoryAssetProvider, MemoryAssetRead, PackedHeadSpec,
     RectCopy2d, ResourceLimits, ResourceReport, Result, RetirementRejection, RotarySpec, Shape,
+    TokenIds,
 };
 use minifield_executor_core::{
     Lfm2LoadRequest, Lfm2TypedWeights, Lfm2WeightLoadTask, Lfm2WeightPlan, Lfm2WeightRole,
@@ -1274,8 +1275,23 @@ impl InferenceOps for DeferredFenceBackend {
     ) -> Result<()> {
         self.cpu.copy_rect_2d(output, input, rectangle)
     }
-    fn gather_rows(&self, output: &mut CpuBuffer, table: &CpuBuffer, ids: &[u32]) -> Result<()> {
-        self.cpu.gather_rows(output, table, ids)
+    fn gather_rows(
+        &self,
+        output: &mut CpuBuffer,
+        table: &CpuBuffer,
+        ids: TokenIds<'_, Self>,
+    ) -> Result<()> {
+        self.cpu.gather_rows(
+            output,
+            table,
+            match ids {
+                TokenIds::Host(ids) => TokenIds::Host(ids),
+                TokenIds::Device(buffer) => TokenIds::Device(buffer),
+            },
+        )
+    }
+    fn argmax(&self, output: &mut CpuBuffer, input: &CpuBuffer) -> Result<()> {
+        self.cpu.argmax(output, input)
     }
     fn add(&self, output: &mut CpuBuffer, left: &CpuBuffer, right: &CpuBuffer) -> Result<()> {
         self.cpu.add(output, left, right)
@@ -1300,9 +1316,17 @@ impl InferenceOps for DeferredFenceBackend {
         output: &mut CpuBuffer,
         codes: &CpuBuffer,
         scales: &CpuBuffer,
-        ids: &[u32],
+        ids: TokenIds<'_, Self>,
     ) -> Result<()> {
-        self.cpu.packed_gather_rows(output, codes, scales, ids)
+        self.cpu.packed_gather_rows(
+            output,
+            codes,
+            scales,
+            match ids {
+                TokenIds::Host(ids) => TokenIds::Host(ids),
+                TokenIds::Device(buffer) => TokenIds::Device(buffer),
+            },
+        )
     }
     fn row_rms_norm(
         &self,

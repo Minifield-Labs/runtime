@@ -451,24 +451,23 @@ fn gated_short_convolution_matches_cpu() {
     for tokens in [1_u64, 5] {
         let spec = GatedShortConvSpec::new(16, 3).expect("conv spec");
         let token_shape = Shape::new(&[tokens, 16]).expect("token shape");
+        let projection_shape = Shape::new(&[tokens, 48]).expect("projection shape");
         let kernel_shape = Shape::new(&[16, 3]).expect("kernel shape");
         let history_shape = Shape::new(&[2, 16]).expect("history shape");
-        let count = (tokens * 16) as usize;
-        let b = values(101, count);
-        let c = values(103, count);
-        let v = values(107, count);
+        let count = (tokens * 48) as usize;
+        let projection = values(101, count);
         let kernel = values(109, 48);
         let history = values(113, 32);
-        let gpu_b = backend.upload_f32(token_shape, &b).expect("gpu b");
-        let gpu_c = backend.upload_f32(token_shape, &c).expect("gpu c");
-        let gpu_v = backend.upload_f32(token_shape, &v).expect("gpu v");
+        let gpu_p = backend
+            .upload_f32(projection_shape, &projection)
+            .expect("gpu projection");
         let gpu_k = backend.upload_f32(kernel_shape, &kernel).expect("gpu k");
         let mut gpu_h = backend
             .upload_f32_classified(history_shape, &history, AllocationClass::Cache)
             .expect("gpu history");
-        let cpu_b = reference.upload_f32(token_shape, &b).expect("cpu b");
-        let cpu_c = reference.upload_f32(token_shape, &c).expect("cpu c");
-        let cpu_v = reference.upload_f32(token_shape, &v).expect("cpu v");
+        let cpu_p = reference
+            .upload_f32(projection_shape, &projection)
+            .expect("cpu projection");
         let cpu_k = reference.upload_f32(kernel_shape, &kernel).expect("cpu k");
         let mut cpu_h = reference
             .upload_f32_classified(history_shape, &history, AllocationClass::Cache)
@@ -476,26 +475,10 @@ fn gated_short_convolution_matches_cpu() {
         let mut gpu_out = backend.allocate_f32(token_shape).expect("gpu out");
         let mut cpu_out = reference.allocate_f32(token_shape).expect("cpu out");
         backend
-            .gated_short_convolution(
-                &mut gpu_out,
-                &gpu_b,
-                &gpu_c,
-                &gpu_v,
-                &gpu_k,
-                &mut gpu_h,
-                spec,
-            )
+            .gated_short_convolution(&mut gpu_out, &gpu_p, &gpu_k, &mut gpu_h, spec)
             .expect("gpu conv");
         reference
-            .gated_short_convolution(
-                &mut cpu_out,
-                &cpu_b,
-                &cpu_c,
-                &cpu_v,
-                &cpu_k,
-                &mut cpu_h,
-                spec,
-            )
+            .gated_short_convolution(&mut cpu_out, &cpu_p, &cpu_k, &mut cpu_h, spec)
             .expect("cpu conv");
         assert_close(&read(&backend, &gpu_out), cpu_out.as_slice(), 1e-5, 1e-5);
         assert_close(&read(&backend, &gpu_h), cpu_h.as_slice(), 1e-6, 1e-6);
@@ -685,4 +668,209 @@ fn packed_ops_reject_invalid_operands() {
             .packed_gather_rows(&mut out, &codes, &scales, &[7])
             .is_err()
     );
+}
+
+#[test]
+fn packed_linear_pair_matches_cpu() {
+    let Some(mut backend) = gpu() else { return };
+    let mut reference = cpu();
+    for (m, n, k) in [(1_u64, 37_u64, 256_u64), (5, 37, 384)] {
+        let input_shape = Shape::new(&[m, k]).expect("input shape");
+        let codes_shape = Shape::new(&[n, k / 4]).expect("codes shape");
+        let scales_shape = Shape::new(&[n, k / 128]).expect("scales shape");
+        let out_shape = Shape::new(&[m, n]).expect("out shape");
+        let input = values(41, (m * k) as usize);
+        let (codes_a, scales_a) =
+            pack_weights(&values(43, (n * k) as usize), n as usize, k as usize);
+        let (codes_b, scales_b) =
+            pack_weights(&values(47, (n * k) as usize), n as usize, k as usize);
+
+        let gpu_in = backend.upload_f32(input_shape, &input).expect("gpu in");
+        let gpu_ca = backend
+            .upload_u8_classified(codes_shape, &codes_a, AllocationClass::Weight)
+            .expect("gpu codes a");
+        let gpu_sa = backend
+            .upload_f32_classified(scales_shape, &scales_a, AllocationClass::Weight)
+            .expect("gpu scales a");
+        let gpu_cb = backend
+            .upload_u8_classified(codes_shape, &codes_b, AllocationClass::Weight)
+            .expect("gpu codes b");
+        let gpu_sb = backend
+            .upload_f32_classified(scales_shape, &scales_b, AllocationClass::Weight)
+            .expect("gpu scales b");
+        let cpu_in = reference.upload_f32(input_shape, &input).expect("cpu in");
+        let cpu_ca = reference
+            .upload_u8_classified(codes_shape, &codes_a, AllocationClass::Weight)
+            .expect("cpu codes a");
+        let cpu_sa = reference
+            .upload_f32_classified(scales_shape, &scales_a, AllocationClass::Weight)
+            .expect("cpu scales a");
+        let cpu_cb = reference
+            .upload_u8_classified(codes_shape, &codes_b, AllocationClass::Weight)
+            .expect("cpu codes b");
+        let cpu_sb = reference
+            .upload_f32_classified(scales_shape, &scales_b, AllocationClass::Weight)
+            .expect("cpu scales b");
+        let mut gpu_a = backend.allocate_f32(out_shape).expect("gpu a");
+        let mut gpu_b = backend.allocate_f32(out_shape).expect("gpu b");
+        let mut cpu_a = reference.allocate_f32(out_shape).expect("cpu a");
+        let mut cpu_b = reference.allocate_f32(out_shape).expect("cpu b");
+        backend
+            .packed_linear_pair(
+                &mut gpu_a, &mut gpu_b, &gpu_in, &gpu_ca, &gpu_sa, &gpu_cb, &gpu_sb,
+            )
+            .expect("gpu packed pair");
+        reference
+            .packed_linear_pair(
+                &mut cpu_a, &mut cpu_b, &cpu_in, &cpu_ca, &cpu_sa, &cpu_cb, &cpu_sb,
+            )
+            .expect("cpu packed pair");
+        assert_close(&read(&backend, &gpu_a), cpu_a.as_slice(), 1e-4, 1e-4);
+        assert_close(&read(&backend, &gpu_b), cpu_b.as_slice(), 1e-4, 1e-4);
+    }
+}
+
+#[test]
+fn packed_swiglu_linear_matches_cpu() {
+    let Some(mut backend) = gpu() else { return };
+    let mut reference = cpu();
+    for (m, n, k) in [(1_u64, 37_u64, 256_u64), (5, 37, 384)] {
+        let input_shape = Shape::new(&[m, k]).expect("input shape");
+        let codes_shape = Shape::new(&[n, k / 4]).expect("codes shape");
+        let scales_shape = Shape::new(&[n, k / 128]).expect("scales shape");
+        let out_shape = Shape::new(&[m, n]).expect("out shape");
+        let gate = values(51, (m * k) as usize);
+        let up = values(53, (m * k) as usize);
+        let (codes, scales) = pack_weights(&values(43, (n * k) as usize), n as usize, k as usize);
+
+        let gpu_g = backend.upload_f32(input_shape, &gate).expect("gpu gate");
+        let gpu_u = backend.upload_f32(input_shape, &up).expect("gpu up");
+        let gpu_c = backend
+            .upload_u8_classified(codes_shape, &codes, AllocationClass::Weight)
+            .expect("gpu codes");
+        let gpu_s = backend
+            .upload_f32_classified(scales_shape, &scales, AllocationClass::Weight)
+            .expect("gpu scales");
+        let cpu_g = reference.upload_f32(input_shape, &gate).expect("cpu gate");
+        let cpu_u = reference.upload_f32(input_shape, &up).expect("cpu up");
+        let cpu_c = reference
+            .upload_u8_classified(codes_shape, &codes, AllocationClass::Weight)
+            .expect("cpu codes");
+        let cpu_s = reference
+            .upload_f32_classified(scales_shape, &scales, AllocationClass::Weight)
+            .expect("cpu scales");
+        let mut gpu_out = backend.allocate_f32(out_shape).expect("gpu out");
+        let mut cpu_out = reference.allocate_f32(out_shape).expect("cpu out");
+        backend
+            .packed_swiglu_linear(&mut gpu_out, &gpu_g, &gpu_u, &gpu_c, &gpu_s)
+            .expect("gpu packed swiglu linear");
+        reference
+            .packed_swiglu_linear(&mut cpu_out, &cpu_g, &cpu_u, &cpu_c, &cpu_s)
+            .expect("cpu packed swiglu linear");
+        assert_close(&read(&backend, &gpu_out), cpu_out.as_slice(), 1e-4, 1e-4);
+    }
+}
+
+#[test]
+fn add_row_rms_norm_matches_cpu() {
+    let Some(mut backend) = gpu() else { return };
+    let mut reference = cpu();
+    let shape = Shape::new(&[3, 257]).expect("shape");
+    let weight_shape = Shape::new(&[257]).expect("weight shape");
+    let left = values(59, 771);
+    let right = values(61, 771);
+    let weight = values(67, 257);
+    let gpu_l = backend.upload_f32(shape, &left).expect("gpu left");
+    let gpu_r = backend.upload_f32(shape, &right).expect("gpu right");
+    let gpu_w = backend
+        .upload_f32(weight_shape, &weight)
+        .expect("gpu weight");
+    let cpu_l = reference.upload_f32(shape, &left).expect("cpu left");
+    let cpu_r = reference.upload_f32(shape, &right).expect("cpu right");
+    let cpu_w = reference
+        .upload_f32(weight_shape, &weight)
+        .expect("cpu weight");
+    let mut gpu_sum = backend.allocate_f32(shape).expect("gpu sum");
+    let mut gpu_normed = backend.allocate_f32(shape).expect("gpu normed");
+    let mut cpu_sum = reference.allocate_f32(shape).expect("cpu sum");
+    let mut cpu_normed = reference.allocate_f32(shape).expect("cpu normed");
+    backend
+        .add_row_rms_norm(&mut gpu_sum, &mut gpu_normed, &gpu_l, &gpu_r, &gpu_w, 1e-5)
+        .expect("gpu add norm");
+    reference
+        .add_row_rms_norm(&mut cpu_sum, &mut cpu_normed, &cpu_l, &cpu_r, &cpu_w, 1e-5)
+        .expect("cpu add norm");
+    assert_exact(&read(&backend, &gpu_sum), cpu_sum.as_slice());
+    assert_close(
+        &read(&backend, &gpu_normed),
+        cpu_normed.as_slice(),
+        1e-5,
+        1e-5,
+    );
+}
+
+#[test]
+fn qk_norm_rope_matches_cpu() {
+    let Some(mut backend) = gpu() else { return };
+    let mut reference = cpu();
+    let (tokens, q_heads, kv_heads, head_dim) = (2_u64, 4_u32, 2_u32, 8_u32);
+    let q_width = u64::from(q_heads * head_dim);
+    let kv_width = u64::from(kv_heads * head_dim);
+    let q_shape = Shape::new(&[tokens, q_width]).expect("q shape");
+    let k_shape = Shape::new(&[tokens, kv_width]).expect("k shape");
+    let w_shape = Shape::new(&[u64::from(head_dim)]).expect("weight shape");
+    let query = values(71, (tokens * q_width) as usize);
+    let key = values(73, (tokens * kv_width) as usize);
+    let qw = values(79, head_dim as usize);
+    let kw = values(83, head_dim as usize);
+    let positions = [3_u64, 17];
+    let rope = RotarySpec::new(
+        PackedHeadSpec::new(q_heads, head_dim).expect("q heads"),
+        10_000.0,
+    )
+    .expect("rope spec");
+    let kv_spec = PackedHeadSpec::new(kv_heads, head_dim).expect("kv heads");
+
+    let gpu_q = backend.upload_f32(q_shape, &query).expect("gpu q");
+    let gpu_k = backend.upload_f32(k_shape, &key).expect("gpu k");
+    let gpu_qw = backend.upload_f32(w_shape, &qw).expect("gpu qw");
+    let gpu_kw = backend.upload_f32(w_shape, &kw).expect("gpu kw");
+    let cpu_q = reference.upload_f32(q_shape, &query).expect("cpu q");
+    let cpu_k = reference.upload_f32(k_shape, &key).expect("cpu k");
+    let cpu_qw = reference.upload_f32(w_shape, &qw).expect("cpu qw");
+    let cpu_kw = reference.upload_f32(w_shape, &kw).expect("cpu kw");
+    let mut gpu_qo = backend.allocate_f32(q_shape).expect("gpu q out");
+    let mut gpu_ko = backend.allocate_f32(k_shape).expect("gpu k out");
+    let mut cpu_qo = reference.allocate_f32(q_shape).expect("cpu q out");
+    let mut cpu_ko = reference.allocate_f32(k_shape).expect("cpu k out");
+    backend
+        .qk_norm_rope(
+            &mut gpu_qo,
+            &mut gpu_ko,
+            &gpu_q,
+            &gpu_k,
+            &gpu_qw,
+            &gpu_kw,
+            &positions,
+            rope,
+            kv_spec,
+            1e-5,
+        )
+        .expect("gpu qk norm rope");
+    reference
+        .qk_norm_rope(
+            &mut cpu_qo,
+            &mut cpu_ko,
+            &cpu_q,
+            &cpu_k,
+            &cpu_qw,
+            &cpu_kw,
+            &positions,
+            rope,
+            kv_spec,
+            1e-5,
+        )
+        .expect("cpu qk norm rope");
+    assert_close(&read(&backend, &gpu_qo), cpu_qo.as_slice(), 1e-5, 1e-5);
+    assert_close(&read(&backend, &gpu_ko), cpu_ko.as_slice(), 1e-5, 1e-5);
 }

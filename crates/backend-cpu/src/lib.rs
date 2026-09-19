@@ -369,7 +369,11 @@ impl CpuBackend {
             .with(OperationKind::GatedShortConvolution)
             .with(OperationKind::SwiGlu)
             .with(OperationKind::PackedGatherRows)
-            .with(OperationKind::PackedLinear);
+            .with(OperationKind::PackedLinear)
+            .with(OperationKind::PackedLinearPair)
+            .with(OperationKind::PackedSwigluLinear)
+            .with(OperationKind::AddRowRmsNorm)
+            .with(OperationKind::QkNormRope);
         let capabilities = BackendCapabilities {
             dtypes: DTypeSet::only(DType::F32).with(DType::U8),
             operations,
@@ -1667,32 +1671,29 @@ impl CpuBackend {
     pub fn gated_short_convolution(
         &self,
         output: &mut CpuBuffer,
-        b: &CpuBuffer,
-        c: &CpuBuffer,
-        v: &CpuBuffer,
+        projection: &CpuBuffer,
         kernel: &CpuBuffer,
         history: &mut CpuBuffer,
         spec: GatedShortConvSpec,
     ) -> Result<()> {
         self.check_operation(OperationKind::GatedShortConvolution)?;
-        self.check_f32_buffer(b)?;
-        self.check_f32_buffer(c)?;
-        self.check_f32_buffer(v)?;
+        self.check_f32_buffer(projection)?;
         self.check_f32_buffer(kernel)?;
         self.check_f32_buffer(history)?;
-        let token_shape = b.descriptor.layout.shape();
-        if token_shape.rank() != 2 || token_shape.dim(1)? != u64::from(spec.hidden()) {
-            return Err(ExecutorError::InvalidShape(
-                "short convolution B must be [tokens, hidden]",
-            ));
-        }
-        if c.descriptor.layout.shape() != token_shape || v.descriptor.layout.shape() != token_shape
+        let hidden_u64 = u64::from(spec.hidden());
+        let projection_shape = projection.descriptor.layout.shape();
+        if projection_shape.rank() != 2
+            || projection_shape.dim(1)?
+                != hidden_u64.checked_mul(3).ok_or(ExecutorError::Overflow(
+                    "short convolution projection width overflows u64",
+                ))?
         {
             return Err(ExecutorError::InvalidShape(
-                "short convolution B, C, and V layouts must match",
+                "short convolution projection must be [tokens, 3 * hidden]",
             ));
         }
-        self.check_output_shape(output, token_shape)?;
+        let tokens_u64 = projection_shape.dim(0)?;
+        self.check_output_shape(output, Shape::new(&[tokens_u64, hidden_u64])?)?;
         if kernel.descriptor.layout.shape()
             != Shape::new(&[u64::from(spec.hidden()), u64::from(spec.width())])?
         {
@@ -1707,7 +1708,7 @@ impl CpuBackend {
                 "short convolution history must be [width - 1, hidden]",
             ));
         }
-        let tokens = usize::try_from(token_shape.dim(0)?)
+        let tokens = usize::try_from(tokens_u64)
             .map_err(|_| ExecutorError::Overflow("short convolution token count exceeds usize"))?;
         let hidden = usize::try_from(spec.hidden())
             .map_err(|_| ExecutorError::Overflow("short convolution hidden width exceeds usize"))?;
@@ -1725,8 +1726,14 @@ impl CpuBackend {
         let mut staged = self.stage_f32(staged_elements)?;
         staged.resize(staged_elements, 0.0);
         let (u, produced) = staged.split_at_mut(row_elements);
+        // Fused projection layout: token t's B, C, V rows sit at
+        // projection[t * 3h + {0, h, 2h} + channel].
+        let projection_width = 3 * hidden;
         for (index, destination) in u.iter_mut().enumerate() {
-            let gate = b.values[index] * v.values[index];
+            let token = index / hidden;
+            let channel = index - token * hidden;
+            let base = token * projection_width + channel;
+            let gate = projection.values[base] * projection.values[base + 2 * hidden];
             if !gate.is_finite() {
                 return Err(ExecutorError::BackendFailure(
                     "short convolution gate product is non-finite",
@@ -1755,7 +1762,7 @@ impl CpuBackend {
                     };
                     total += kernel.values[channel * width + tap] * u_value;
                 }
-                let result = total * c.values[token * hidden + channel];
+                let result = total * projection.values[token * projection_width + hidden + channel];
                 if !result.is_finite() {
                     return Err(ExecutorError::BackendFailure(
                         "short convolution output is non-finite",
@@ -1807,6 +1814,265 @@ impl CpuBackend {
             *destination = result;
         }
         Ok(())
+    }
+
+    /// Two packed ternary projections sharing one input, issued as two
+    /// sequential `packed_linear` passes. Both weight sets must share one
+    /// `[R, K]` shape so the outputs share `[T, R]`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn packed_linear_pair(
+        &self,
+        out_a: &mut CpuBuffer,
+        out_b: &mut CpuBuffer,
+        input: &CpuBuffer,
+        codes_a: &CpuBuffer,
+        scales_a: &CpuBuffer,
+        codes_b: &CpuBuffer,
+        scales_b: &CpuBuffer,
+    ) -> Result<()> {
+        self.check_operation(OperationKind::PackedLinearPair)?;
+        if codes_a.descriptor.layout.shape() != codes_b.descriptor.layout.shape()
+            || scales_a.descriptor.layout.shape() != scales_b.descriptor.layout.shape()
+            || out_a.descriptor.layout.shape() != out_b.descriptor.layout.shape()
+        {
+            return Err(ExecutorError::InvalidShape(
+                "packed linear pair requires equal weight and output shapes",
+            ));
+        }
+        self.packed_linear(out_a, input, codes_a, scales_a)?;
+        self.packed_linear(out_b, input, codes_b, scales_b)
+    }
+
+    /// Packed ternary projection over an on-the-fly `SiLU(gate) * up`
+    /// activation. The staged activation feeds the same SIMD row dot as
+    /// `packed_linear`.
+    pub fn packed_swiglu_linear(
+        &self,
+        output: &mut CpuBuffer,
+        gate: &CpuBuffer,
+        up: &CpuBuffer,
+        codes: &CpuBuffer,
+        scales: &CpuBuffer,
+    ) -> Result<()> {
+        self.check_operation(OperationKind::PackedSwigluLinear)?;
+        self.check_f32_buffer(gate)?;
+        self.check_f32_buffer(up)?;
+        let (output_width, inner) = self.check_packed_operands(codes, scales)?;
+        let gate_shape = gate.descriptor.layout.shape();
+        if gate_shape.rank() != 2 || up.descriptor.layout.shape() != gate_shape {
+            return Err(ExecutorError::InvalidShape(
+                "packed SwiGLU gate and up layouts must match and be rank two",
+            ));
+        }
+        let inner_u64 = u64::try_from(inner)
+            .map_err(|_| ExecutorError::Overflow("packed SwiGLU inner width overflows u64"))?;
+        if gate_shape.dim(1)? != inner_u64 {
+            return Err(ExecutorError::InvalidShape(
+                "packed SwiGLU input width differs from weight width",
+            ));
+        }
+        let rows = usize::try_from(gate_shape.dim(0)?)
+            .map_err(|_| ExecutorError::Overflow("packed SwiGLU row count exceeds usize"))?;
+        self.check_output_shape(
+            output,
+            Shape::new(&[
+                gate_shape.dim(0)?,
+                u64::try_from(output_width)
+                    .map_err(|_| ExecutorError::Overflow("packed SwiGLU width overflows u64"))?,
+            ])?,
+        )?;
+        let code_width = inner / 4;
+        let groups = inner / 128;
+        let mut activated = self.stage_f32(inner)?;
+        activated.resize(inner, 0.0);
+        for row in 0..rows {
+            let base = row.checked_mul(inner).ok_or(ExecutorError::Overflow(
+                "packed SwiGLU input offset overflows usize",
+            ))?;
+            for (index, cell) in activated.iter_mut().enumerate() {
+                let g = gate.values[base + index];
+                let sigmoid = 1.0_f32 / (1.0_f32 + (-g).exp());
+                let value = (g * sigmoid) * up.values[base + index];
+                if !value.is_finite() {
+                    return Err(ExecutorError::BackendFailure(
+                        "packed SwiGLU activation is non-finite",
+                    ));
+                }
+                *cell = value;
+            }
+            for column in 0..output_width {
+                let code_start = column
+                    .checked_mul(code_width)
+                    .ok_or(ExecutorError::Overflow(
+                        "packed weight offset overflows usize",
+                    ))?;
+                let scale_start = column.checked_mul(groups).ok_or(ExecutorError::Overflow(
+                    "packed scale offset overflows usize",
+                ))?;
+                let accumulator = minifield_kernels_simd::ternary_row_dot(
+                    &codes.bytes[code_start..code_start + code_width],
+                    &scales.values[scale_start..scale_start + groups],
+                    &activated,
+                );
+                if !accumulator.is_finite() {
+                    return Err(ExecutorError::BackendFailure(
+                        "packed SwiGLU projection produced a non-finite value",
+                    ));
+                }
+                output.values[row * output_width + column] = accumulator;
+            }
+        }
+        Ok(())
+    }
+
+    /// Fused residual add plus row RMS norm, decomposed into the existing
+    /// `add` and `row_rms_norm` passes.
+    pub fn add_row_rms_norm(
+        &self,
+        sum: &mut CpuBuffer,
+        normed: &mut CpuBuffer,
+        left: &CpuBuffer,
+        right: &CpuBuffer,
+        weight: &CpuBuffer,
+        epsilon: f32,
+    ) -> Result<()> {
+        self.check_operation(OperationKind::AddRowRmsNorm)?;
+        self.add(sum, left, right)?;
+        self.row_rms_norm(normed, sum, weight, epsilon)
+    }
+
+    /// Per-head RMS norm followed by split-half rotary on the query and key
+    /// rows, sharing the scalar reference math of `head_rms_norm` and
+    /// `split_half_rotary`.
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::too_many_lines,
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss
+    )]
+    pub fn qk_norm_rope(
+        &self,
+        query_out: &mut CpuBuffer,
+        key_out: &mut CpuBuffer,
+        query: &CpuBuffer,
+        key: &CpuBuffer,
+        query_weight: &CpuBuffer,
+        key_weight: &CpuBuffer,
+        positions: &[u64],
+        rope: RotarySpec,
+        key_value_heads: PackedHeadSpec,
+        epsilon: f32,
+    ) -> Result<()> {
+        self.check_operation(OperationKind::QkNormRope)?;
+        if !epsilon.is_finite() || epsilon <= 0.0 {
+            return Err(ExecutorError::InvalidArgument(
+                "RMS epsilon must be finite and positive",
+            ));
+        }
+        self.check_f32_buffer(query)?;
+        self.check_f32_buffer(key)?;
+        self.check_f32_buffer(query_weight)?;
+        self.check_f32_buffer(key_weight)?;
+        if key_value_heads.head_dim() != rope.heads().head_dim() {
+            return Err(ExecutorError::InvalidShape(
+                "RoPE head dimensions must match for query and key",
+            ));
+        }
+        let query_tokens = rope
+            .heads()
+            .validate_packed(query.descriptor.layout.shape())?;
+        let key_tokens = key_value_heads.validate_packed(key.descriptor.layout.shape())?;
+        if query_tokens != key_tokens {
+            return Err(ExecutorError::InvalidShape(
+                "RoPE query and key token counts differ",
+            ));
+        }
+        let token_count = usize::try_from(query_tokens)
+            .map_err(|_| ExecutorError::Overflow("RoPE token count exceeds usize"))?;
+        if positions.len() != token_count {
+            return Err(ExecutorError::InvalidShape(
+                "RoPE position count differs from token count",
+            ));
+        }
+        self.check_output_shape(query_out, query.descriptor.layout.shape())?;
+        self.check_output_shape(key_out, key.descriptor.layout.shape())?;
+        let head_dim = usize::try_from(rope.heads().head_dim())
+            .map_err(|_| ExecutorError::Overflow("RoPE head dimension exceeds usize"))?;
+        let half = head_dim / 2;
+        let weight_width = u64::from(rope.heads().head_dim());
+        for (label, weight) in [("query", query_weight), ("key", key_weight)] {
+            if weight.descriptor.layout.shape() != Shape::new(&[weight_width])? {
+                return Err(ExecutorError::InvalidShape(label));
+            }
+        }
+        if head_dim > (1_usize << 24) {
+            return Err(ExecutorError::Unsupported(
+                "RMS width exceeds exact f32 divisor range",
+            ));
+        }
+        #[allow(clippy::cast_precision_loss)]
+        let head_dim_f32 = head_dim as f32;
+        let mut normed = self.stage_f32(head_dim)?;
+        normed.resize(head_dim, 0.0);
+        let mut apply = |input: &CpuBuffer,
+                         output: &mut CpuBuffer,
+                         weight: &CpuBuffer,
+                         heads: PackedHeadSpec|
+         -> Result<()> {
+            let packed_width = usize::try_from(heads.packed_width()?)
+                .map_err(|_| ExecutorError::Overflow("RoPE packed width exceeds usize"))?;
+            let head_count = usize::try_from(heads.heads())
+                .map_err(|_| ExecutorError::Overflow("RoPE head count exceeds usize"))?;
+            for (token, position) in positions.iter().copied().enumerate() {
+                #[allow(clippy::cast_precision_loss)]
+                let position_f32 = position as f32;
+                if !position_f32.is_finite() {
+                    return Err(ExecutorError::InvalidArgument(
+                        "RoPE position is not representable as finite f32",
+                    ));
+                }
+                for head in 0..head_count {
+                    let start = token
+                        .checked_mul(packed_width)
+                        .and_then(|value| value.checked_add(head.checked_mul(head_dim)?))
+                        .ok_or(ExecutorError::Overflow("RoPE offset overflows usize"))?;
+                    let mut squared_sum = 0.0_f32;
+                    for value in &input.values[start..start + head_dim] {
+                        squared_sum += value * value;
+                    }
+                    let reciprocal = (squared_sum / head_dim_f32 + epsilon).sqrt().recip();
+                    if !reciprocal.is_finite() {
+                        return Err(ExecutorError::BackendFailure(
+                            "head RMS reciprocal is non-finite",
+                        ));
+                    }
+                    for (index, cell) in normed.iter_mut().enumerate() {
+                        *cell = input.values[start + index] * reciprocal * weight.values[index];
+                    }
+                    for column in 0..half {
+                        let exponent = -2.0_f64 * (column as f64) / (head_dim as f64);
+                        let frequency = (f64::from(rope.theta()).powf(exponent)) as f32;
+                        let angle = position_f32 * frequency;
+                        let sine = f64::from(angle).sin() as f32;
+                        let cosine = f64::from(angle).cos() as f32;
+                        let first = normed[column];
+                        let second = normed[half + column];
+                        let rotated_first = first * cosine - second * sine;
+                        let rotated_second = second * cosine + first * sine;
+                        if !rotated_first.is_finite() || !rotated_second.is_finite() {
+                            return Err(ExecutorError::BackendFailure(
+                                "RoPE produced a non-finite value",
+                            ));
+                        }
+                        output.values[start + column] = rotated_first;
+                        output.values[start + half + column] = rotated_second;
+                    }
+                }
+            }
+            Ok(())
+        };
+        apply(query, query_out, query_weight, rope.heads())?;
+        apply(key, key_out, key_weight, key_value_heads)
     }
 
     /// Submit a CPU completion fence. This baseline is ready on its first poll.
@@ -2049,14 +2315,12 @@ impl InferenceOps for CpuBackend {
     fn gated_short_convolution(
         &self,
         output: &mut Self::Buffer,
-        b: &Self::Buffer,
-        c: &Self::Buffer,
-        v: &Self::Buffer,
+        projection: &Self::Buffer,
         kernel: &Self::Buffer,
         history: &mut Self::Buffer,
         spec: GatedShortConvSpec,
     ) -> Result<()> {
-        CpuBackend::gated_short_convolution(self, output, b, c, v, kernel, history, spec)
+        CpuBackend::gated_short_convolution(self, output, projection, kernel, history, spec)
     }
 
     fn swiglu(
@@ -2066,6 +2330,72 @@ impl InferenceOps for CpuBackend {
         up: &Self::Buffer,
     ) -> Result<()> {
         CpuBackend::swiglu(self, output, gate, up)
+    }
+
+    fn packed_linear_pair(
+        &self,
+        out_a: &mut Self::Buffer,
+        out_b: &mut Self::Buffer,
+        input: &Self::Buffer,
+        codes_a: &Self::Buffer,
+        scales_a: &Self::Buffer,
+        codes_b: &Self::Buffer,
+        scales_b: &Self::Buffer,
+    ) -> Result<()> {
+        CpuBackend::packed_linear_pair(
+            self, out_a, out_b, input, codes_a, scales_a, codes_b, scales_b,
+        )
+    }
+
+    fn packed_swiglu_linear(
+        &self,
+        output: &mut Self::Buffer,
+        gate: &Self::Buffer,
+        up: &Self::Buffer,
+        codes: &Self::Buffer,
+        scales: &Self::Buffer,
+    ) -> Result<()> {
+        CpuBackend::packed_swiglu_linear(self, output, gate, up, codes, scales)
+    }
+
+    fn add_row_rms_norm(
+        &self,
+        sum: &mut Self::Buffer,
+        normed: &mut Self::Buffer,
+        left: &Self::Buffer,
+        right: &Self::Buffer,
+        weight: &Self::Buffer,
+        epsilon: f32,
+    ) -> Result<()> {
+        CpuBackend::add_row_rms_norm(self, sum, normed, left, right, weight, epsilon)
+    }
+
+    fn qk_norm_rope(
+        &self,
+        query_out: &mut Self::Buffer,
+        key_out: &mut Self::Buffer,
+        query: &Self::Buffer,
+        key: &Self::Buffer,
+        query_weight: &Self::Buffer,
+        key_weight: &Self::Buffer,
+        positions: &[u64],
+        rope: RotarySpec,
+        key_value_heads: PackedHeadSpec,
+        epsilon: f32,
+    ) -> Result<()> {
+        CpuBackend::qk_norm_rope(
+            self,
+            query_out,
+            key_out,
+            query,
+            key,
+            query_weight,
+            key_weight,
+            positions,
+            rope,
+            key_value_heads,
+            epsilon,
+        )
     }
 }
 

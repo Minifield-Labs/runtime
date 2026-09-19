@@ -126,24 +126,22 @@ fn independent_short_convolution_cases_cover_startup_partitions_and_asymmetry() 
         let hidden = width2(b);
         let width = width2(kernel);
         let mut runtime = backend();
-        let b = runtime
+        // The fused op consumes one [tokens, 3*hidden] projection with B, C,
+        // V rows packed per token; the fixture keeps them as separate tensors.
+        let (b_values, c_values, v_values) = (f32s(b), f32s(c), f32s(v));
+        let mut projection_values = Vec::with_capacity(b_values.len() * 3);
+        for token in 0..tokens {
+            let row = token * hidden;
+            projection_values.extend_from_slice(&b_values[row..row + hidden]);
+            projection_values.extend_from_slice(&c_values[row..row + hidden]);
+            projection_values.extend_from_slice(&v_values[row..row + hidden]);
+        }
+        let projection = runtime
             .upload_f32(
-                Shape::new(&[tokens as u64, hidden as u64]).expect("shape"),
-                &f32s(b),
+                Shape::new(&[tokens as u64, (3 * hidden) as u64]).expect("shape"),
+                &projection_values,
             )
-            .expect("B");
-        let c = runtime
-            .upload_f32(
-                Shape::new(&[tokens as u64, hidden as u64]).expect("shape"),
-                &f32s(c),
-            )
-            .expect("C");
-        let v = runtime
-            .upload_f32(
-                Shape::new(&[tokens as u64, hidden as u64]).expect("shape"),
-                &f32s(v),
-            )
-            .expect("V");
+            .expect("projection");
         let kernel = runtime
             .upload_f32(
                 Shape::new(&[hidden as u64, width as u64]).expect("shape"),
@@ -166,9 +164,7 @@ fn independent_short_convolution_cases_cover_startup_partitions_and_asymmetry() 
         runtime
             .gated_short_convolution(
                 &mut output,
-                &b,
-                &c,
-                &v,
+                &projection,
                 &kernel,
                 &mut history,
                 GatedShortConvSpec::new(hidden as u32, width as u32).expect("spec"),
@@ -477,24 +473,12 @@ fn independent_rounding_sentinels_require_sequential_f32_vector_math() {
     );
 
     let convolution = &sentinel["convolution"];
-    let b = runtime
-        .upload_f32(
-            Shape::new(&[1, 1]).expect("shape"),
-            &f32s(&convolution["B"]),
-        )
-        .expect("B");
-    let c = runtime
-        .upload_f32(
-            Shape::new(&[1, 1]).expect("shape"),
-            &f32s(&convolution["C"]),
-        )
-        .expect("C");
-    let v = runtime
-        .upload_f32(
-            Shape::new(&[1, 1]).expect("shape"),
-            &f32s(&convolution["V"]),
-        )
-        .expect("V");
+    let mut projection_values = f32s(&convolution["B"]);
+    projection_values.extend_from_slice(&f32s(&convolution["C"]));
+    projection_values.extend_from_slice(&f32s(&convolution["V"]));
+    let projection = runtime
+        .upload_f32(Shape::new(&[1, 3]).expect("shape"), &projection_values)
+        .expect("projection");
     let kernel = runtime
         .upload_f32(
             Shape::new(&[1, 3]).expect("shape"),
@@ -513,9 +497,7 @@ fn independent_rounding_sentinels_require_sequential_f32_vector_math() {
     runtime
         .gated_short_convolution(
             &mut output,
-            &b,
-            &c,
-            &v,
+            &projection,
             &kernel,
             &mut history,
             GatedShortConvSpec::new(1, 3).expect("conv spec"),
@@ -632,19 +614,13 @@ fn generic_inference_ops_compose_packed_projection_head_rms_rotary_and_gqa() {
 fn held_readbacks_prevent_allocation_and_operator_staging_until_cancelled() {
     let limits = ResourceLimits {
         max_allocation_bytes: 16,
-        max_total_bytes: 36,
+        max_total_bytes: 44,
         max_pending_operations: 2,
     };
     let mut runtime = CpuBackend::new(0xC0F0, limits);
-    let b = runtime
-        .upload_f32(Shape::new(&[1, 1]).expect("shape"), &[2.0])
-        .expect("B");
-    let c = runtime
-        .upload_f32(Shape::new(&[1, 1]).expect("shape"), &[3.0])
-        .expect("C");
-    let v = runtime
-        .upload_f32(Shape::new(&[1, 1]).expect("shape"), &[4.0])
-        .expect("V");
+    let projection = runtime
+        .upload_f32(Shape::new(&[1, 3]).expect("shape"), &[2.0, 3.0, 4.0])
+        .expect("projection");
     let kernel = runtime
         .upload_f32(Shape::new(&[1, 2]).expect("shape"), &[1.0, 2.0])
         .expect("kernel");
@@ -654,8 +630,8 @@ fn held_readbacks_prevent_allocation_and_operator_staging_until_cancelled() {
     let mut output = runtime
         .allocate_f32(Shape::new(&[1, 1]).expect("shape"))
         .expect("output");
-    let mut held = runtime.read_f32_async(&b).expect("held readback");
-    assert_eq!(runtime.resource_report().total_owned_bytes(), Ok(32));
+    let mut held = runtime.read_f32_async(&projection).expect("held readback");
+    assert_eq!(runtime.resource_report().total_owned_bytes(), Ok(40));
     assert!(matches!(
         runtime.allocate_f32(Shape::new(&[2]).expect("shape")),
         Err(ExecutorError::ResourceLimit(
@@ -665,9 +641,7 @@ fn held_readbacks_prevent_allocation_and_operator_staging_until_cancelled() {
     assert_eq!(
         runtime.gated_short_convolution(
             &mut output,
-            &b,
-            &c,
-            &v,
+            &projection,
             &kernel,
             &mut history,
             GatedShortConvSpec::new(1, 2).expect("conv spec"),
@@ -683,9 +657,7 @@ fn held_readbacks_prevent_allocation_and_operator_staging_until_cancelled() {
     runtime
         .gated_short_convolution(
             &mut output,
-            &b,
-            &c,
-            &v,
+            &projection,
             &kernel,
             &mut history,
             GatedShortConvSpec::new(1, 2).expect("conv spec"),

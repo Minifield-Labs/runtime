@@ -599,15 +599,13 @@ impl InferenceOps for DeferredBackend {
     fn gated_short_convolution(
         &self,
         output: &mut Self::Buffer,
-        b: &Self::Buffer,
-        c: &Self::Buffer,
-        v: &Self::Buffer,
+        projection: &Self::Buffer,
         kernel: &Self::Buffer,
         history: &mut Self::Buffer,
         spec: GatedShortConvSpec,
     ) -> Result<()> {
         self.cpu
-            .gated_short_convolution(output, b, c, v, kernel, history, spec)
+            .gated_short_convolution(output, projection, kernel, history, spec)
     }
 
     fn swiglu(
@@ -617,6 +615,72 @@ impl InferenceOps for DeferredBackend {
         up: &Self::Buffer,
     ) -> Result<()> {
         self.cpu.swiglu(output, gate, up)
+    }
+
+    fn packed_linear_pair(
+        &self,
+        out_a: &mut Self::Buffer,
+        out_b: &mut Self::Buffer,
+        input: &Self::Buffer,
+        codes_a: &Self::Buffer,
+        scales_a: &Self::Buffer,
+        codes_b: &Self::Buffer,
+        scales_b: &Self::Buffer,
+    ) -> Result<()> {
+        self.cpu
+            .packed_linear_pair(out_a, out_b, input, codes_a, scales_a, codes_b, scales_b)
+    }
+
+    fn packed_swiglu_linear(
+        &self,
+        output: &mut Self::Buffer,
+        gate: &Self::Buffer,
+        up: &Self::Buffer,
+        codes: &Self::Buffer,
+        scales: &Self::Buffer,
+    ) -> Result<()> {
+        self.cpu
+            .packed_swiglu_linear(output, gate, up, codes, scales)
+    }
+
+    fn add_row_rms_norm(
+        &self,
+        sum: &mut Self::Buffer,
+        normed: &mut Self::Buffer,
+        left: &Self::Buffer,
+        right: &Self::Buffer,
+        weight: &Self::Buffer,
+        epsilon: f32,
+    ) -> Result<()> {
+        self.cpu
+            .add_row_rms_norm(sum, normed, left, right, weight, epsilon)
+    }
+
+    fn qk_norm_rope(
+        &self,
+        query_out: &mut Self::Buffer,
+        key_out: &mut Self::Buffer,
+        query: &Self::Buffer,
+        key: &Self::Buffer,
+        query_weight: &Self::Buffer,
+        key_weight: &Self::Buffer,
+        positions: &[u64],
+        rope: RotarySpec,
+        key_value_heads: PackedHeadSpec,
+        epsilon: f32,
+    ) -> Result<()> {
+        self.cpu.qk_norm_rope(
+            query_out,
+            key_out,
+            query,
+            key,
+            query_weight,
+            key_weight,
+            positions,
+            rope,
+            key_value_heads,
+            epsilon,
+        )
     }
 }
 

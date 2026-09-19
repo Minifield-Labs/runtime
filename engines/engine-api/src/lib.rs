@@ -207,6 +207,10 @@ pub enum OperationKind {
     LmProjection,
     PackedGatherRows,
     PackedLinear,
+    AddRowRmsNorm,
+    PackedLinearPair,
+    PackedSwigluLinear,
+    QkNormRope,
 }
 
 impl OperationKind {
@@ -1086,6 +1090,75 @@ pub trait InferenceOps {
         codes: &Self::Buffer,
         scales: &Self::Buffer,
     ) -> Result<()>;
+
+    /// Paired packed ternary linear over one shared input:
+    /// `out_a[t, r] = sum_k input[t, k] * wa[r, k]` and
+    /// `out_b[t, r] = sum_k input[t, k] * wb[r, k]`. Both weight sets share the
+    /// `minifield.ternary.v1` layout and must have identical `[R, K]` shapes, so
+    /// `out_a` and `out_b` have identical `[T, R]` shapes. Semantically equal to
+    /// two `packed_linear` calls; backends may issue them as one dispatch.
+    #[allow(clippy::too_many_arguments)]
+    fn packed_linear_pair(
+        &self,
+        out_a: &mut Self::Buffer,
+        out_b: &mut Self::Buffer,
+        input: &Self::Buffer,
+        codes_a: &Self::Buffer,
+        scales_a: &Self::Buffer,
+        codes_b: &Self::Buffer,
+        scales_b: &Self::Buffer,
+    ) -> Result<()>;
+
+    /// Packed ternary linear over an on-the-fly `SiLU(gate) * up` activation:
+    /// `output[t, r] = sum_k (silu(gate[t,k]) * up[t,k]) * w[r, k]` where `w` is
+    /// the `minifield.ternary.v1` dequantization of `codes`/`scales`. `gate` and
+    /// `up` are f32 `[T, K]`, `codes` is U8 `[R, K/4]`, `scales` is f32
+    /// `[R, K/128]`, and `output` is f32 `[T, R]`. Semantically equal to a
+    /// `swiglu` into scratch followed by `packed_linear`.
+    fn packed_swiglu_linear(
+        &self,
+        output: &mut Self::Buffer,
+        gate: &Self::Buffer,
+        up: &Self::Buffer,
+        codes: &Self::Buffer,
+        scales: &Self::Buffer,
+    ) -> Result<()>;
+
+    /// Fused residual add plus row RMS norm: `sum = left + right` and
+    /// `normed` is the row RMS norm of `sum` scaled by `weight`, with `sum`
+    /// and `normed` as distinct `[T, C]` outputs. `left`, `right` are
+    /// `[T, C]` inputs and `weight` is `[C]`. Semantically equal to `add`
+    /// followed by `row_rms_norm` over the sum.
+    fn add_row_rms_norm(
+        &self,
+        sum: &mut Self::Buffer,
+        normed: &mut Self::Buffer,
+        left: &Self::Buffer,
+        right: &Self::Buffer,
+        weight: &Self::Buffer,
+        epsilon: f32,
+    ) -> Result<()>;
+
+    /// Fused per-head RMS norm plus split-half rotary for query and key rows:
+    /// `query_out` is `rope(head_rms_norm(query, query_weight))` and `key_out`
+    /// is `rope(head_rms_norm(key, key_weight))`, evaluated per `[token, head]`
+    /// row with `positions` per token. `rope` carries the query head geometry
+    /// and theta; `key_value_heads` carries the key head geometry. Semantically
+    /// equal to `head_rms_norm` then `split_half_rotary` on each tensor.
+    #[allow(clippy::too_many_arguments)]
+    fn qk_norm_rope(
+        &self,
+        query_out: &mut Self::Buffer,
+        key_out: &mut Self::Buffer,
+        query: &Self::Buffer,
+        key: &Self::Buffer,
+        query_weight: &Self::Buffer,
+        key_weight: &Self::Buffer,
+        positions: &[u64],
+        rope: RotarySpec,
+        key_value_heads: PackedHeadSpec,
+        epsilon: f32,
+    ) -> Result<()>;
     fn add(
         &self,
         output: &mut Self::Buffer,
@@ -1146,14 +1219,13 @@ pub trait InferenceOps {
         spec: GqaSpec,
     ) -> Result<()>;
 
-    /// Apply B*V gated short convolution and update a [width-1, hidden] rolling U history.
-    #[allow(clippy::too_many_arguments)]
+    /// Apply B*V gated short convolution and update a [width-1, hidden] rolling
+    /// U history. `projection` is the fused `[tokens, 3 * hidden]` in-projection
+    /// output: token `t`'s B, C, and V rows sit at offsets `t * 3h + {0, h, 2h}`.
     fn gated_short_convolution(
         &self,
         output: &mut Self::Buffer,
-        b: &Self::Buffer,
-        c: &Self::Buffer,
-        v: &Self::Buffer,
+        projection: &Self::Buffer,
         kernel: &Self::Buffer,
         history: &mut Self::Buffer,
         spec: GatedShortConvSpec,

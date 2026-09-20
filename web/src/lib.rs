@@ -19,7 +19,7 @@ use minifield_executor_core::{
     Lfm2ExecutionLimits, Lfm2Executor, Lfm2LoadRequest, Lfm2Prefix, Lfm2WeightFormat,
     Lfm2WeightLoadTask, LoaderLimits, LoaderPoll,
 };
-use minifield_json_grammar::ToolCallEnforcer;
+use minifield_json_grammar::AssistantCallEnforcer;
 use minifield_text_tokenizer::{EncodeOptions, MODEL_VOCAB_SIZE, Tokenizer, TokenizerLimits};
 use sha2::{Digest, Sha256};
 use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
@@ -33,6 +33,10 @@ const STOP_TOKEN_IDS: [TokenId; 1] = [7];
 pub struct WebDemo {
     executor: Lfm2Executor<WgpuBackend>,
     tokenizer: Tokenizer,
+    /// Prefilled KV snapshot for the tool-call prompt's fixed system block,
+    /// keyed by the exact system text. `generate_json` appends the short
+    /// per-call tail onto this instead of re-prefilling the tool list.
+    tool_prefix: Option<(String, Lfm2Prefix<WgpuBackend>)>,
 }
 
 fn js_error(error: impl Display) -> JsValue {
@@ -142,6 +146,7 @@ pub async fn load(
     Ok(WebDemo {
         executor,
         tokenizer,
+        tool_prefix: None,
     })
 }
 
@@ -195,20 +200,81 @@ impl WebDemo {
         stats(&text, generated, stopped)
     }
 
-    /// Greedy-generate constrained to the tool-call shape
-    /// `{"<name>":true|false}` where `<name>` is one of the comma-separated
-    /// `names`. A byte-level grammar enforcer gates every argmax, so only
-    /// tokens that keep the document acceptable can win. Stops when the
-    /// document completes, on EOS, or at `max_tokens`.
-    /// Resolves to `{ text, tokens, stopped }`.
+    /// Prefill and cache the tool-call prompt's fixed system block so the
+    /// first constrained run skips it too.
+    pub async fn warm_tools(&mut self, system: String) -> Result<(), JsValue> {
+        if system.is_empty() || matches!(&self.tool_prefix, Some((cached, _)) if *cached == system)
+        {
+            return Ok(());
+        }
+        let ids = self
+            .tokenizer
+            .encode(
+                &system,
+                EncodeOptions {
+                    add_special_tokens: true,
+                },
+            )
+            .map_err(js_error)?;
+        let mut prefill = self
+            .executor
+            .prefill(TokenChunk::all(&ids))
+            .map_err(js_error)?;
+        let base = pump(&mut prefill).await?;
+        self.tool_prefix = Some((system, base));
+        Ok(())
+    }
+
+    /// Greedy-generate constrained to the serialized assistant body
+    /// `{"content":<value>,"tool_calls":[{"arguments":<object>,"id":"<string>","name":"<name>"}]}`
+    /// where `<name>` is one of the comma-separated `names`, matching the
+    /// lfm2-chatml-tool-json training serializer. A byte-level grammar
+    /// enforcer gates every argmax, so only tokens that keep the document
+    /// acceptable can win. Stops when the document completes, on EOS, or at
+    /// `max_tokens`. Resolves to `{ text, tokens, stopped }`.
+    ///
+    /// `system` is the fixed tool-list block and `rest` the per-call
+    /// user/assistant turns; concatenating them yields the full serialized
+    /// prompt. The system block's KV state is cached between calls so each
+    /// run only prefills the short tail. When the cache is cold or the tail's
+    /// unmasked greedy sample is not grammar-legal, the whole prompt is
+    /// prefilled with the mask applied directly.
     pub async fn generate_json(
         &mut self,
-        prompt: String,
+        system: String,
+        rest: String,
         names: String,
         max_tokens: u32,
         on_token: Function,
     ) -> Result<JsValue, JsValue> {
-        let (input_ids, max_tokens) = self.prompt_budget(&prompt, max_tokens)?;
+        let mut input_ids = self
+            .tokenizer
+            .encode(
+                &system,
+                EncodeOptions {
+                    add_special_tokens: true,
+                },
+            )
+            .map_err(js_error)?;
+        let system_ids = input_ids.clone();
+        input_ids.extend(
+            self.tokenizer
+                .encode(
+                    &rest,
+                    EncodeOptions {
+                        add_special_tokens: false,
+                    },
+                )
+                .map_err(js_error)?,
+        );
+        let rest_ids = &input_ids[system_ids.len()..];
+        let max_tokens = usize::try_from(MAX_LOGICAL_TOKENS)
+            .unwrap_or(usize::MAX)
+            .saturating_sub(input_ids.len())
+            .min(usize::try_from(max_tokens).unwrap_or(usize::MAX));
+        if max_tokens == 0 {
+            return Err(JsValue::from_str("prompt fills the context budget"));
+        }
         let names: Vec<Vec<u8>> = names
             .split(',')
             .map(|name| name.trim().as_bytes().to_vec())
@@ -233,14 +299,55 @@ impl WebDemo {
                     .unwrap_or_default()
             })
             .collect();
-        // Tool-call shape: {"<name>":true|false} exactly, compact JSON.
-        let mut enforcer = ToolCallEnforcer::new(vocab, STOP_TOKEN_IDS[0], names);
+        // Serialized assistant body, compact canonical JSON.
+        let mut enforcer = AssistantCallEnforcer::new(vocab, STOP_TOKEN_IDS[0], names);
 
-        let mut prefill = self
-            .executor
-            .prefill_masked(TokenChunk::all(&input_ids), enforcer.allowed())
-            .map_err(js_error)?;
-        let mut prefix: Lfm2Prefix<WgpuBackend> = pump(&mut prefill).await?;
+        let mut prefix: Lfm2Prefix<WgpuBackend> = if system_ids.is_empty() {
+            let mut prefill = self
+                .executor
+                .prefill_masked(TokenChunk::all(&input_ids), enforcer.allowed())
+                .map_err(js_error)?;
+            pump(&mut prefill).await?
+        } else {
+            let base = match &self.tool_prefix {
+                Some((cached_system, prefix)) if *cached_system == system => prefix.clone(),
+                _ => {
+                    let mut prefill = self
+                        .executor
+                        .prefill(TokenChunk::all(&system_ids))
+                        .map_err(js_error)?;
+                    let base = pump(&mut prefill).await?;
+                    self.tool_prefix = Some((system.clone(), base.clone()));
+                    base
+                }
+            };
+            let mut append = self
+                .executor
+                .append_known(&base, TokenChunk::all(rest_ids))
+                .map_err(js_error)?;
+            let staged = pump(&mut append).await?;
+            // The tail append resolved its pending sample unmasked: reuse it
+            // only when it is grammar-legal, else prefill the full prompt
+            // with the mask so the first emitted token is still constrained.
+            let mask = enforcer.allowed();
+            let legal = self
+                .executor
+                .sampled_token(&staged)
+                .map_err(js_error)?
+                .is_some_and(|id| {
+                    mask.get(id as usize / 64)
+                        .is_some_and(|word| word >> (id % 64) & 1 == 1)
+                });
+            if legal {
+                staged
+            } else {
+                let mut prefill = self
+                    .executor
+                    .prefill_masked(TokenChunk::all(&input_ids), mask)
+                    .map_err(js_error)?;
+                pump(&mut prefill).await?
+            }
+        };
         let mut decoder = self.tokenizer.streaming_decoder(false);
         let mut text = String::new();
         let mut generated = 0_usize;

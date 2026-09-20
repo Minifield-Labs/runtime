@@ -49,8 +49,16 @@ required). The page fetches `config.json`, the packed safetensors, and
   `crates/json-grammar`'s byte-level acceptor yields an allowed-token bitset
   per step, and `prefill_masked`/`append_argmax_masked` gate the on-device
   argmax so only grammar-continuable tokens can win. The page's Tool call
-  button uses `ToolCallEnforcer` with the comma-separated names input:
-  output is exactly `{"<name>":true}` or `{"<name>":false}` where `<name>`
-  is one of the registered names, so a complete document is guaranteed once
-  the key opens. The crate also exposes `JsonEnforcer` for general
-  JSON-shaped output.
+  button uses `AssistantCallEnforcer` with the comma-separated names input:
+  output is exactly the serialized assistant body
+  `{"content":<value>,"tool_calls":[{"arguments":<object>,"id":"<string>","name":"<name>"}]}`
+  where `<name>` is one of the registered names, matching the
+  lfm2-chatml-tool-json training serializer. The crate also exposes
+  `JsonEnforcer` for general JSON-shaped output and `ToolCallEnforcer` for
+  the simpler `{"<name>":true|false}` shape.
+- The prompt is wrapped in the lfm2-chatml-tool-json template
+  (`<|im_start|>` turns plus an `Available tools:` system block). The system
+  block is fixed per tool-name set, so `warm_tools` prefills it once at load
+  and `generate_json` appends only the short user/assistant tail onto the
+  cached KV prefix; the tail's pending sample is verified against the
+  grammar mask, with a full masked prefill as the fallback.

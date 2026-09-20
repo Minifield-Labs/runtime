@@ -1,4 +1,5 @@
 import init, { load } from "./pkg/minifield_web_demo.js";
+import { canonicalModelJson } from "../src/context/lfm2-chatml.mjs";
 
 // Rust polls GPU completions cooperatively; this hands the event loop back one
 // macrotask so WebGPU device-timeline promises can resolve. MessageChannel is
@@ -15,9 +16,117 @@ import init, { load } from "./pkg/minifield_web_demo.js";
 const MODEL_DIR = "../tmp/models/lfm2.5-230m";
 const FILES = {
   config: `${MODEL_DIR}/config.json`,
-  weights: `${MODEL_DIR}/lfm2.5-230m-ternary-v1.safetensors`,
+  weights: `${MODEL_DIR}/qat.safetensors`,
   tokenizer: `${MODEL_DIR}/tokenizer.json`,
 };
+
+// Task-manager schemas for the demo's default tool names, in the same
+// {type, function:{name, description, parameters}} wire shape the generator
+// writes into training records. Names outside this catalog get a bare def.
+const TOOL_DEFS = {
+  create_task: {
+    type: "function",
+    function: {
+      name: "create_task",
+      description: "Create a new task in the list.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Short task title." },
+          due_date: {
+            type: "string",
+            description: "Optional due date, ISO 8601 (YYYY-MM-DD).",
+          },
+          priority: {
+            type: "string",
+            enum: ["low", "medium", "high"],
+            description: "Task priority.",
+          },
+        },
+        required: ["title"],
+      },
+    },
+  },
+  archive_task: {
+    type: "function",
+    function: {
+      name: "archive_task",
+      description: "Archive a task so it leaves the active list.",
+      parameters: {
+        type: "object",
+        properties: {
+          task_id: { type: "string", description: "ID of the task to archive." },
+        },
+        required: ["task_id"],
+      },
+    },
+  },
+  reorder_list: {
+    type: "function",
+    function: {
+      name: "reorder_list",
+      description: "Reorder the list's items into the given order.",
+      parameters: {
+        type: "object",
+        properties: {
+          item_ids: {
+            type: "array",
+            items: { type: "string" },
+            description: "Every item ID in its new position order.",
+          },
+        },
+        required: ["item_ids"],
+      },
+    },
+  },
+  assign_owner: {
+    type: "function",
+    function: {
+      name: "assign_owner",
+      description: "Assign a task to a team member.",
+      parameters: {
+        type: "object",
+        properties: {
+          task_id: { type: "string", description: "ID of the task." },
+          owner: { type: "string", description: "Name of the assignee." },
+        },
+        required: ["task_id", "owner"],
+      },
+    },
+  },
+};
+
+// Match the lfm2-chatml-tool-json-v1 serializer used by the training worker:
+// the tokenizer prepends <|startoftext|>, each turn is
+// <|im_start|>role\nbody<|im_end|>\n, and generation follows
+// <|im_start|>assistant\n. The system block is kept separate from the
+// user/assistant tail so generate_json can cache its prefilled KV state.
+function chatmlSys(toolNames) {
+  if (!toolNames.length) return "";
+  const tools = toolNames.map(
+    (name) =>
+      TOOL_DEFS[name] ?? {
+        type: "function",
+        function: { name, parameters: { type: "object" } },
+      },
+  );
+  return `<|im_start|>system\nAvailable tools:\n${canonicalModelJson(tools)}<|im_end|>\n`;
+}
+
+function chatmlTail(userText) {
+  return `<|im_start|>user\n${userText}<|im_end|>\n<|im_start|>assistant\n`;
+}
+
+function chatml(userText, toolNames) {
+  return chatmlSys(toolNames) + chatmlTail(userText);
+}
+
+function toolNames() {
+  return tools.value
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
 
 const status = document.getElementById("status");
 const out = document.getElementById("out");
@@ -74,6 +183,8 @@ async function boot() {
     status.textContent = "uploading weights to GPU…";
     const t0 = performance.now();
     demo = await load(config, weights, tokenizer);
+    status.textContent = "prefilling tool list…";
+    await demo.warm_tools(chatmlSys(toolNames()));
     status.innerHTML = `<span class="ok">model loaded in ${((performance.now() - t0) / 1000).toFixed(1)}s</span>`;
     go.disabled = false;
     goJson.disabled = false;
@@ -116,10 +227,23 @@ function run(generate, label) {
   };
 }
 
-go.addEventListener("click", run((p, m, cb) => demo.generate(p, m, cb), "free"));
+go.addEventListener(
+  "click",
+  run((p, m, cb) => demo.generate(chatml(p, []), m, cb), "free"),
+);
 goJson.addEventListener(
   "click",
-  run((p, m, cb) => demo.generate_json(p, tools.value, m, cb), "tool"),
+  run(
+    (p, m, cb) =>
+      demo.generate_json(
+        chatmlSys(toolNames()),
+        chatmlTail(p),
+        tools.value,
+        m,
+        cb,
+      ),
+    "tool",
+  ),
 );
 
 boot();

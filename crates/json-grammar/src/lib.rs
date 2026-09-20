@@ -8,12 +8,15 @@
 //! distinct machine state and cached; per-step cost is one hashmap lookup
 //! plus the mask's upload to the backend.
 //!
-//! Two grammars ship here: [`JsonMachine`], a byte-level JSON parser
+//! Three grammars ship here: [`JsonMachine`], a byte-level JSON parser
 //! (objects, arrays, strings with standard escapes and `\uXXXX`, spec
-//! numbers, `true`/`false`/`null`, JSON whitespace, unbounded nesting), and
+//! numbers, `true`/`false`/`null`, JSON whitespace, unbounded nesting),
 //! [`ToolMachine`], the fixed tool-call shape `{"<name>":true|false}` with
-//! no whitespace. UTF-8 continuation bytes are accepted inside strings
-//! byte-wise; the model's tokenizer still owns real UTF-8 assembly.
+//! no whitespace, and [`AssistantCallMachine`], the serialized assistant
+//! body `{"content":<value>,"tool_calls":[{"arguments":<object>,"id":"<string>","name":"<name>"}]}`
+//! emitted by the lfm2-chatml-tool-json training serializer. UTF-8
+//! continuation bytes are accepted inside strings byte-wise; the model's
+//! tokenizer still owns real UTF-8 assembly.
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -328,12 +331,22 @@ impl<M: Machine> DecodeConstraint for Enforcer<M> {
         if let Some(mask) = self.cache.get(&key) {
             return Rc::clone(mask);
         }
+        // Gate the vocab scan on each token's first byte: only a handful of
+        // bytes can open a valid continuation from this state, so the full
+        // simulation runs just for those tokens.
+        let mut first = [false; 256];
+        for byte in 0..=255_u8 {
+            if self.machine.accepts(&[byte]) {
+                first[usize::from(byte)] = true;
+            }
+        }
         let mut mask = vec![0_u64; self.vocab.len().div_ceil(64)];
         for (id, word) in mask.iter_mut().enumerate() {
             for bit in 0..64 {
                 let token = id * 64 + bit;
                 if token < self.vocab.len()
                     && !self.vocab[token].is_empty()
+                    && first[usize::from(self.vocab[token][0])]
                     && self.machine.accepts(&self.vocab[token])
                 {
                     *word |= 1_u64 << bit;
@@ -413,36 +426,41 @@ impl Machine for JsonMachine {
     }
 
     fn key(&self, out: &mut Vec<u8>) {
-        for frame in &self.stack {
-            match *frame {
-                Frame::Value => out.push(0),
-                Frame::RootObject => out.push(16),
-                Frame::ObjKeyOrEnd => out.push(1),
-                Frame::ObjKey => out.push(2),
-                Frame::ObjColon => out.push(3),
-                Frame::ObjCommaOrEnd => out.push(4),
-                Frame::ArrElemOrEnd => out.push(5),
-                Frame::ArrElem => out.push(6),
-                Frame::ArrCommaOrEnd => out.push(7),
-                Frame::Str { key: is_key } => out.push(if is_key { 8 } else { 9 }),
-                Frame::Esc { key: is_key } => out.push(if is_key { 10 } else { 11 }),
-                Frame::Hex { key: is_key, left } => {
-                    out.push(if is_key { 12 } else { 13 });
-                    out.push(left);
-                }
-                Frame::Num(phase) => {
-                    out.push(14);
-                    out.push(phase as u8);
-                }
-                Frame::Lit(word, pos) => {
-                    out.push(15);
-                    out.push(match word {
-                        b"true" => 0,
-                        b"false" => 1,
-                        _ => 2,
-                    });
-                    out.push(u8::try_from(pos).unwrap_or(u8::MAX));
-                }
+        frames_key(&self.stack, out);
+    }
+}
+
+/// Append a byte-identity of a JSON parser stack for mask caching.
+fn frames_key(stack: &[Frame], out: &mut Vec<u8>) {
+    for frame in stack {
+        match *frame {
+            Frame::Value => out.push(0),
+            Frame::RootObject => out.push(16),
+            Frame::ObjKeyOrEnd => out.push(1),
+            Frame::ObjKey => out.push(2),
+            Frame::ObjColon => out.push(3),
+            Frame::ObjCommaOrEnd => out.push(4),
+            Frame::ArrElemOrEnd => out.push(5),
+            Frame::ArrElem => out.push(6),
+            Frame::ArrCommaOrEnd => out.push(7),
+            Frame::Str { key: is_key } => out.push(if is_key { 8 } else { 9 }),
+            Frame::Esc { key: is_key } => out.push(if is_key { 10 } else { 11 }),
+            Frame::Hex { key: is_key, left } => {
+                out.push(if is_key { 12 } else { 13 });
+                out.push(left);
+            }
+            Frame::Num(phase) => {
+                out.push(14);
+                out.push(phase as u8);
+            }
+            Frame::Lit(word, pos) => {
+                out.push(15);
+                out.push(match word {
+                    b"true" => 0,
+                    b"false" => 1,
+                    _ => 2,
+                });
+                out.push(u8::try_from(pos).unwrap_or(u8::MAX));
             }
         }
     }
@@ -573,24 +591,30 @@ pub struct ToolMachine {
     scratch: Vec<u8>,
 }
 
+/// Every registered name must be nonempty printable ASCII without `"` or
+/// `\` (a name that could never close or continue would be dead grammar).
+fn validate_tool_names(names: &[Vec<u8>]) {
+    assert!(
+        !names.is_empty(),
+        "tool grammar requires at least one registered name"
+    );
+    for name in names {
+        assert!(
+            !name.is_empty()
+                && name
+                    .iter()
+                    .all(|b| (0x20..=0x7e).contains(b) && *b != b'"' && *b != b'\\'),
+            "tool names must be nonempty printable ASCII without '\"' or '\\'"
+        );
+    }
+}
+
 impl ToolMachine {
     /// `names` is the registered tool-name set; every name must be nonempty
     /// printable ASCII without `"` or `\` (a name that could never close or
     /// continue would be dead grammar).
     pub fn new(names: Vec<Vec<u8>>) -> Self {
-        assert!(
-            !names.is_empty(),
-            "tool grammar requires at least one registered name"
-        );
-        for name in &names {
-            assert!(
-                !name.is_empty()
-                    && name
-                        .iter()
-                        .all(|b| (0x20..=0x7e).contains(b) && *b != b'"' && *b != b'\\'),
-                "tool names must be nonempty printable ASCII without '\"' or '\\'"
-            );
-        }
+        validate_tool_names(&names);
         Self {
             names: names.into(),
             state: ToolState::OpenBrace,
@@ -655,6 +679,316 @@ impl Enforcer<ToolMachine> {
     /// `eos` becomes allowed once the closing `}` is emitted.
     pub fn new(vocab: Vec<Vec<u8>>, eos: TokenId, names: Vec<Vec<u8>>) -> Self {
         Self::with_machine(vocab, eos, ToolMachine::new(names))
+    }
+}
+
+/// Fixed literals of the serialized assistant body, matching the
+/// lfm2-chatml-tool-json training serializer's compact canonical form.
+const ASSIST_CONTENT_KEY: &[u8] = b"{\"content\":";
+const ASSIST_CALLS_KEY: &[u8] = b",\"tool_calls\":[";
+const ASSIST_ARGS_KEY: &[u8] = b"{\"arguments\":";
+const ASSIST_ID_KEY: &[u8] = b",\"id\":\"";
+const ASSIST_NAME_KEY: &[u8] = b",\"name\":\"";
+
+/// Linear phases of the serialized assistant body
+/// `{"content":<value>,"tool_calls":[{"arguments":<object>,"id":"<string>","name":"<name>"}]}`.
+/// `content` accepts any JSON value, `arguments` must be an object, and
+/// `name` must close on a registered name. No whitespace anywhere.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AssistPhase {
+    /// Inside `{"content":`.
+    ContentKey(usize),
+    /// Inside the `content` value; the JSON stack tracks it.
+    ContentValue,
+    /// Inside `,"tool_calls":[`.
+    CallsKey(usize),
+    /// Inside the calls array after `[`: `{` opens a call, `]` ends it.
+    CallOrClose,
+    /// Inside `{"arguments":`.
+    ArgsKey(usize),
+    /// Inside the `arguments` object; the JSON stack tracks it.
+    ArgsValue,
+    /// Inside `,"id":"`.
+    IdKey(usize),
+    /// Inside the id string.
+    IdBody,
+    /// Inside an id escape.
+    IdEsc,
+    /// `\u` escape with `left` hex digits remaining.
+    IdHex(u8),
+    /// Inside `,"name":"`.
+    NameKey(usize),
+    /// Inside the name string; `key` holds the bytes emitted so far.
+    NameBody,
+    /// Name closed; `}` ends the call object.
+    CallEnd,
+    /// After a call object: `,` starts another call, `]` ends the array.
+    AfterCall,
+    /// Array closed; `}` ends the document.
+    CloseBrace,
+    /// Document complete.
+    Done,
+}
+
+/// One byte through the assistant-body machine. `key` is the emitted name
+/// bytes; `stack` is the JSON parser stack for the active value slot;
+/// `names` is the registered set `name` must match exactly.
+fn step_assist(
+    state: &mut AssistPhase,
+    key: &mut Vec<u8>,
+    stack: &mut Vec<Frame>,
+    names: &[Vec<u8>],
+    byte: u8,
+) -> bool {
+    match *state {
+        AssistPhase::ContentKey(pos) => {
+            if byte != ASSIST_CONTENT_KEY[pos] {
+                return false;
+            }
+            *state = if pos + 1 == ASSIST_CONTENT_KEY.len() {
+                stack.clear();
+                stack.push(Frame::Value);
+                AssistPhase::ContentValue
+            } else {
+                AssistPhase::ContentKey(pos + 1)
+            };
+        }
+        AssistPhase::ContentValue => {
+            if !feed_on(stack, byte) {
+                return false;
+            }
+            // A root-level bare number only terminates on whitespace: the
+            // comma after `5` feeds into the enclosing object instead, so
+            // `"content":5 ,` is reachable but `"content":5,` is not.
+            if stack.is_empty() {
+                *state = AssistPhase::CallsKey(0);
+            }
+        }
+        AssistPhase::CallsKey(pos) => {
+            if byte != ASSIST_CALLS_KEY[pos] {
+                return false;
+            }
+            *state = if pos + 1 == ASSIST_CALLS_KEY.len() {
+                AssistPhase::CallOrClose
+            } else {
+                AssistPhase::CallsKey(pos + 1)
+            };
+        }
+        AssistPhase::CallOrClose => match byte {
+            b'{' => *state = AssistPhase::ArgsKey(1),
+            b']' => *state = AssistPhase::CloseBrace,
+            _ => return false,
+        },
+        AssistPhase::ArgsKey(pos) => {
+            if byte != ASSIST_ARGS_KEY[pos] {
+                return false;
+            }
+            *state = if pos + 1 == ASSIST_ARGS_KEY.len() {
+                stack.clear();
+                stack.push(Frame::RootObject);
+                AssistPhase::ArgsValue
+            } else {
+                AssistPhase::ArgsKey(pos + 1)
+            };
+        }
+        AssistPhase::ArgsValue => {
+            if !feed_on(stack, byte) {
+                return false;
+            }
+            if stack.is_empty() {
+                *state = AssistPhase::IdKey(0);
+            }
+        }
+        AssistPhase::IdKey(pos) => {
+            if byte != ASSIST_ID_KEY[pos] {
+                return false;
+            }
+            *state = if pos + 1 == ASSIST_ID_KEY.len() {
+                AssistPhase::IdBody
+            } else {
+                AssistPhase::IdKey(pos + 1)
+            };
+        }
+        AssistPhase::IdBody => match byte {
+            b'"' => *state = AssistPhase::NameKey(0),
+            b'\\' => *state = AssistPhase::IdEsc,
+            0x00..=0x1f => return false,
+            _ => {}
+        },
+        AssistPhase::IdEsc => match byte {
+            b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' => {
+                *state = AssistPhase::IdBody;
+            }
+            b'u' => *state = AssistPhase::IdHex(4),
+            _ => return false,
+        },
+        AssistPhase::IdHex(left) => match byte {
+            b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' => {
+                *state = if left == 1 {
+                    AssistPhase::IdBody
+                } else {
+                    AssistPhase::IdHex(left - 1)
+                };
+            }
+            _ => return false,
+        },
+        AssistPhase::NameKey(pos) => {
+            if byte != ASSIST_NAME_KEY[pos] {
+                return false;
+            }
+            *state = if pos + 1 == ASSIST_NAME_KEY.len() {
+                AssistPhase::NameBody
+            } else {
+                AssistPhase::NameKey(pos + 1)
+            };
+        }
+        AssistPhase::NameBody => {
+            if byte == b'"' {
+                if !names.iter().any(|name| name.as_slice() == key.as_slice()) {
+                    return false;
+                }
+                key.clear();
+                *state = AssistPhase::CallEnd;
+            } else {
+                let pos = key.len();
+                if !names.iter().any(|name| {
+                    name.len() > pos && name.starts_with(key.as_slice()) && name[pos] == byte
+                }) {
+                    return false;
+                }
+                key.push(byte);
+            }
+        }
+        AssistPhase::CallEnd => {
+            if byte != b'}' {
+                return false;
+            }
+            *state = AssistPhase::AfterCall;
+        }
+        AssistPhase::AfterCall => match byte {
+            b',' => *state = AssistPhase::ArgsKey(0),
+            b']' => *state = AssistPhase::CloseBrace,
+            _ => return false,
+        },
+        AssistPhase::CloseBrace => {
+            if byte != b'}' {
+                return false;
+            }
+            *state = AssistPhase::Done;
+        }
+        AssistPhase::Done => return false,
+    }
+    true
+}
+
+/// Serialized-assistant-body acceptor used by [`AssistantCallEnforcer`]:
+/// `{"content":<value>,"tool_calls":[{"arguments":<object>,"id":"<string>","name":"<name>"}]}`
+/// exactly, compact with no whitespace, where `<name>` is a registered tool
+/// name. `content` and `arguments` reuse the JSON parser stack; `id` is a
+/// free string; multi-call arrays are accepted.
+pub struct AssistantCallMachine {
+    names: Rc<[Vec<u8>]>,
+    state: AssistPhase,
+    /// Bytes emitted inside the current `name` string.
+    key: Vec<u8>,
+    /// JSON parser stack for the active `content`/`arguments` slot.
+    stack: Vec<Frame>,
+    /// Reusable fork buffers for `accepts`.
+    scratch_stack: Vec<Frame>,
+    scratch_key: Vec<u8>,
+}
+
+impl AssistantCallMachine {
+    /// `names` is the registered tool-name set the `name` member must match.
+    pub fn new(names: Vec<Vec<u8>>) -> Self {
+        validate_tool_names(&names);
+        Self {
+            names: names.into(),
+            state: AssistPhase::ContentKey(0),
+            key: Vec::new(),
+            stack: Vec::new(),
+            scratch_stack: Vec::new(),
+            scratch_key: Vec::new(),
+        }
+    }
+}
+
+impl Machine for AssistantCallMachine {
+    fn feed(&mut self, byte: u8) -> bool {
+        step_assist(
+            &mut self.state,
+            &mut self.key,
+            &mut self.stack,
+            &self.names,
+            byte,
+        )
+    }
+
+    /// Simulate on scratch copies; `AssistPhase` itself is `Copy`.
+    fn accepts(&mut self, bytes: &[u8]) -> bool {
+        self.scratch_stack.clear();
+        self.scratch_stack.extend_from_slice(&self.stack);
+        self.scratch_key.clear();
+        self.scratch_key.extend_from_slice(&self.key);
+        let mut state = self.state;
+        let names = &self.names;
+        let stack = &mut self.scratch_stack;
+        let key = &mut self.scratch_key;
+        bytes
+            .iter()
+            .all(|&byte| step_assist(&mut state, key, stack, names, byte))
+    }
+
+    fn complete(&self) -> bool {
+        self.state == AssistPhase::Done
+    }
+
+    /// The mask at `NameBody` depends on which names the emitted bytes can
+    /// still reach, and slot masks depend on the JSON stack; both are part
+    /// of the cache key.
+    fn key(&self, out: &mut Vec<u8>) {
+        match self.state {
+            AssistPhase::ContentKey(pos) => out.extend([0, u8::try_from(pos).unwrap_or(u8::MAX)]),
+            AssistPhase::ContentValue => {
+                out.push(1);
+                frames_key(&self.stack, out);
+            }
+            AssistPhase::CallsKey(pos) => out.extend([2, u8::try_from(pos).unwrap_or(u8::MAX)]),
+            AssistPhase::CallOrClose => out.push(3),
+            AssistPhase::ArgsKey(pos) => out.extend([4, u8::try_from(pos).unwrap_or(u8::MAX)]),
+            AssistPhase::ArgsValue => {
+                out.push(5);
+                frames_key(&self.stack, out);
+            }
+            AssistPhase::IdKey(pos) => out.extend([6, u8::try_from(pos).unwrap_or(u8::MAX)]),
+            AssistPhase::IdBody => out.push(7),
+            AssistPhase::IdEsc => out.push(8),
+            AssistPhase::IdHex(left) => out.extend([9, left]),
+            AssistPhase::NameKey(pos) => out.extend([10, u8::try_from(pos).unwrap_or(u8::MAX)]),
+            AssistPhase::NameBody => {
+                out.push(11);
+                out.push(u8::try_from(self.key.len()).unwrap_or(u8::MAX));
+                out.extend_from_slice(&self.key);
+            }
+            AssistPhase::CallEnd => out.push(12),
+            AssistPhase::AfterCall => out.push(13),
+            AssistPhase::CloseBrace => out.push(14),
+            AssistPhase::Done => out.push(15),
+        }
+    }
+}
+
+/// Assistant-body grammar enforcer: the lfm2-chatml-tool-json serialized
+/// shape `{"content":<value>,"tool_calls":[{"arguments":<object>,"id":"<string>","name":"<name>"}]}`
+/// where `<name>` is one of the registered tool names.
+pub type AssistantCallEnforcer = Enforcer<AssistantCallMachine>;
+
+impl Enforcer<AssistantCallMachine> {
+    /// `vocab[id]` must be the token's raw bytes; pass an empty vec for ids
+    /// that have no byte form. `names` is the registered tool-name set.
+    /// `eos` becomes allowed once the document completes.
+    pub fn new(vocab: Vec<Vec<u8>>, eos: TokenId, names: Vec<Vec<u8>>) -> Self {
+        Self::with_machine(vocab, eos, AssistantCallMachine::new(names))
     }
 }
 
@@ -1006,5 +1340,195 @@ mod tests {
         let first = enforcer.allowed();
         let second = enforcer.allowed();
         assert!(Rc::ptr_eq(&first, &second));
+    }
+
+    // Temporary perf probe: synthesize a 65k-ish vocab of printable tokens
+    // and time allowed() per visited state while feeding a full document.
+    #[test]
+    #[ignore]
+    fn bench_assistant_mask() {
+        use std::time::Instant;
+        let mut vocab = vec![Vec::new(); 4];
+        for b in 0x20u8..=0x7e {
+            vocab.push(vec![b]);
+        }
+        let mut x: u64 = 0x9e3779b97f4a7c15;
+        let mut rng = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        for _ in 0..65_000 {
+            let len = 2 + (rng() % 6) as usize;
+            let tok: Vec<u8> = (0..len).map(|_| 0x20 + (rng() % 0x5f) as u8).collect();
+            vocab.push(tok);
+        }
+        let names = [
+            b"create_task".to_vec(),
+            b"archive_task".to_vec(),
+            b"reorder_list".to_vec(),
+            b"assign_owner".to_vec(),
+        ];
+        let doc = concat!(
+            "{\"content\":\"Reorder List\",\"tool_calls\":[{\"arguments\":{\"l\":1},",
+            "\"id\":\"call_0\",\"name\":\"reorder_list\"}]}"
+        );
+        let mut enforcer = AssistantCallEnforcer::new(vocab.clone(), 7, names.to_vec());
+        // Single-char id map for feeding the document.
+        let mut singles = std::collections::HashMap::new();
+        for (i, t) in vocab.iter().enumerate() {
+            if t.len() == 1 {
+                singles.insert(t[0], i as u32);
+            }
+        }
+        let start = Instant::now();
+        let mut states = 0;
+        let mut worst = (0.0, Vec::new());
+        let mut report = |e: &mut AssistantCallEnforcer| {
+            let t = Instant::now();
+            let _ = e.allowed();
+            let ms = t.elapsed().as_secs_f64() * 1000.0;
+            states += 1;
+            let mut k = Vec::new();
+            e.machine.key(&mut k);
+            if ms > worst.0 {
+                worst = (ms, k);
+            }
+        };
+        report(&mut enforcer);
+        for b in doc.bytes() {
+            let id = singles[&b];
+            enforcer.advance(id);
+            report(&mut enforcer);
+        }
+        println!(
+            "states={} total={:.1}ms worst={:.2}ms worst-key={:?}",
+            states,
+            start.elapsed().as_secs_f64() * 1000.0,
+            worst.0,
+            worst.1
+        );
+    }
+
+    /// Toy vocab plus the letters the assistant-body literals need and a
+    /// couple of multi-byte tokens that span literal boundaries.
+    fn assist_vocab() -> Vec<Vec<u8>> {
+        let mut vocab = toy_vocab();
+        vocab.extend(vocab_from(&[
+            "c",
+            "o",
+            "n",
+            "l",
+            "_",
+            "s",
+            "i",
+            "d",
+            "r",
+            "g",
+            "u",
+            "m",
+            "j",
+            "k",
+            "0",
+            "{\"content\":",
+            ",\"tool_calls\":[",
+        ]));
+        vocab
+    }
+
+    /// Registered names for the assistant tests: `a` is both a full name
+    /// and a prefix of `ab`; `x` is independent.
+    fn assist_enforcer(vocab: &[Vec<u8>]) -> AssistantCallEnforcer {
+        let names = [b"a".to_vec(), b"ab".to_vec(), b"x".to_vec()];
+        AssistantCallEnforcer::new(vocab.to_vec(), 7, names.to_vec())
+    }
+
+    /// Advance one single-character token per byte of `text`.
+    fn feed_str<M: Machine>(enforcer: &mut Enforcer<M>, vocab: &[Vec<u8>], text: &str) {
+        for ch in text.chars() {
+            enforcer.advance(id_of(vocab, &ch.to_string()) as u32);
+        }
+    }
+
+    #[test]
+    fn assistant_body_enforces_the_serialized_shape() {
+        let vocab = assist_vocab();
+        let mut enforcer = assist_enforcer(&vocab);
+        // Only `{`-starting tokens may open the document; a token carrying
+        // the whole first literal is fine too.
+        assert!(allows(&mut enforcer, id_of(&vocab, "{")));
+        assert!(allows(&mut enforcer, id_of(&vocab, "{\"content\":")));
+        assert!(!allows(&mut enforcer, id_of(&vocab, " ")));
+        assert!(!allows(&mut enforcer, id_of(&vocab, "[")));
+        assert!(!allows(&mut enforcer, 7));
+        assert!(!enforcer.complete());
+        enforcer.advance(id_of(&vocab, "{") as u32);
+        // The `{"content":` literal is strict: only `"` continues it, so
+        // `"tool_calls"` can never open first.
+        assert!(allows(&mut enforcer, id_of(&vocab, "\"")));
+        assert!(!allows(&mut enforcer, id_of(&vocab, "t")));
+        assert!(!allows(&mut enforcer, id_of(&vocab, "a")));
+        feed_str(&mut enforcer, &vocab, "\"content\":\"sure\",\"tool_calls\":[");
+        // Inside the calls array: `{` opens a call, `]` ends it.
+        assert!(allows(&mut enforcer, id_of(&vocab, "{")));
+        assert!(allows(&mut enforcer, id_of(&vocab, "]")));
+        assert!(!allows(&mut enforcer, id_of(&vocab, "\"")));
+        assert!(!enforcer.complete());
+        feed_str(
+            &mut enforcer,
+            &vocab,
+            "{\"arguments\":{\"t\":1},\"id\":\"call_0_0\",\"name\":\"ab\"}]}",
+        );
+        assert!(enforcer.complete());
+        assert!(allows(&mut enforcer, 7));
+        assert!(!allows(&mut enforcer, id_of(&vocab, " ")));
+        assert!(!allows(&mut enforcer, id_of(&vocab, "}")));
+    }
+
+    #[test]
+    fn assistant_body_accepts_empty_and_multi_call_arrays() {
+        let vocab = assist_vocab();
+        let mut enforcer = assist_enforcer(&vocab);
+        feed_str(&mut enforcer, &vocab, "{\"content\":\"ok\",\"tool_calls\":[]}");
+        assert!(enforcer.complete());
+        assert!(allows(&mut enforcer, 7));
+
+        let mut enforcer = assist_enforcer(&vocab);
+        feed_str(
+            &mut enforcer,
+            &vocab,
+            "{\"content\":\"\",\"tool_calls\":[{\"arguments\":{},\"id\":\"i\",\"name\":\"x\"},{\"arguments\":{\"b\":false},\"id\":\"j\",\"name\":\"a\"}]}",
+        );
+        assert!(enforcer.complete());
+    }
+
+    #[test]
+    fn assistant_body_name_must_stay_a_registered_prefix() {
+        let vocab = assist_vocab();
+        let mut enforcer = assist_enforcer(&vocab);
+        feed_str(
+            &mut enforcer,
+            &vocab,
+            "{\"content\":\"\",\"tool_calls\":[{\"arguments\":{},\"id\":\"i\",\"name\":\"a",
+        );
+        // `a` is a complete name and a prefix of `ab`.
+        assert!(allows(&mut enforcer, id_of(&vocab, "\"")));
+        assert!(allows(&mut enforcer, id_of(&vocab, "b")));
+        assert!(!allows(&mut enforcer, id_of(&vocab, "x")));
+        enforcer.advance(id_of(&vocab, "b") as u32);
+        // `ab` extends nothing: `"` is forced.
+        assert!(allows(&mut enforcer, id_of(&vocab, "\"")));
+        assert!(!allows(&mut enforcer, id_of(&vocab, "a")));
+    }
+
+    #[test]
+    fn assistant_body_rejects_wrong_key_order() {
+        let vocab = assist_vocab();
+        let mut enforcer = assist_enforcer(&vocab);
+        feed_str(&mut enforcer, &vocab, "{\"content\":\"x\",");
+        // Canonical order requires "tool_calls" next; "id" can't appear here.
+        assert!(allows(&mut enforcer, id_of(&vocab, "\"")));
+        assert!(!allows(&mut enforcer, id_of(&vocab, "i")));
     }
 }

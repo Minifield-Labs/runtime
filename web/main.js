@@ -280,20 +280,26 @@ function parseCriteria(text) {
   return { criteria };
 }
 
-function choicePrompt(state, instructions, criterion) {
+function choiceBase(state, instructions, criteria) {
+  const map = Object.create(null);
+  for (const criterion of criteria) {
+    map[criterion.name] = criterion.description;
+  }
   return (
     `<|im_start|>user\n` +
-    `Evaluate whether this choice is correct for the state. ` +
-    `Respond with true or false.\n` +
-    canonicalModelJson({
-      state,
-      instructions,
-      criterion: { name: criterion.name, description: criterion.description },
-    }) +
+    `Evaluate which choice best matches the state. ` +
+    `Each listed choice will be checked independently as true or false.\n` +
+    canonicalModelJson({ state, instructions, criteria: map }) +
     `<|im_end|>\n` +
     `<|im_start|>assistant\n` +
-    `{"choice":${JSON.stringify(criterion.name)},"selected":`
+    `{"choice":"`
   );
+}
+
+// The base ends on the name's opening quote so the `:"` merge stays inside
+// the base encoding and every tail remains a compositional continuation.
+function choiceTail(criterion) {
+  return `${JSON.stringify(criterion.name).slice(1)},"selected":`;
 }
 
 function renderChoice(result, criteria, ms) {
@@ -346,10 +352,9 @@ goChoice.addEventListener("click", async () => {
     const state = choiceState.value.trim();
     const instructions = choiceInstructions.value.trim();
     const result = await demo.choose(
+      choiceBase(state, instructions, criteria),
       criteria.map((criterion) => criterion.name),
-      criteria.map((criterion) =>
-        choicePrompt(state, instructions, criterion),
-      ),
+      criteria.map(choiceTail),
     );
     const ms = performance.now() - t0;
     renderChoice(result, criteria, ms);

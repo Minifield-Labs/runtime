@@ -213,34 +213,35 @@ impl WebDemo {
         stats(&text, generated, stopped)
     }
 
-    /// Score named criteria serially, one prompt prefill each, by reading the
-    /// true/false selector logits for each criterion and normalizing the
-    /// evidence differences. Every array element must be a string. Resolves to
+    /// Score named criteria serially against one shared base prompt: the base
+    /// is prefilled once, then each criterion tail branches off it and its
+    /// true/false selector logits are read back and normalized. Every array
+    /// element must be a string. Resolves to
     /// `{ type: "choice", choice, confidence, probabilities }` where
     /// `probabilities` maps each criterion name to its relative score.
     pub async fn choose(
         &mut self,
+        base_prompt: String,
         names: js_sys::Array,
-        prompts: js_sys::Array,
+        tails: js_sys::Array,
     ) -> Result<JsValue, JsValue> {
-        if names.length() != prompts.length() {
-            return Err(JsValue::from_str(
-                "names and prompts must have equal lengths",
-            ));
+        if names.length() != tails.length() {
+            return Err(JsValue::from_str("names and tails must have equal lengths"));
         }
         let names = to_string_vec(&names)?;
-        let prompts = to_string_vec(&prompts)?;
+        let tails = to_string_vec(&tails)?;
         let criteria: Vec<ChoiceCriterion<'_>> = names
             .iter()
-            .zip(&prompts)
-            .map(|(name, prompt)| ChoiceCriterion {
+            .zip(&tails)
+            .map(|(name, tail)| ChoiceCriterion {
                 name: name.as_str(),
-                prompt: prompt.as_str(),
+                tail: tail.as_str(),
             })
             .collect();
         let prepared = prepare_choice(
             &self.tokenizer,
             &ChoiceRequest {
+                base_prompt: &base_prompt,
                 criteria: &criteria,
                 true_selector: "true",
                 false_selector: "false",
@@ -249,11 +250,20 @@ impl WebDemo {
             },
         )
         .map_err(js_error)?;
+        let mut base_task = self
+            .executor
+            .prefill_choice_base(TokenChunk::all(prepared.base_input_ids()))
+            .map_err(js_error)?;
+        let base: Lfm2Prefix<WgpuBackend> = pump(&mut base_task).await?;
         let mut logit_pairs = Vec::with_capacity(prepared.criteria().len());
         for criterion in prepared.criteria() {
             let mut task = self
                 .executor
-                .prefill_choice_logits(TokenChunk::all(criterion.input_ids()), prepared.token_ids())
+                .append_choice_logits(
+                    &base,
+                    TokenChunk::all(criterion.tail_ids()),
+                    prepared.token_ids(),
+                )
                 .map_err(js_error)?;
             logit_pairs.push(pump(&mut task).await?);
         }

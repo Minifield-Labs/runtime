@@ -12,8 +12,8 @@ use minifield_engine_api::{
     BackendCapabilities, BackendIdentity, BackendLease, CompletionPoll, ExecutorError,
     FenceRetirement, GatedShortConvSpec, GqaSpec, InferenceCompletion, InferenceOps,
     MemoryAssetProvider, MemoryAssetRead, PackedHeadSpec, RectCopy2d, ResourceLimits,
-    ResourceReport, Result, RetirementRejection, RotarySpec, Shape, TokenChunk, TokenExecutor,
-    TokenId, TokenIds,
+    ResourceReport, Result, RetirementRejection, RotarySpec, Shape, TokenChoiceExecutor,
+    TokenChunk, TokenExecutor, TokenId, TokenIds,
 };
 use minifield_executor_core::{
     Lfm2ExecutionLimits, Lfm2Executor, Lfm2LoadRequest, Lfm2WeightLoadTask, LoaderLimits,
@@ -243,8 +243,24 @@ struct DeferredState {
     readback_polls: Cell<u8>,
     fail_fence: Cell<bool>,
     fail_cancel: Cell<bool>,
+    fail_after_n_copies: Cell<Option<u32>>,
     dropped_pending_fences: Cell<u32>,
     dropped_pending_readbacks: Cell<u32>,
+}
+
+impl DeferredState {
+    /// Counts down an armed copy failure: after the configured number of copy
+    /// calls succeed, the next one reports a backend failure.
+    fn inject_copy_failure(&self) -> bool {
+        match self.fail_after_n_copies.get() {
+            Some(0) => true,
+            Some(remaining) => {
+                self.fail_after_n_copies.set(Some(remaining - 1));
+                false
+            }
+            None => false,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -474,6 +490,11 @@ impl InferenceOps for DeferredBackend {
     }
 
     fn copy(&self, output: &mut Self::Buffer, input: &Self::Buffer) -> Result<()> {
+        if self.state.inject_copy_failure() {
+            return Err(ExecutorError::BackendFailure(
+                "injected failure while recording a deferred copy",
+            ));
+        }
         self.cpu.copy(output, input)
     }
 
@@ -483,6 +504,11 @@ impl InferenceOps for DeferredBackend {
         input: &Self::Buffer,
         rectangle: RectCopy2d,
     ) -> Result<()> {
+        if self.state.inject_copy_failure() {
+            return Err(ExecutorError::BackendFailure(
+                "injected failure while recording a deferred copy",
+            ));
+        }
         self.cpu.copy_rect_2d(output, input, rectangle)
     }
 
@@ -1137,4 +1163,39 @@ fn deferred_fence_submission_failure_after_model_ops_quarantines_executor_withou
         rejected.poll_step(),
         CompletionPoll::Ready(Err(ExecutorError::BackendFailure(_)))
     ));
+}
+
+#[test]
+#[ignore = "requires MINIFIELD_TRAINED_TINY_ARTIFACT"]
+fn deferred_branch_copy_failure_quarantines_recorded_work_and_retains_base() {
+    let (config, weights) = trained_inputs();
+    let state = Rc::new(DeferredState::default());
+    let mut executor = load_with_backend(
+        &config,
+        weights,
+        DeferredBackend::new(Rc::clone(&state)),
+        Lfm2ExecutionLimits {
+            max_logical_tokens: 8,
+        },
+    );
+    let mut base_task = executor
+        .prefill_choice_base(TokenChunk::all(&[1, 3]))
+        .expect("choice base prefill");
+    let base = ready(&mut base_task);
+    // One branch copy is recorded before the injected failure, so the failing
+    // call leaves destination buffers referenced by work with no completion
+    // boundary.
+    state.fail_after_n_copies.set(Some(1));
+    assert!(matches!(
+        executor.append_choice_logits(&base, TokenChunk::all(&[7]), &[2, 5]),
+        Err(ExecutorError::BackendFailure(_))
+    ));
+    assert!(
+        matches!(
+            executor.resource_report(),
+            Err(ExecutorError::BackendFailure(_))
+        ),
+        "recorded branch copies without a fence must quarantine the executor"
+    );
+    drop(base);
 }

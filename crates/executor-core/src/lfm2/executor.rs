@@ -542,6 +542,151 @@ fn clone_storage<B: InferenceOps>(
     })
 }
 
+/// Allocate branch working storage for an unscored base prefix without
+/// recording any device work: source metadata, layer kinds, shapes, and live
+/// cache lengths are validated, every destination cache uses
+/// `allocate_f32_uninit` so no clear is recorded, and only host token history
+/// is copied. `next_logits`, `sampled`, and `sampled_id` are not carried over.
+/// `copy_branch_storage` records the device-side copies once the caller owns
+/// this storage and can route it through the partial-recording quarantine.
+fn allocate_branch_storage<B: InferenceOps>(
+    context: &ModelContext<B>,
+    backend: &mut B,
+    source: &PrefixStorage<B>,
+) -> Result<PrefixStorage<B>> {
+    if source.length > context.limits.max_logical_tokens
+        || source.history.len() as u64 != source.length
+    {
+        return Err(ExecutorError::InvalidArgument(
+            "prefix cache metadata differs from logical token history",
+        ));
+    }
+    let mut history = Vec::new();
+    history
+        .try_reserve_exact(
+            usize::try_from(context.limits.max_logical_tokens).map_err(|_| {
+                ExecutorError::Overflow("configured logical capacity exceeds usize")
+            })?,
+        )
+        .map_err(|_| ExecutorError::ResourceLimit("branch token-history allocation failed"))?;
+    history.extend_from_slice(&source.history);
+    let mut layers = Vec::new();
+    layers
+        .try_reserve_exact(source.layers.len())
+        .map_err(|_| ExecutorError::ResourceLimit("branch layer-state allocation failed"))?;
+    for layer in &source.layers {
+        match layer {
+            LayerCache::Conv { history } => layers.push(LayerCache::Conv {
+                history: Tensor {
+                    buffer: backend.allocate_f32_uninit(history.shape, AllocationClass::Cache)?,
+                    shape: history.shape,
+                },
+            }),
+            LayerCache::Attention { key, value, length } => {
+                if *length > key.shape.dim(0)? || key.shape != value.shape {
+                    return Err(ExecutorError::InvalidArgument(
+                        "prefix attention cache length exceeds its allocation",
+                    ));
+                }
+                layers.push(LayerCache::Attention {
+                    key: Tensor {
+                        buffer: backend.allocate_f32_uninit(key.shape, AllocationClass::Cache)?,
+                        shape: key.shape,
+                    },
+                    value: Tensor {
+                        buffer: backend.allocate_f32_uninit(value.shape, AllocationClass::Cache)?,
+                        shape: value.shape,
+                    },
+                    length: *length,
+                });
+            }
+        }
+    }
+    Ok(PrefixStorage {
+        length: source.length,
+        history,
+        layers,
+        next_logits: None,
+        sampled: None,
+        sampled_id: None,
+    })
+}
+
+/// Record the device-side copies that populate branch `destination` storage
+/// from `source` after validating the two layer layouts correspond:
+/// convolution history is copied fully and only the live attention rows are
+/// copied. Recorded buffers must already be owned by the caller's
+/// partial-recording quarantine path.
+fn copy_branch_storage<B: InferenceOps>(
+    backend: &mut B,
+    source: &PrefixStorage<B>,
+    destination: &mut PrefixStorage<B>,
+) -> Result<()> {
+    if source.layers.len() != destination.layers.len() || source.length != destination.length {
+        return Err(ExecutorError::InvalidArgument(
+            "branch storage layout differs from its source prefix",
+        ));
+    }
+    for (source_layer, destination_layer) in source.layers.iter().zip(destination.layers.iter_mut())
+    {
+        match (source_layer, destination_layer) {
+            (
+                LayerCache::Conv {
+                    history: source_history,
+                },
+                LayerCache::Conv {
+                    history: destination_history,
+                },
+            ) => {
+                if source_history.shape != destination_history.shape {
+                    return Err(ExecutorError::InvalidArgument(
+                        "branch convolution history shape differs from its source prefix",
+                    ));
+                }
+                backend.copy(&mut destination_history.buffer, &source_history.buffer)?;
+            }
+            (
+                LayerCache::Attention {
+                    key: source_key,
+                    value: source_value,
+                    length,
+                },
+                LayerCache::Attention {
+                    key: destination_key,
+                    value: destination_value,
+                    length: destination_length,
+                },
+            ) => {
+                if source_key.shape != destination_key.shape
+                    || source_value.shape != destination_value.shape
+                    || *length != *destination_length
+                    || *length > source_key.shape.dim(0)?
+                {
+                    return Err(ExecutorError::InvalidArgument(
+                        "branch attention cache layout differs from its source prefix",
+                    ));
+                }
+                backend.copy_rect_2d(
+                    &mut destination_key.buffer,
+                    &source_key.buffer,
+                    RectCopy2d::new(0, 0, 0, 0, *length, source_key.shape.dim(1)?),
+                )?;
+                backend.copy_rect_2d(
+                    &mut destination_value.buffer,
+                    &source_value.buffer,
+                    RectCopy2d::new(0, 0, 0, 0, *length, source_value.shape.dim(1)?),
+                )?;
+            }
+            _ => {
+                return Err(ExecutorError::InvalidArgument(
+                    "branch layer kind differs from its source prefix",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn push_scratch<B: InferenceOps>(
     scratch: &mut Vec<B::Buffer>,
     values: impl IntoIterator<Item = B::Buffer>,
@@ -556,6 +701,7 @@ fn append_tokens<B: InferenceOps>(
     state: &mut PrefixStorage<B>,
     tokens: &[TokenId],
     ids: TokenIds<'_, B>,
+    produce_logits: bool,
     scratch: &mut Vec<B::Buffer>,
 ) -> Result<()> {
     let config = context.config();
@@ -918,37 +1064,39 @@ fn append_tokens<B: InferenceOps>(
             config.norm_epsilon,
         )?;
     }
-    let mut logits = allocate(
-        backend,
-        shape(1, u64::from(config.vocab_size))?,
-        AllocationClass::Cache,
-    )?;
-    if rows == 1 {
-        weight_linear(
+    if produce_logits {
+        let mut logits = allocate(
             backend,
-            &mut logits.buffer,
-            &u.buffer,
-            &context.weights,
-            Lfm2WeightRole::TiedLmHead,
+            shape(1, u64::from(config.vocab_size))?,
+            AllocationClass::Cache,
         )?;
-    } else {
-        let mut last = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
-        backend.copy_rect_2d(
-            &mut last.buffer,
-            &u.buffer,
-            RectCopy2d::new(rows - 1, 0, 0, 0, 1, hidden),
-        )?;
-        weight_linear(
-            backend,
-            &mut logits.buffer,
-            &last.buffer,
-            &context.weights,
-            Lfm2WeightRole::TiedLmHead,
-        )?;
-        push_scratch::<B>(scratch, [last.buffer]);
+        if rows == 1 {
+            weight_linear(
+                backend,
+                &mut logits.buffer,
+                &u.buffer,
+                &context.weights,
+                Lfm2WeightRole::TiedLmHead,
+            )?;
+        } else {
+            let mut last = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
+            backend.copy_rect_2d(
+                &mut last.buffer,
+                &u.buffer,
+                RectCopy2d::new(rows - 1, 0, 0, 0, 1, hidden),
+            )?;
+            weight_linear(
+                backend,
+                &mut logits.buffer,
+                &last.buffer,
+                &context.weights,
+                Lfm2WeightRole::TiedLmHead,
+            )?;
+            push_scratch::<B>(scratch, [last.buffer]);
+        }
+        state.next_logits = Some(logits);
     }
     push_scratch::<B>(scratch, [x.buffer, u.buffer]);
-    state.next_logits = Some(logits);
     state.history.extend_from_slice(tokens);
     state.length = length;
     Ok(())
@@ -992,7 +1140,7 @@ fn append_token<B: InferenceOps>(
     mask: Option<&[u64]>,
     scratch: &mut Vec<B::Buffer>,
 ) -> Result<()> {
-    append_tokens(context, backend, state, &[token], ids, scratch)?;
+    append_tokens(context, backend, state, &[token], ids, true, scratch)?;
     sample_epilogue(backend, state, mask)
 }
 
@@ -1001,6 +1149,12 @@ enum PrefixAction<B: InferenceOps> {
         tokens: Vec<TokenId>,
         /// Allowed-token bitset applied to the final token's epilogue argmax.
         mask: Option<Rc<[u64]>>,
+    },
+    /// Unscored base prefill: populates history and caches without producing
+    /// a final logits row or greedy sample, so the published prefix is only a
+    /// branch source.
+    BasePrefill {
+        tokens: Vec<TokenId>,
     },
     Append {
         tokens: Vec<TokenId>,
@@ -1126,6 +1280,20 @@ impl<B: InferenceOps> PrefixTask<B> {
         }
     }
 
+    fn base_prefill(context: Rc<ModelContext<B>>, tokens: Vec<TokenId>) -> Self {
+        Self {
+            context,
+            action: Some(PrefixAction::BasePrefill { tokens }),
+            phase: PrefixPhase::New,
+            staged: None,
+            source: None,
+            scratch: Vec::new(),
+            retained_prefixes: Vec::new(),
+            next_token: 0,
+            check_logits: false,
+        }
+    }
+
     fn terminal(&mut self, result: Result<Lfm2Prefix<B>>) -> CompletionPoll<Lfm2Prefix<B>> {
         self.action = None;
         self.staged = None;
@@ -1176,7 +1344,7 @@ impl<B: InferenceOps> PrefixTask<B> {
             return Err(ExecutorError::CompletionConsumed);
         };
         match action {
-            PrefixAction::Prefill { tokens, .. } => {
+            PrefixAction::Prefill { tokens, .. } | PrefixAction::BasePrefill { tokens } => {
                 let mut backend = self.context.borrow_backend()?;
                 let staged = allocate_empty(&self.context, &mut *backend)?;
                 drop(backend);
@@ -1279,7 +1447,12 @@ impl<B: InferenceOps> PrefixTask<B> {
             Device(TokenId, Tensor<B>),
         }
         self.context.validate_backend()?;
-        if let Some(PrefixAction::Prefill { tokens, mask }) = self.action.as_ref() {
+        let bulk = match self.action.as_ref() {
+            Some(PrefixAction::Prefill { tokens, mask }) => Some((tokens, mask.as_deref(), true)),
+            Some(PrefixAction::BasePrefill { tokens }) => Some((tokens, None, false)),
+            _ => None,
+        };
+        if let Some((tokens, mask, scored)) = bulk {
             let mut backend = self.context.borrow_backend()?;
             let Some(staged) = self.staged.as_mut() else {
                 return Err(ExecutorError::BackendFailure(
@@ -1292,9 +1465,12 @@ impl<B: InferenceOps> PrefixTask<B> {
                 staged,
                 tokens,
                 TokenIds::Host(tokens),
+                scored,
                 &mut self.scratch,
             )?;
-            sample_epilogue(&mut *backend, staged, mask.as_deref())?;
+            if scored {
+                sample_epilogue(&mut *backend, staged, mask)?;
+            }
             drop(backend);
             self.action = None;
             return self.submit_fence();
@@ -1324,7 +1500,12 @@ impl<B: InferenceOps> PrefixTask<B> {
                     (None, None)
                 }
             }
-            Some(PrefixAction::Prefill { .. } | PrefixAction::Fork { .. }) | None => {
+            Some(
+                PrefixAction::Prefill { .. }
+                | PrefixAction::BasePrefill { .. }
+                | PrefixAction::Fork { .. },
+            )
+            | None => {
                 return Err(ExecutorError::CompletionConsumed);
             }
         };
@@ -1847,6 +2028,99 @@ impl<B: InferenceOps> InferenceCompletion for PrefillChoiceTask<B> {
     }
 }
 
+/// Nonblocking shared-base branch: clones an unscored base prefix's cache
+/// state, appends one criterion tail in a single `[T, ...]` pass, gathers the
+/// selected columns of its final `[1, V]` logits into `[1, K]`, and reads
+/// them back. The base snapshot stays retained until the readback is
+/// terminal, so the same base can serve every criterion serially. No branch
+/// prefix is published and no greedy sample is computed.
+pub struct AppendChoiceTask<B: InferenceOps> {
+    context: Rc<ModelContext<B>>,
+    base: Option<Lfm2Prefix<B>>,
+    staged: Option<PrefixStorage<B>>,
+    gathered: Option<Tensor<B>>,
+    scratch: Vec<B::Buffer>,
+    readback: Option<B::Readback>,
+    expected: usize,
+    terminal: bool,
+}
+
+impl<B: InferenceOps> AppendChoiceTask<B> {
+    fn new(
+        context: Rc<ModelContext<B>>,
+        base: Lfm2Prefix<B>,
+        staged: PrefixStorage<B>,
+        gathered: Tensor<B>,
+        scratch: Vec<B::Buffer>,
+        readback: B::Readback,
+        expected: usize,
+    ) -> Self {
+        Self {
+            context,
+            base: Some(base),
+            staged: Some(staged),
+            gathered: Some(gathered),
+            scratch,
+            readback: Some(readback),
+            expected,
+            terminal: false,
+        }
+    }
+
+    fn finish(&mut self, result: Result<Vec<f32>>) -> CompletionPoll<Vec<f32>> {
+        self.base = None;
+        self.staged = None;
+        self.gathered = None;
+        self.scratch.clear();
+        self.readback = None;
+        self.terminal = true;
+        CompletionPoll::Ready(result)
+    }
+}
+
+impl<B: InferenceOps> InferenceCompletion for AppendChoiceTask<B> {
+    type Output = Vec<f32>;
+    fn poll_step(&mut self) -> CompletionPoll<Self::Output> {
+        if self.terminal {
+            return CompletionPoll::Ready(Err(ExecutorError::CompletionConsumed));
+        }
+        let Some(readback) = self.readback.as_mut() else {
+            return self.finish(Err(ExecutorError::CompletionConsumed));
+        };
+        match readback.poll_step() {
+            CompletionPoll::Pending => CompletionPoll::Pending,
+            CompletionPoll::Ready(Err(error)) => self.finish(Err(error)),
+            CompletionPoll::Ready(Ok(values)) if values.len() != self.expected => self.finish(Err(
+                ExecutorError::BackendFailure("choice readback returned the wrong value count"),
+            )),
+            CompletionPoll::Ready(Ok(values)) if values.iter().all(|value| value.is_finite()) => {
+                if let Err(error) = self.context.validate_backend() {
+                    return self.finish(Err(error));
+                }
+                self.finish(Ok(values))
+            }
+            CompletionPoll::Ready(Ok(_)) => self.finish(Err(ExecutorError::BackendFailure(
+                "selected LFM2 logits contain a non-finite value",
+            ))),
+        }
+    }
+    fn cancel(&mut self) -> Result<()> {
+        if self.terminal {
+            return Err(ExecutorError::CompletionConsumed);
+        }
+        if let Some(readback) = self.readback.as_mut() {
+            readback.cancel()?;
+        }
+        self.base = None;
+        self.staged = None;
+        self.gathered = None;
+        self.scratch.clear();
+        self.readback = None;
+        self.terminal = true;
+        Ok(())
+    }
+}
+
 fn candidate_score_transport(accumulated: f64) -> Result<f32> {
     if !accumulated.is_finite() {
         return Err(ExecutorError::BackendFailure(
@@ -2227,6 +2501,7 @@ impl<B: InferenceOps> TokenExecutor for Lfm2Executor<B> {
 impl<B: InferenceOps> TokenChoiceExecutor for Lfm2Executor<B> {
     type ChoiceLogits = ChoiceLogitsTask<B>;
     type ChoicePrefill = PrefillChoiceTask<B>;
+    type ChoiceAppend = AppendChoiceTask<B>;
 
     fn choice_logits(
         &mut self,
@@ -2303,6 +2578,7 @@ impl<B: InferenceOps> TokenChoiceExecutor for Lfm2Executor<B> {
                 &mut staged,
                 &tokens,
                 TokenIds::Host(&tokens),
+                true,
                 &mut scratch,
             )?;
             let Some(logits) = staged.next_logits.as_ref() else {
@@ -2329,6 +2605,94 @@ impl<B: InferenceOps> TokenChoiceExecutor for Lfm2Executor<B> {
         drop(backend);
         Ok(PrefillChoiceTask::new(
             Rc::clone(&self.context),
+            staged,
+            gathered,
+            scratch,
+            readback,
+            token_ids.len(),
+        ))
+    }
+
+    fn prefill_choice_base(&mut self, input: TokenChunk<'_>) -> Result<Self::Prefill> {
+        let tokens = self.accepted_tokens(input, 0)?;
+        if tokens.is_empty() {
+            return Err(ExecutorError::InvalidArgument(
+                "choice base prefill requires a nonempty prompt",
+            ));
+        }
+        Ok(PrefixTask::base_prefill(Rc::clone(&self.context), tokens))
+    }
+
+    fn append_choice_logits(
+        &mut self,
+        prefix: &Self::Prefix,
+        input: TokenChunk<'_>,
+        token_ids: &[TokenId],
+    ) -> Result<Self::ChoiceAppend> {
+        self.context.validate_prefix(prefix)?;
+        let tokens = self.accepted_tokens(input, prefix.storage.length)?;
+        if tokens.is_empty() {
+            return Err(ExecutorError::InvalidArgument(
+                "choice branch tail is empty",
+            ));
+        }
+        if token_ids.is_empty() {
+            return Err(ExecutorError::InvalidArgument(
+                "choice selector list is empty",
+            ));
+        }
+        for token in token_ids {
+            if *token >= self.context.config().vocab_size {
+                return Err(ExecutorError::OutOfBounds(
+                    "choice token ID exceeds loaded model vocabulary",
+                ));
+            }
+        }
+        self.context.validate_backend()?;
+        let count = u64::try_from(token_ids.len())
+            .map_err(|_| ExecutorError::Overflow("choice token count exceeds u64"))?;
+        let mut backend = self.context.borrow_backend()?;
+        let mut staged = allocate_branch_storage(&self.context, &mut *backend, &prefix.storage)?;
+        let mut scratch = Vec::new();
+        let mut gathered = allocate(&mut *backend, shape(1, count)?, AllocationClass::Scratch)?;
+        let recorded = (|| -> Result<B::Readback> {
+            copy_branch_storage(&mut *backend, &prefix.storage, &mut staged)?;
+            append_tokens(
+                &self.context,
+                &mut *backend,
+                &mut staged,
+                &tokens,
+                TokenIds::Host(&tokens),
+                true,
+                &mut scratch,
+            )?;
+            let Some(logits) = staged.next_logits.as_ref() else {
+                return Err(ExecutorError::BackendFailure(
+                    "choice branch produced no logits boundary",
+                ));
+            };
+            backend.gather_columns(&mut gathered.buffer, &logits.buffer, token_ids)?;
+            backend.read_f32_async(&gathered.buffer)
+        })();
+        let readback = match recorded {
+            Ok(readback) => readback,
+            Err(error) => {
+                // Recorded work may be live in a pending device queue without a
+                // completion boundary; retain every owned buffer and the base
+                // snapshot rather than dropping them into an unknown device
+                // state.
+                scratch.push(gathered.buffer);
+                scratch.extend(staged.into_buffers());
+                drop(backend);
+                self.context
+                    .quarantine_unfenced(scratch, vec![prefix.clone()]);
+                return Err(error);
+            }
+        };
+        drop(backend);
+        Ok(AppendChoiceTask::new(
+            Rc::clone(&self.context),
+            prefix.clone(),
             staged,
             gathered,
             scratch,

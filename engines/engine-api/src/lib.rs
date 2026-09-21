@@ -1684,6 +1684,7 @@ pub trait TokenExecutor {
 pub trait TokenChoiceExecutor: TokenExecutor {
     type ChoiceLogits: InferenceCompletion<Output = Vec<f32>>;
     type ChoicePrefill: InferenceCompletion<Output = Vec<f32>>;
+    type ChoiceAppend: InferenceCompletion<Output = Vec<f32>>;
 
     fn choice_logits(
         &mut self,
@@ -1702,6 +1703,28 @@ pub trait TokenChoiceExecutor: TokenExecutor {
         input: TokenChunk<'_>,
         token_ids: &[TokenId],
     ) -> Result<Self::ChoicePrefill>;
+
+    /// Prefill `input` as one single-sequence pass that publishes an
+    /// immutable branch base: token history and layer caches are populated,
+    /// but no final logits row or greedy sample is produced. The published
+    /// prefix is only a valid source for [`Self::append_choice_logits`] and
+    /// [`Self::fork`]. Implementations reject an empty accepted prompt.
+    fn prefill_choice_base(&mut self, input: TokenChunk<'_>) -> Result<Self::Prefill>;
+
+    /// Branch from `prefix`, append `input` as one single-sequence pass, and
+    /// resolve to the `token_ids` logits at the branch's final position in
+    /// caller order, preserving duplicates, with exactly `token_ids.len()`
+    /// finite values. `prefix` stays immutable and reusable for further
+    /// branches; no branch prefix is published and no greedy sample is
+    /// computed. Implementations reject an empty accepted tail, an empty
+    /// selector list, ids outside the vocabulary, and base+tail overflow of
+    /// the configured prefix capacity.
+    fn append_choice_logits(
+        &mut self,
+        prefix: &Self::Prefix,
+        input: TokenChunk<'_>,
+        token_ids: &[TokenId],
+    ) -> Result<Self::ChoiceAppend>;
 }
 
 /// Per-step decode constraint driven by a generation loop: supplies the

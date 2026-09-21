@@ -173,9 +173,10 @@
 
   <section class="choice">
     <h2>Structured choice</h2>
-    <p class="sub">Each criterion is evaluated independently against true and
-    false, serially in this first prototype. Probabilities are relative model
-    scores, not calibrated confidence.</p>
+    <p class="sub">One shared prefill holds the state, question, and every
+    criterion; each criterion then branches off it serially against true and
+    false. Probabilities are relative model scores, not calibrated
+    confidence.</p>
 
     <label for="choiceState">State</label>
     <textarea id="choiceState">A customer says: “I was charged twice for the same order.”</textarea>

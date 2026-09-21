@@ -25,7 +25,11 @@ struct FakeExecutor {
     logits_calls: usize,
     choice_calls: usize,
     choice_prefill_calls: usize,
+    choice_base_calls: usize,
+    choice_append_calls: usize,
     choice_ids: Vec<TokenId>,
+    branch_bases: Vec<Vec<TokenId>>,
+    branch_tails: Vec<Vec<TokenId>>,
     events: Vec<&'static str>,
     fail_append: bool,
 }
@@ -42,7 +46,11 @@ impl FakeExecutor {
             logits_calls: 0,
             choice_calls: 0,
             choice_prefill_calls: 0,
+            choice_base_calls: 0,
+            choice_append_calls: 0,
             choice_ids: Vec::new(),
+            branch_bases: Vec::new(),
+            branch_tails: Vec::new(),
             events: Vec::new(),
             fail_append: false,
         }
@@ -188,6 +196,7 @@ impl TokenExecutor for FakeExecutor {
 impl TokenChoiceExecutor for FakeExecutor {
     type ChoiceLogits = ReadyCompletion<Vec<f32>>;
     type ChoicePrefill = ReadyCompletion<Vec<f32>>;
+    type ChoiceAppend = ReadyCompletion<Vec<f32>>;
 
     fn choice_logits(
         &mut self,
@@ -214,6 +223,32 @@ impl TokenChoiceExecutor for FakeExecutor {
         self.choice_prefill_calls += 1;
         self.events.push("choice_prefill");
         self.choice_ids.extend_from_slice(token_ids);
+        let result = self
+            .logits
+            .pop_front()
+            .unwrap_or(Err(ExecutorError::BackendFailure(
+                "unexpected logits request",
+            )));
+        Ok(ReadyCompletion::new(result))
+    }
+
+    fn prefill_choice_base(&mut self, input: TokenChunk<'_>) -> ExecutorResult<Self::Prefill> {
+        self.choice_base_calls += 1;
+        self.events.push("choice_base");
+        Ok(ReadyCompletion::new(Ok(Prefix(input.ids.to_vec()))))
+    }
+
+    fn append_choice_logits(
+        &mut self,
+        prefix: &Self::Prefix,
+        input: TokenChunk<'_>,
+        token_ids: &[TokenId],
+    ) -> ExecutorResult<Self::ChoiceAppend> {
+        self.choice_append_calls += 1;
+        self.events.push("choice_append");
+        self.choice_ids.extend_from_slice(token_ids);
+        self.branch_bases.push(prefix.0.clone());
+        self.branch_tails.push(input.ids.to_vec());
         let result = self
             .logits
             .pop_front()
@@ -504,12 +539,13 @@ fn constrained_generate_surfaces_an_empty_candidate_row() {
 fn criteria<'a>(specs: &'a [(&'a str, &'a str)]) -> Vec<ChoiceCriterion<'a>> {
     specs
         .iter()
-        .map(|&(name, prompt)| ChoiceCriterion { name, prompt })
+        .map(|&(name, tail)| ChoiceCriterion { name, tail })
         .collect()
 }
 
-fn choice_request<'a>(criteria: &'a [ChoiceCriterion<'a>]) -> ChoiceRequest<'a> {
+fn choice_request<'a>(base: &'a str, criteria: &'a [ChoiceCriterion<'a>]) -> ChoiceRequest<'a> {
     ChoiceRequest {
+        base_prompt: base,
         criteria,
         true_selector: "x",
         false_selector: "b",
@@ -522,7 +558,7 @@ fn choice_request<'a>(criteria: &'a [ChoiceCriterion<'a>]) -> ChoiceRequest<'a> 
 #[allow(clippy::cast_possible_truncation)]
 fn choose_scores_each_criterion_serially() {
     let tokenizer = tokenizer();
-    let criteria = criteria(&[("billing", "ax"), ("technical", "aax"), ("axx", "axx")]);
+    let criteria = criteria(&[("billing", "x"), ("technical", "ax"), ("general", "xx")]);
     let mut executor = FakeExecutor::new(vec![
         Ok(vec![5.0, 4.0]),
         Ok(vec![9.0, 9.0]),
@@ -532,19 +568,28 @@ fn choose_scores_each_criterion_serially() {
     let result = choose(
         &mut executor,
         &tokenizer,
-        &choice_request(&criteria),
+        &choice_request("a", &criteria),
         &mut cancellation,
     )
     .unwrap_or_else(|error| panic!("choice should succeed: {error}"));
 
     assert_eq!(executor.prefill_calls, 0);
     assert_eq!(executor.choice_calls, 0);
-    assert_eq!(executor.choice_prefill_calls, 3);
+    assert_eq!(executor.choice_prefill_calls, 0);
+    assert_eq!(executor.choice_base_calls, 1);
+    assert_eq!(executor.choice_append_calls, 3);
     assert_eq!(executor.choice_ids, vec![4, 2, 4, 2, 4, 2]);
     assert_eq!(
         executor.events,
-        ["choice_prefill", "choice_prefill", "choice_prefill"]
+        [
+            "choice_base",
+            "choice_append",
+            "choice_append",
+            "choice_append"
+        ]
     );
+    assert_eq!(executor.branch_bases, [vec![0], vec![0], vec![0]]);
+    assert_eq!(executor.branch_tails, [vec![4], vec![0, 4], vec![4, 4]]);
     assert_eq!(executor.logits_calls, 0);
     assert_eq!(executor.masked_calls, 0);
     assert!(executor.appended.is_empty());
@@ -563,7 +608,7 @@ fn choose_scores_each_criterion_serially() {
                 probability: (1.0 / denominator) as f32,
             },
             ChoiceProbability {
-                name: "axx".to_owned(),
+                name: "general".to_owned(),
                 probability: (weight / denominator) as f32,
             },
         ]
@@ -580,13 +625,13 @@ fn choose_scores_each_criterion_serially() {
 #[test]
 fn choose_prefers_the_first_criterion_on_an_exact_evidence_tie() {
     let tokenizer = tokenizer();
-    let criteria = criteria(&[("billing", "ax"), ("technical", "aax")]);
+    let criteria = criteria(&[("billing", "x"), ("technical", "ax")]);
     let mut executor = FakeExecutor::new(vec![Ok(vec![3.0, 1.0]), Ok(vec![7.0, 5.0])]);
     let mut cancellation = NeverCancel;
     let result = choose(
         &mut executor,
         &tokenizer,
-        &choice_request(&criteria),
+        &choice_request("a", &criteria),
         &mut cancellation,
     )
     .unwrap_or_else(|error| panic!("tied choice should succeed: {error}"));
@@ -598,8 +643,8 @@ fn choose_prefers_the_first_criterion_on_an_exact_evidence_tie() {
 #[allow(clippy::float_cmp)]
 fn choose_confidence_is_zero_for_uniform_and_one_for_one_hot() {
     let tokenizer = tokenizer();
-    let criteria = criteria(&[("a", "ax"), ("b", "aax"), ("c", "axx")]);
-    let request = choice_request(&criteria);
+    let criteria = criteria(&[("a", "x"), ("b", "ax"), ("c", "xx")]);
+    let request = choice_request("a", &criteria);
 
     let mut uniform = FakeExecutor::new(vec![
         Ok(vec![2.0, 2.0]),
@@ -626,8 +671,8 @@ fn choose_confidence_is_zero_for_uniform_and_one_for_one_hot() {
 #[test]
 fn finish_choice_is_invariant_to_per_criterion_additive_shifts() {
     let tokenizer = tokenizer();
-    let criteria = criteria(&[("billing", "ax"), ("technical", "aax"), ("general", "axx")]);
-    let request = choice_request(&criteria);
+    let criteria = criteria(&[("billing", "x"), ("technical", "ax"), ("general", "xx")]);
+    let request = choice_request("a", &criteria);
 
     let prepared = prepare_choice(&tokenizer, &request)
         .unwrap_or_else(|error| panic!("criteria should prepare: {error}"));
@@ -651,63 +696,79 @@ fn finish_choice_is_invariant_to_per_criterion_additive_shifts() {
 #[test]
 fn prepare_choice_validates_criteria_and_selectors() {
     let tokenizer = tokenizer();
-    let valid = criteria(&[("billing", "ax"), ("technical", "aax")]);
-    let prepared = prepare_choice(&tokenizer, &choice_request(&valid))
+    let valid = criteria(&[("billing", "x"), ("technical", "ax")]);
+    let prepared = prepare_choice(&tokenizer, &choice_request("a", &valid))
         .unwrap_or_else(|error| panic!("valid criteria should prepare: {error}"));
     assert_eq!(prepared.token_ids(), &[4, 2]);
+    assert_eq!(prepared.base_input_ids(), &[0]);
     assert_eq!(prepared.criteria().len(), 2);
     assert_eq!(prepared.criteria()[0].name(), "billing");
-    assert_eq!(prepared.criteria()[0].input_ids(), &[0, 4]);
-    assert_eq!(prepared.criteria()[1].input_ids(), &[0, 0, 4]);
+    assert_eq!(prepared.criteria()[0].tail_ids(), &[4]);
+    assert_eq!(prepared.criteria()[1].tail_ids(), &[0, 4]);
 
-    let mut bos = choice_request(&valid);
+    let mut bos = choice_request("a", &valid);
     bos.add_bos = true;
     let prepared = prepare_choice(&tokenizer, &bos)
         .unwrap_or_else(|error| panic!("BOS request should prepare: {error}"));
-    assert_eq!(prepared.criteria()[0].input_ids(), &[1, 0, 4]);
+    assert_eq!(prepared.base_input_ids(), &[1, 0]);
 
     for specs in [
-        &[("billing", "ax")][..],
-        &[("", "ax"), ("technical", "aax")][..],
-        &[("dup", "ax"), ("dup", "axx")][..],
+        &[("billing", "x")][..],
+        &[("", "x"), ("technical", "ax")][..],
+        &[("dup", "x"), ("dup", "ax")][..],
+        &[("billing", ""), ("technical", "ax")][..],
     ] {
         assert!(
             matches!(
-                prepare_choice(&tokenizer, &choice_request(&criteria(specs))),
+                prepare_choice(&tokenizer, &choice_request("a", &criteria(specs))),
                 Err(ChoiceError::InvalidChoices(_))
             ),
             "criteria {specs:?} should be rejected"
         );
     }
 
-    let mut empty_true = choice_request(&valid);
+    assert!(matches!(
+        prepare_choice(&tokenizer, &choice_request("", &valid)),
+        Err(ChoiceError::InvalidChoices(_))
+    ));
+
+    let mut empty_true = choice_request("a", &valid);
     empty_true.true_selector = "";
     assert!(matches!(
         prepare_choice(&tokenizer, &empty_true),
         Err(ChoiceError::InvalidChoices(_))
     ));
 
-    let mut same_selector = choice_request(&valid);
+    let mut same_selector = choice_request("a", &valid);
     same_selector.false_selector = "x";
     assert!(matches!(
         prepare_choice(&tokenizer, &same_selector),
         Err(ChoiceError::InvalidChoices(_))
     ));
 
-    let mut multi_token = choice_request(&valid);
+    let mut multi_token = choice_request("a", &valid);
     multi_token.true_selector = "ax";
     assert!(matches!(
         prepare_choice(&tokenizer, &multi_token),
         Err(ChoiceError::InvalidChoices(_))
     ));
 
-    let merged = criteria(&[("billing", "a"), ("technical", "ax")]);
+    // "a" + "b" merges to the single token "ab", so a "b" tail cannot
+    // compose after base "a".
+    let merged_tail = criteria(&[("billing", "b"), ("technical", "x")]);
     assert!(matches!(
-        prepare_choice(&tokenizer, &choice_request(&merged)),
+        prepare_choice(&tokenizer, &choice_request("a", &merged_tail)),
         Err(ChoiceError::InvalidChoices(_))
     ));
 
-    let mut tight = choice_request(&valid);
+    // "x" + "a" composes, but the false selector "b" then merges into "ab".
+    let merged_selector = criteria(&[("billing", "a"), ("technical", "x")]);
+    assert!(matches!(
+        prepare_choice(&tokenizer, &choice_request("x", &merged_selector)),
+        Err(ChoiceError::InvalidChoices(_))
+    ));
+
+    let mut tight = choice_request("a", &valid);
     tight.max_context_tokens = 1;
     assert!(matches!(
         prepare_choice(&tokenizer, &tight),
@@ -726,11 +787,11 @@ fn prepare_choice_rejects_more_than_255_criteria() {
         .iter()
         .map(|name| ChoiceCriterion {
             name: name.as_str(),
-            prompt: "ax",
+            tail: "x",
         })
         .collect();
     assert!(matches!(
-        prepare_choice(&tokenizer, &choice_request(&many)),
+        prepare_choice(&tokenizer, &choice_request("a", &many)),
         Err(ChoiceError::InvalidChoices(
             "choice supports at most 255 criteria"
         ))
@@ -740,8 +801,8 @@ fn prepare_choice_rejects_more_than_255_criteria() {
 #[test]
 fn finish_choice_requires_one_finite_pair_per_criterion() {
     let tokenizer = tokenizer();
-    let criteria = criteria(&[("billing", "ax"), ("technical", "aax")]);
-    let request = choice_request(&criteria);
+    let criteria = criteria(&[("billing", "x"), ("technical", "ax")]);
+    let request = choice_request("a", &criteria);
 
     let prepared = prepare_choice(&tokenizer, &request)
         .unwrap_or_else(|error| panic!("criteria should prepare: {error}"));
@@ -768,7 +829,7 @@ fn finish_choice_requires_one_finite_pair_per_criterion() {
 #[test]
 fn choose_propagates_executor_failure_and_late_cancellation() {
     let tokenizer = tokenizer();
-    let criteria = criteria(&[("billing", "ax"), ("technical", "aax"), ("general", "axx")]);
+    let criteria = criteria(&[("billing", "x"), ("technical", "ax"), ("general", "xx")]);
 
     let mut failing = FakeExecutor::new(vec![
         Ok(vec![1.0, 0.0]),
@@ -779,7 +840,7 @@ fn choose_propagates_executor_failure_and_late_cancellation() {
         choose(
             &mut failing,
             &tokenizer,
-            &choice_request(&criteria),
+            &choice_request("a", &criteria),
             &mut cancellation
         ),
         Err(ChoiceError::Executor(ExecutorError::BackendFailure(
@@ -788,7 +849,9 @@ fn choose_propagates_executor_failure_and_late_cancellation() {
     );
     assert_eq!(failing.prefill_calls, 0);
     assert_eq!(failing.choice_calls, 0);
-    assert_eq!(failing.choice_prefill_calls, 2);
+    assert_eq!(failing.choice_prefill_calls, 0);
+    assert_eq!(failing.choice_base_calls, 1);
+    assert_eq!(failing.choice_append_calls, 2);
 
     let mut executor = FakeExecutor::new(vec![Ok(vec![1.0, 0.0]); 3]);
     let mut checks = 0_u8;
@@ -800,13 +863,15 @@ fn choose_propagates_executor_failure_and_late_cancellation() {
         choose(
             &mut executor,
             &tokenizer,
-            &choice_request(&criteria),
+            &choice_request("a", &criteria),
             &mut cancelling
         ),
         Err(ChoiceError::Cancelled)
     );
     assert_eq!(executor.prefill_calls, 0);
     assert_eq!(executor.choice_calls, 0);
-    assert_eq!(executor.choice_prefill_calls, 3);
+    assert_eq!(executor.choice_prefill_calls, 0);
+    assert_eq!(executor.choice_base_calls, 1);
+    assert_eq!(executor.choice_append_calls, 2);
     assert!(executor.appended.is_empty());
 }

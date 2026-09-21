@@ -305,19 +305,22 @@ fn ensure_context(required: usize, limit: usize) -> Result<(), GenerationError> 
     Ok(())
 }
 
-/// One criterion in a structured choice: a caller-facing name plus the full
-/// prompt the model answers with a true or false continuation.
+/// One criterion in a structured choice: a caller-facing name plus the tail
+/// appended to the shared base prompt for this criterion's true/false
+/// continuation.
 #[derive(Clone, Debug)]
 pub struct ChoiceCriterion<'a> {
     pub name: &'a str,
-    pub prompt: &'a str,
+    pub tail: &'a str,
 }
 
-/// Caller-provided structured-choice request. Every criterion prompt is
-/// prefilled independently and scored against the shared one-token true and
-/// false selectors; no output tokens are generated.
+/// Caller-provided structured-choice request. The shared base prompt is
+/// prefilled once, then each criterion tail is appended serially and scored
+/// against the shared one-token true and false selectors; no output tokens
+/// are generated.
 #[derive(Clone, Debug)]
 pub struct ChoiceRequest<'a> {
+    pub base_prompt: &'a str,
     pub criteria: &'a [ChoiceCriterion<'a>],
     pub true_selector: &'a str,
     pub false_selector: &'a str,
@@ -389,11 +392,11 @@ impl From<ExecutorError> for ChoiceError {
     }
 }
 
-/// One prepared criterion: its caller-provided name and tokenized prompt
-/// input for that criterion's prefill.
+/// One prepared criterion: its caller-provided name and tokenized tail
+/// appended to the shared base prefix for this criterion's scoring pass.
 pub struct PreparedCriterion {
     name: String,
-    input_ids: Vec<TokenId>,
+    tail_ids: Vec<TokenId>,
 }
 
 impl PreparedCriterion {
@@ -403,24 +406,32 @@ impl PreparedCriterion {
         &self.name
     }
 
-    /// The tokenized prompt input for this criterion's prefill.
+    /// The tokenized tail appended to the shared base for this criterion.
     #[must_use]
-    pub fn input_ids(&self) -> &[TokenId] {
-        &self.input_ids
+    pub fn tail_ids(&self) -> &[TokenId] {
+        &self.tail_ids
     }
 }
 
 /// Validated, tokenized choice state. Produced by [`prepare_choice`],
-/// consumed by [`finish_choice`]; async hosts prefill each criterion's
-/// `input_ids()` serially and pass `token_ids()` to
-/// `TokenChoiceExecutor::choice_logits`, so only two logits per criterion
-/// cross to the host.
+/// consumed by [`finish_choice`]; async hosts prefill `base_input_ids()` once
+/// through `TokenChoiceExecutor::prefill_choice_base`, then serially pass
+/// each criterion's `tail_ids()` and `token_ids()` to
+/// `TokenChoiceExecutor::append_choice_logits`, so only two logits per
+/// criterion cross to the host.
 pub struct PreparedChoice {
+    base_input_ids: Vec<TokenId>,
     criteria: Vec<PreparedCriterion>,
     token_ids: [TokenId; 2],
 }
 
 impl PreparedChoice {
+    /// The tokenized shared base prompt, prefilled once for all criteria.
+    #[must_use]
+    pub fn base_input_ids(&self) -> &[TokenId] {
+        &self.base_input_ids
+    }
+
     /// The prepared criteria in caller order.
     #[must_use]
     pub fn criteria(&self) -> &[PreparedCriterion] {
@@ -436,24 +447,31 @@ impl PreparedChoice {
 
 /// Tokenize and validate a choice request without touching an executor.
 ///
-/// A request must list between 2 and 255 criteria. Every criterion name
-/// must be nonempty and unique, and every criterion
-/// prompt is encoded independently with the request's BOS policy and bounded
-/// by `max_context_tokens`. The true and false selectors must be nonempty,
+/// The base prompt must be nonempty and a request must list between 2 and
+/// 255 criteria. Every criterion name and tail must be nonempty and every
+/// name unique. The base is encoded once with the request's BOS policy;
+/// every tail is encoded without special tokens and must compose strictly:
+/// encoding `base_prompt + tail` with BOS must equal the base IDs followed
+/// by the tail IDs, and `base_ids.len() + tail_ids.len()` is bounded by
+/// `max_context_tokens`. The true and false selectors must be nonempty,
 /// distinct, encode to exactly one distinct token each without special
-/// tokens, and compose with every criterion prompt: encoding
-/// `prompt + selector` must equal that prompt's IDs followed by exactly the
+/// tokens, and compose with every `base_prompt + tail`: encoding the full
+/// text plus a selector must equal the criterion IDs followed by exactly the
 /// selector token.
 ///
 /// # Errors
 ///
-/// Returns `InvalidChoices` when any criterion or selector rule fails,
-/// `ContextLimit` when a prompt exceeds the context bound, and `Tokenizer`
-/// for encoding failures.
+/// Returns `InvalidChoices` when any base, criterion, or selector rule
+/// fails, `ContextLimit` when a criterion's total exceeds the context bound,
+/// and `Tokenizer` for encoding failures.
+#[allow(clippy::too_many_lines)]
 pub fn prepare_choice(
     tokenizer: &Tokenizer,
     request: &ChoiceRequest<'_>,
 ) -> Result<PreparedChoice, ChoiceError> {
+    if request.base_prompt.is_empty() {
+        return Err(ChoiceError::InvalidChoices("choice base prompt is empty"));
+    }
     if request.criteria.len() < 2 {
         return Err(ChoiceError::InvalidChoices(
             "choice requires at least two criteria",
@@ -495,6 +513,12 @@ pub fn prepare_choice(
             "choice selector token IDs must be distinct",
         ));
     }
+    let base_input_ids = tokenizer.encode(
+        request.base_prompt,
+        EncodeOptions {
+            add_special_tokens: request.add_bos,
+        },
+    )?;
     let mut criteria = Vec::with_capacity(request.criteria.len());
     let mut continued = String::new();
     for criterion in request.criteria {
@@ -509,24 +533,43 @@ pub fn prepare_choice(
                 "criterion names must be unique",
             ));
         }
-        let input_ids = tokenizer.encode(
-            criterion.prompt,
+        if criterion.tail.is_empty() {
+            return Err(ChoiceError::InvalidChoices("criterion tail is empty"));
+        }
+        let tail_ids = tokenizer.encode(
+            criterion.tail,
+            EncodeOptions {
+                add_special_tokens: false,
+            },
+        )?;
+        let total = base_input_ids.len() + tail_ids.len();
+        if total > request.max_context_tokens {
+            return Err(ChoiceError::ContextLimit {
+                required: total,
+                limit: request.max_context_tokens,
+            });
+        }
+        continued.clear();
+        continued.push_str(request.base_prompt);
+        continued.push_str(criterion.tail);
+        let composed = tokenizer.encode(
+            &continued,
             EncodeOptions {
                 add_special_tokens: request.add_bos,
             },
         )?;
-        if input_ids.len() > request.max_context_tokens {
-            return Err(ChoiceError::ContextLimit {
-                required: input_ids.len(),
-                limit: request.max_context_tokens,
-            });
+        if composed.len() != total
+            || composed[..base_input_ids.len()] != base_input_ids[..]
+            || composed[base_input_ids.len()..] != tail_ids[..]
+        {
+            return Err(ChoiceError::InvalidChoices(
+                "criterion tail is not a compositional continuation of the base prompt",
+            ));
         }
         for (selector, token_id) in [request.true_selector, request.false_selector]
             .iter()
             .zip(token_ids.iter())
         {
-            continued.clear();
-            continued.push_str(criterion.prompt);
             continued.push_str(selector);
             let continued_ids = tokenizer.encode(
                 &continued,
@@ -534,8 +577,9 @@ pub fn prepare_choice(
                     add_special_tokens: request.add_bos,
                 },
             )?;
-            if continued_ids.len() != input_ids.len() + 1
-                || continued_ids[..input_ids.len()] != input_ids[..]
+            continued.truncate(continued.len() - selector.len());
+            if continued_ids.len() != total + 1
+                || continued_ids[..total] != composed[..]
                 || continued_ids.last() != Some(token_id)
             {
                 return Err(ChoiceError::InvalidChoices(
@@ -545,10 +589,11 @@ pub fn prepare_choice(
         }
         criteria.push(PreparedCriterion {
             name: criterion.name.to_owned(),
-            input_ids,
+            tail_ids,
         });
     }
     Ok(PreparedChoice {
+        base_input_ids,
         criteria,
         token_ids,
     })
@@ -627,10 +672,10 @@ pub fn finish_choice(
     })
 }
 
-/// Serial structured choice: each criterion prompt gets one prefill plus one
-/// `[true, false]` selector-logit readback, completed before the next
-/// criterion starts. No output tokens are generated and no full vocabulary
-/// row crosses to the host.
+/// Serial structured choice: the shared base prompt is prefilled once, then
+/// each criterion tail is appended and its `[true, false]` selector logits
+/// read back, completed before the next criterion starts. No output tokens
+/// are generated and no full vocabulary row crosses to the host.
 ///
 /// # Errors
 ///
@@ -647,10 +692,15 @@ where
     C: Cancellation,
 {
     let prepared = prepare_choice(tokenizer, request)?;
+    let mut base_task = executor.prefill_choice_base(TokenChunk::all(prepared.base_input_ids()))?;
+    let base = complete_choice(&mut base_task, cancellation)?;
     let mut logit_pairs = Vec::with_capacity(prepared.criteria().len());
     for criterion in prepared.criteria() {
-        let mut task = executor
-            .prefill_choice_logits(TokenChunk::all(criterion.input_ids()), prepared.token_ids())?;
+        let mut task = executor.append_choice_logits(
+            &base,
+            TokenChunk::all(criterion.tail_ids()),
+            prepared.token_ids(),
+        )?;
         logit_pairs.push(complete_choice(&mut task, cancellation)?);
     }
     finish_choice(prepared, logit_pairs)

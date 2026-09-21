@@ -392,4 +392,33 @@ fn wgpu_packed_executor_matches_cpu_on_real_model() {
             "selector {index}: wgpu {gpu_value} diverged from cpu {cpu_value}"
         );
     }
+
+    // Shared-base branches: one unscored base prefill per backend, then two
+    // serial tails; each branch's selected logits must agree across backends.
+    let mut gpu_base_task = gpu_exec
+        .prefill_choice_base(TokenChunk::all(&tokens[..8]))
+        .expect("gpu base prefill");
+    let gpu_base = ready(&mut gpu_base_task);
+    let mut cpu_base_task = cpu_exec
+        .prefill_choice_base(TokenChunk::all(&tokens[..8]))
+        .expect("cpu base prefill");
+    let cpu_base = ready(&mut cpu_base_task);
+    for tail in [&tokens[8..10], &tokens[10..]] {
+        let mut gpu_branch = gpu_exec
+            .append_choice_logits(&gpu_base, TokenChunk::all(tail), &selectors)
+            .expect("gpu branch");
+        let gpu_values = ready(&mut gpu_branch);
+        let mut cpu_branch = cpu_exec
+            .append_choice_logits(&cpu_base, TokenChunk::all(tail), &selectors)
+            .expect("cpu branch");
+        let cpu_values = ready(&mut cpu_branch);
+        assert_eq!(gpu_values.len(), selectors.len());
+        assert_eq!(cpu_values.len(), selectors.len());
+        for (index, (gpu_value, cpu_value)) in gpu_values.iter().zip(&cpu_values).enumerate() {
+            assert!(
+                (gpu_value - cpu_value).abs() <= LOGIT_TOLERANCE,
+                "branch selector {index}: wgpu {gpu_value} diverged from cpu {cpu_value}"
+            );
+        }
+    }
 }

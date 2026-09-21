@@ -10,13 +10,14 @@ output bounds before every candidate, validates candidate decoding before model 
 publishes the prefix and text after append completes. Callers choose BOS insertion, special-token
 rendering, and cancellation handling through `GenerationRequest`.
 
-`choose` performs typed binary-criterion choice scoring over a `TokenChoiceExecutor`. Each named
-criterion gets its own prompt and is evaluated serially: one `prefill_choice_logits` call runs the
-whole criterion prompt as a single multi-token prefill pass and reads back only its true/false
-selector logits (no generated tokens, no published prefix, no full-vocabulary readback).
-`prepare_choice` tokenizes and validates the criteria and selectors up front, and `finish_choice`
-softmaxes each criterion's true-minus-false evidence so async hosts can pump the completions
-themselves.
+`choose` performs typed binary-criterion choice scoring over a `TokenChoiceExecutor`. A shared
+`base_prompt` is prefilled once in a single multi-token pass with `prefill_choice_base`, then each
+named criterion's `tail` is evaluated serially: `append_choice_logits` branches the immutable base,
+appends the short tail, and reads back only its true/false selector logits (no generated tokens, no
+published branch prefix, no full-vocabulary readback). `prepare_choice` tokenizes the base and
+criteria up front, requiring every tail and selector to be a compositional continuation, and
+`finish_choice` softmaxes each criterion's true-minus-false evidence so async hosts can pump the
+completions themselves.
 
 Run the compact checks with:
 

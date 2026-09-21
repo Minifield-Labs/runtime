@@ -814,6 +814,138 @@ fn prefill_choice_logits_reads_selected_columns_directly() {
     }
 }
 
+/// Shared-base branches: an unscored base prefill publishes only cache state,
+/// and each `append_choice_logits` tail must equal a direct full prefill of
+/// base+tail. The fixture's conv + `full_attention` layers cover both cache
+/// paths, and CPU rows are computed independently so equality is bitwise.
+#[test]
+fn append_choice_logits_branches_off_a_shared_unscored_base() {
+    let (config, packed_bytes, dequant_bytes) = tiny_packed_fixture();
+    let base_tokens = [3_u32, 5, 9];
+    let tails: [&[u32]; 2] = [&[42, 7], &[11]];
+    let selectors = [41_u32, 7, 100];
+    for (weights, format, label) in [
+        (&dequant_bytes, Lfm2WeightFormat::Dense, "dense"),
+        (&packed_bytes, Lfm2WeightFormat::TernaryV1, "packed"),
+    ] {
+        let mut executor = load_executor(&config, weights, format, 1 << 24);
+
+        let mut base_task = executor
+            .prefill_choice_base(TokenChunk::all(&base_tokens))
+            .expect("base prefill");
+        let base = ready(&mut base_task);
+        assert_eq!(base.token_history(), base_tokens, "{label}");
+        assert_eq!(base.logical_length(), 3, "{label}");
+        assert_eq!(
+            executor.sampled_token(&base).expect("sampled"),
+            None,
+            "{label}: unscored base must carry no sample"
+        );
+        assert!(
+            executor.next_logits(&base).is_err(),
+            "{label}: unscored base must carry no logits"
+        );
+
+        for tail in tails {
+            let mut task = executor
+                .append_choice_logits(&base, TokenChunk::all(tail), &selectors)
+                .expect("branch");
+            let values = ready(&mut task);
+            let full: Vec<u32> = base_tokens.iter().chain(tail.iter()).copied().collect();
+            let mut direct = executor
+                .prefill_choice_logits(TokenChunk::all(&full), &selectors)
+                .expect("direct prefill");
+            assert_eq!(
+                values,
+                ready(&mut direct),
+                "{label}: branch logits diverged from direct base+tail prefill"
+            );
+            assert_eq!(base.token_history(), base_tokens, "{label}: base mutated");
+            assert_eq!(base.logical_length(), 3, "{label}: base length mutated");
+        }
+
+        // A forked copy of the same base branches identically.
+        let mut fork_task = executor.fork(&base).expect("fork base");
+        let forked = ready(&mut fork_task);
+        let mut forked_branch = executor
+            .append_choice_logits(&forked, TokenChunk::all(tails[0]), &selectors)
+            .expect("forked branch");
+        let mut direct = executor
+            .prefill_choice_logits(
+                TokenChunk::all(
+                    &base_tokens
+                        .iter()
+                        .chain(tails[0])
+                        .copied()
+                        .collect::<Vec<_>>(),
+                ),
+                &selectors,
+            )
+            .expect("direct prefill");
+        assert_eq!(
+            ready(&mut forked_branch),
+            ready(&mut direct),
+            "{label}: forked branch diverged"
+        );
+
+        assert!(
+            executor.prefill_choice_base(TokenChunk::all(&[])).is_err(),
+            "{label}: empty base accepted"
+        );
+        assert!(
+            executor
+                .append_choice_logits(&base, TokenChunk::all(&[]), &selectors)
+                .is_err(),
+            "{label}: empty tail accepted"
+        );
+        assert!(
+            executor
+                .append_choice_logits(&base, TokenChunk::all(&[7]), &[])
+                .is_err(),
+            "{label}: empty selectors accepted"
+        );
+        assert!(
+            executor
+                .append_choice_logits(&base, TokenChunk::all(&[7]), &[1, 128])
+                .is_err(),
+            "{label}: out-of-vocab selector accepted"
+        );
+        let oversized = vec![3_u32; 62];
+        assert!(
+            executor
+                .append_choice_logits(&base, TokenChunk::all(&oversized), &selectors)
+                .is_err(),
+            "{label}: base+tail overflow accepted"
+        );
+
+        let mut task = executor
+            .append_choice_logits(&base, TokenChunk::all(&[7]), &selectors)
+            .expect("branch");
+        let _ = ready(&mut task);
+        assert_eq!(
+            task.poll_step(),
+            CompletionPoll::Ready(Err(ExecutorError::CompletionConsumed)),
+            "{label}: completion must be consumed"
+        );
+
+        let mut cancelled = executor
+            .append_choice_logits(&base, TokenChunk::all(&[7]), &selectors)
+            .expect("branch");
+        cancelled.cancel().expect("cancel");
+        assert_eq!(
+            cancelled.poll_step(),
+            CompletionPoll::Ready(Err(ExecutorError::CompletionConsumed)),
+            "{label}: cancelled branch must not produce values"
+        );
+        // The cancelled branch leaves the base valid for another criterion.
+        let mut after = executor
+            .append_choice_logits(&base, TokenChunk::all(&[7]), &selectors)
+            .expect("branch after cancel");
+        let _ = ready(&mut after);
+        assert_eq!(base.token_history(), base_tokens, "{label}: base mutated");
+    }
+}
+
 #[test]
 fn choice_logits_reads_back_only_selected_columns_in_caller_order() {
     let (config, packed_bytes, _) = tiny_packed_fixture();

@@ -20,7 +20,7 @@ use minifield_executor_core::{
     Lfm2WeightLoadTask, LoaderLimits, LoaderPoll,
 };
 use minifield_json_grammar::AssistantCallEnforcer;
-use minifield_text_generation::{ChoiceRequest, finish_choice, prepare_choice};
+use minifield_text_generation::{ChoiceCriterion, ChoiceRequest, finish_choice, prepare_choice};
 use minifield_text_tokenizer::{EncodeOptions, MODEL_VOCAB_SIZE, Tokenizer, TokenizerLimits};
 use sha2::{Digest, Sha256};
 use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
@@ -38,6 +38,18 @@ pub struct WebDemo {
     /// keyed by the exact system text. `generate_json` appends the short
     /// per-call tail onto this instead of re-prefilling the tool list.
     tool_prefix: Option<(String, Lfm2Prefix<WgpuBackend>)>,
+}
+
+fn to_string_vec(array: &js_sys::Array) -> Result<Vec<String>, JsValue> {
+    let mut strings = Vec::with_capacity(array.length() as usize);
+    for value in array.iter() {
+        strings.push(
+            value
+                .as_string()
+                .ok_or_else(|| JsValue::from_str("names and prompts must be strings"))?,
+        );
+    }
+    Ok(strings)
 }
 
 fn js_error(error: impl Display) -> JsValue {
@@ -201,89 +213,83 @@ impl WebDemo {
         stats(&text, generated, stopped)
     }
 
-    /// Score a prompt against one-token selectors in a single pass: prefill
-    /// once, gather the selector logits, normalize, and return the winner.
-    /// Only the selected logits cross to the host. Every array element must
-    /// be a string. Resolves to `{ selectedIndex, selected, tokenId,
-    /// scores }` where each score is `{ selector, tokenId, probability }`.
+    /// Score named criteria serially, one prompt prefill each, by reading the
+    /// true/false selector logits for each criterion and normalizing the
+    /// evidence differences. Every array element must be a string. Resolves to
+    /// `{ type: "choice", choice, confidence, probabilities }` where
+    /// `probabilities` maps each criterion name to its relative score.
     pub async fn choose(
         &mut self,
-        prompt: String,
-        selectors: js_sys::Array,
+        names: js_sys::Array,
+        prompts: js_sys::Array,
     ) -> Result<JsValue, JsValue> {
-        let mut owned = Vec::with_capacity(selectors.length() as usize);
-        for value in selectors.iter() {
-            owned.push(
-                value
-                    .as_string()
-                    .ok_or_else(|| JsValue::from_str("selectors must be strings"))?,
-            );
+        if names.length() != prompts.length() {
+            return Err(JsValue::from_str(
+                "names and prompts must have equal lengths",
+            ));
         }
-        let selector_refs: Vec<&str> = owned.iter().map(String::as_str).collect();
+        let names = to_string_vec(&names)?;
+        let prompts = to_string_vec(&prompts)?;
+        let criteria: Vec<ChoiceCriterion<'_>> = names
+            .iter()
+            .zip(&prompts)
+            .map(|(name, prompt)| ChoiceCriterion {
+                name: name.as_str(),
+                prompt: prompt.as_str(),
+            })
+            .collect();
         let prepared = prepare_choice(
             &self.tokenizer,
             &ChoiceRequest {
-                prompt: &prompt,
+                criteria: &criteria,
+                true_selector: "true",
+                false_selector: "false",
                 add_bos: true,
-                selectors: &selector_refs,
                 max_context_tokens: usize::try_from(MAX_LOGICAL_TOKENS).unwrap_or(usize::MAX),
             },
         )
         .map_err(js_error)?;
-        let mut prefill = self
-            .executor
-            .prefill(TokenChunk::all(prepared.input_ids()))
-            .map_err(js_error)?;
-        let prefix: Lfm2Prefix<WgpuBackend> = pump(&mut prefill).await?;
-        let mut selected = self
-            .executor
-            .choice_logits(&prefix, prepared.token_ids())
-            .map_err(js_error)?;
-        let logits = pump(&mut selected).await?;
-        let result = finish_choice(prepared, logits).map_err(js_error)?;
-
-        let scores = js_sys::Array::new();
-        for score in &result.scores {
-            let entry = js_sys::Object::new();
-            Reflect::set(
-                &entry,
-                &JsValue::from_str("selector"),
-                &JsValue::from_str(&score.selector),
-            )?;
-            Reflect::set(
-                &entry,
-                &JsValue::from_str("tokenId"),
-                &JsValue::from_f64(f64::from(score.token_id)),
-            )?;
-            Reflect::set(
-                &entry,
-                &JsValue::from_str("probability"),
-                &JsValue::from_f64(f64::from(score.probability)),
-            )?;
-            scores.push(&entry);
+        let mut logit_pairs = Vec::with_capacity(prepared.criteria().len());
+        for criterion in prepared.criteria() {
+            let mut prefill = self
+                .executor
+                .prefill(TokenChunk::all(criterion.input_ids()))
+                .map_err(js_error)?;
+            let prefix: Lfm2Prefix<WgpuBackend> = pump(&mut prefill).await?;
+            let mut selected = self
+                .executor
+                .choice_logits(&prefix, prepared.token_ids())
+                .map_err(js_error)?;
+            logit_pairs.push(pump(&mut selected).await?);
         }
-        let winner = &result.scores[result.selected_index];
+        let result = finish_choice(prepared, logit_pairs).map_err(js_error)?;
+
+        let probabilities =
+            js_sys::Object::create(&JsValue::NULL.unchecked_into::<js_sys::Object>());
+        for probability in &result.probabilities {
+            Reflect::set(
+                &probabilities,
+                &JsValue::from_str(&probability.name),
+                &JsValue::from_f64(f64::from(probability.probability)),
+            )?;
+        }
         let out = js_sys::Object::new();
         Reflect::set(
             &out,
-            &JsValue::from_str("selectedIndex"),
-            &JsValue::from_f64(
-                u32::try_from(result.selected_index)
-                    .unwrap_or(u32::MAX)
-                    .into(),
-            ),
+            &JsValue::from_str("type"),
+            &JsValue::from_str("choice"),
         )?;
         Reflect::set(
             &out,
-            &JsValue::from_str("selected"),
-            &JsValue::from_str(&winner.selector),
+            &JsValue::from_str("choice"),
+            &JsValue::from_str(&result.choice),
         )?;
         Reflect::set(
             &out,
-            &JsValue::from_str("tokenId"),
-            &JsValue::from_f64(f64::from(winner.token_id)),
+            &JsValue::from_str("confidence"),
+            &JsValue::from_f64(f64::from(result.confidence)),
         )?;
-        Reflect::set(&out, &JsValue::from_str("scores"), &scores)?;
+        Reflect::set(&out, &JsValue::from_str("probabilities"), &probabilities)?;
         Ok(out.into())
     }
 

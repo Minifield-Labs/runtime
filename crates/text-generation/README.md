@@ -10,11 +10,12 @@ output bounds before every candidate, validates candidate decoding before model 
 publishes the prefix and text after append completes. Callers choose BOS insertion, special-token
 rendering, and cancellation handling through `GenerationRequest`.
 
-`choose` performs single-pass typed choice scoring over a `TokenChoiceExecutor`: one prompt
-prefill, then one `choice_logits` readback of only the K caller-selected selector logits (no
-generated tokens, no full-vocabulary readback). `prepare_choice` tokenizes and validates the
-selectors up front, and `finish_choice` softmaxes exactly the K returned logits so async hosts can
-pump the completions themselves.
+`choose` performs typed binary-criterion choice scoring over a `TokenChoiceExecutor`. Each named
+criterion gets its own prompt and is evaluated serially: one prefill, then one `choice_logits`
+readback of the true/false selector logits (no generated tokens, no full-vocabulary readback).
+`prepare_choice` tokenizes and validates the criteria and selectors up front, and `finish_choice`
+softmaxes each criterion's true-minus-false evidence so async hosts can pump the completions
+themselves.
 
 Run the compact checks with:
 

@@ -106,9 +106,20 @@
   }
   .choice h2 { font-size: 15px; font-weight: 600; margin: 0 0 6px; }
   .choice textarea { margin-bottom: 14px; }
+  .choice input[type="text"] { width: 100%; margin-bottom: 14px; }
   #choiceState { height: 64px; }
   #choiceOptions { height: 88px; }
   .choice .row { flex-wrap: wrap; }
+  .cjson {
+    margin: 0 0 14px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #101114;
+    font: inherit;
+    font-size: 12px;
+    overflow-x: auto;
+  }
   .cwinner { margin: 0 0 12px; }
   .crow {
     display: flex;
@@ -120,7 +131,14 @@
   }
   .crow.selected { background: var(--line); }
   .crow.selected .clabel { color: var(--accent); }
-  .clabel { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .clabel { white-space: nowrap; }
+  .cdesc {
+    color: var(--dim);
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .ctrack {
     flex: 1;
     min-width: 80px;
@@ -132,12 +150,6 @@
   }
   .cbar { display: block; height: 100%; background: var(--accent); }
   .cpct { min-width: 46px; text-align: right; }
-  .cid {
-    color: var(--accent);
-    font-size: 11px;
-    min-width: 42px;
-    text-align: right;
-  }
 </style>
 </head>
 <body>
@@ -160,16 +172,19 @@
   <div id="out"></div>
 
   <section class="choice">
-    <h2>Single-pass choice</h2>
-    <p class="sub">Score a fixed set of one-token selectors after one prompt
-    prefill. Probabilities are raw model scores, not calibrated confidence.</p>
+    <h2>Structured choice</h2>
+    <p class="sub">Each criterion is evaluated independently against true and
+    false, serially in this first prototype. Probabilities are relative model
+    scores, not calibrated confidence.</p>
 
     <label for="choiceState">State</label>
     <textarea id="choiceState">A customer says: “I was charged twice for the same order.”</textarea>
-    <label for="choiceOptions">Choices, one per line</label>
-    <textarea id="choiceOptions">Billing
-Technical support
-General question</textarea>
+    <label for="choiceInstructions">Question</label>
+    <input id="choiceInstructions" type="text" value="Which team should handle this?">
+    <label for="choiceOptions">Criteria, one per line as name: description</label>
+    <textarea id="choiceOptions">billing: Charges, invoices, refunds, or payment problems
+technical: Bugs, outages, integrations, or product failures
+general: Questions that do not fit another department</textarea>
     <div class="row">
       <button id="goChoice" disabled>Score choices</button>
       <span id="choiceStatus">waiting for model</span>

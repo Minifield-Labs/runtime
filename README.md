@@ -16,7 +16,7 @@ implemented.
 - engines/backend-wgpu: wgpu 30 backend implementing the same finite operation contract (F32 and packed-ternary, fused decode kernels) with batched command recording and nonblocking completions.
 - crates/executor-core: checked configuration and bounded typed weight loading, full LFM2 execution, prefix caches, append/fork operations, and complete candidate scoring.
 - crates/text-tokenizer: owned bounded tokenizer asset parsing, byte-level BPE, Unicode pretokenization, and incremental UTF-8 decoding.
-- crates/text-generation: backend-neutral bounded greedy plaintext generation and single-pass typed choice scoring over a caller-provided tokenizer and token executor; choice scoring reads back only the K selector logits.
+- crates/text-generation: backend-neutral bounded greedy plaintext generation and typed binary-criterion choice scoring over a caller-provided tokenizer and token executor; choice scoring evaluates each criterion serially and reads back only its true/false logits.
 - crates/infer-cli: native bounded local-bundle loader and plaintext stdin/stdout executable with explicit BOS and capacity options.
 - engines/decoding-protocol: separate pure Rust schema/argument framing and teacher-trace component for caller integration.
 

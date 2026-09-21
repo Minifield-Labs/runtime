@@ -128,8 +128,6 @@ function toolNames() {
     .filter(Boolean);
 }
 
-const CHOICE_SELECTORS = [" A", " B", " C", " D", " E", " F", " G", " H"];
-
 const status = document.getElementById("status");
 const out = document.getElementById("out");
 const go = document.getElementById("go");
@@ -138,6 +136,7 @@ const prompt = document.getElementById("prompt");
 const tools = document.getElementById("tools");
 const max = document.getElementById("max");
 const choiceState = document.getElementById("choiceState");
+const choiceInstructions = document.getElementById("choiceInstructions");
 const choiceOptions = document.getElementById("choiceOptions");
 const goChoice = document.getElementById("goChoice");
 const choiceStatus = document.getElementById("choiceStatus");
@@ -257,74 +256,105 @@ goJson.addEventListener(
   ),
 );
 
-function choicePrompt(state, options) {
-  const lines = options
-    .map((option, i) => `${String.fromCharCode(65 + i)}. ${option}`)
-    .join("\n");
+function parseCriteria(text) {
+  const criteria = [];
+  const seen = new Set();
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    const sep = line.indexOf(":");
+    const name = sep < 0 ? "" : line.slice(0, sep).trim();
+    const description = sep < 0 ? "" : line.slice(sep + 1).trim();
+    if (!name || !description) {
+      return { error: `each line needs a nonempty name: description` };
+    }
+    if (seen.has(name)) {
+      return { error: `duplicate criterion name: ${name}` };
+    }
+    seen.add(name);
+    criteria.push({ name, description });
+  }
+  if (criteria.length < 2 || criteria.length > 8) {
+    return { error: `enter 2 to 8 criteria (got ${criteria.length})` };
+  }
+  return { criteria };
+}
+
+function choicePrompt(state, instructions, criterion) {
   return (
-    `<|im_start|>user\nChoose the best category for the state below.\n\n` +
-    `State:\n${state}\n\nChoices:\n${lines}\n\n` +
-    `Respond with only the choice letter.<|im_end|>\n` +
-    `<|im_start|>assistant\nAnswer:\n`
+    `<|im_start|>user\n` +
+    `Evaluate whether this choice is correct for the state. ` +
+    `Respond with true or false.\n` +
+    canonicalModelJson({
+      state,
+      instructions,
+      criterion: { name: criterion.name, description: criterion.description },
+    }) +
+    `<|im_end|>\n` +
+    `<|im_start|>assistant\n` +
+    `{"choice":${JSON.stringify(criterion.name)},"selected":`
   );
 }
 
-function renderChoice(result, options, ms) {
+function renderChoice(result, criteria, ms) {
   choiceOut.textContent = "";
+  const pre = document.createElement("pre");
+  pre.className = "cjson";
+  pre.textContent = JSON.stringify(result, null, 2);
+  choiceOut.appendChild(pre);
   const winner = document.createElement("p");
   winner.className = "cwinner";
-  winner.textContent =
-    `${options[result.selectedIndex]} · ` +
-    `${String.fromCharCode(65 + result.selectedIndex)} · ` +
-    `token ${result.tokenId} · ${ms.toFixed(0)} ms`;
+  winner.textContent = `${result.choice} · ${ms.toFixed(0)} ms`;
   choiceOut.appendChild(winner);
-  result.scores.forEach((score, i) => {
+  for (const criterion of criteria) {
+    const probability = result.probabilities[criterion.name] ?? 0;
     const row = document.createElement("div");
-    row.className = i === result.selectedIndex ? "crow selected" : "crow";
+    row.className =
+      criterion.name === result.choice ? "crow selected" : "crow";
     const label = document.createElement("span");
     label.className = "clabel";
-    label.textContent = `${String.fromCharCode(65 + i)}. ${options[i]}`;
+    label.textContent = criterion.name;
+    const desc = document.createElement("span");
+    desc.className = "cdesc";
+    desc.textContent = criterion.description;
     const track = document.createElement("span");
     track.className = "ctrack";
     const bar = document.createElement("span");
     bar.className = "cbar";
-    const pct = Math.min(100, Math.max(0, score.probability * 100));
+    const pct = Math.min(100, Math.max(0, probability * 100));
     bar.style.width = `${pct}%`;
     track.appendChild(bar);
     const pctEl = document.createElement("span");
     pctEl.className = "cpct";
     pctEl.textContent = `${pct.toFixed(1)}%`;
-    const idEl = document.createElement("span");
-    idEl.className = "cid";
-    idEl.textContent = score.tokenId;
-    row.append(label, track, pctEl, idEl);
+    row.append(label, desc, track, pctEl);
     choiceOut.appendChild(row);
-  });
+  }
 }
 
 goChoice.addEventListener("click", async () => {
-  const options = choiceOptions.value
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (options.length < 2 || options.length > CHOICE_SELECTORS.length) {
+  const parsed = parseCriteria(choiceOptions.value);
+  if (parsed.error) {
     choiceOut.textContent = "";
-    choiceStatus.textContent =
-      `enter 2 to ${CHOICE_SELECTORS.length} nonblank choices ` +
-      `(got ${options.length})`;
+    choiceStatus.textContent = parsed.error;
     return;
   }
+  const criteria = parsed.criteria;
   setButtons(true);
   const t0 = performance.now();
   try {
+    const state = choiceState.value.trim();
+    const instructions = choiceInstructions.value.trim();
     const result = await demo.choose(
-      choicePrompt(choiceState.value.trim(), options),
-      CHOICE_SELECTORS.slice(0, options.length),
+      criteria.map((criterion) => criterion.name),
+      criteria.map((criterion) =>
+        choicePrompt(state, instructions, criterion),
+      ),
     );
     const ms = performance.now() - t0;
-    renderChoice(result, options, ms);
+    renderChoice(result, criteria, ms);
     choiceStatus.textContent =
-      `${result.scores.length} logits · ${ms.toFixed(0)} ms`;
+      `${criteria.length} binary predictions · ${ms.toFixed(0)} ms`;
   } catch (error) {
     choiceOut.textContent = "";
     choiceStatus.textContent = `choice failed: ${error?.message ?? error}`;

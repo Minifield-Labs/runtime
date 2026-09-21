@@ -305,32 +305,40 @@ fn ensure_context(required: usize, limit: usize) -> Result<(), GenerationError> 
     Ok(())
 }
 
-/// Caller-provided structured-choice request. The prompt is prefilled once
-/// and each selector contributes exactly one continuation token whose logit
-/// is scored; no output tokens are generated.
+/// One criterion in a structured choice: a caller-facing name plus the full
+/// prompt the model answers with a true or false continuation.
+#[derive(Clone, Debug)]
+pub struct ChoiceCriterion<'a> {
+    pub name: &'a str,
+    pub prompt: &'a str,
+}
+
+/// Caller-provided structured-choice request. Every criterion prompt is
+/// prefilled independently and scored against the shared one-token true and
+/// false selectors; no output tokens are generated.
 #[derive(Clone, Debug)]
 pub struct ChoiceRequest<'a> {
-    pub prompt: &'a str,
+    pub criteria: &'a [ChoiceCriterion<'a>],
+    pub true_selector: &'a str,
+    pub false_selector: &'a str,
     pub add_bos: bool,
-    pub selectors: &'a [&'a str],
     pub max_context_tokens: usize,
 }
 
-/// One selector's score within a completed choice.
+/// One criterion's normalized probability within a completed choice.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ChoiceScore {
-    pub selector: String,
-    pub token_id: TokenId,
+pub struct ChoiceProbability {
+    pub name: String,
     pub probability: f32,
 }
 
-/// Completed choice: the normalized selector scores in caller order plus the
-/// index of the winning selector.
+/// Completed choice: the winning criterion name, a normalized confidence in
+/// `[0, 1]`, and per-criterion probabilities in caller order.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChoiceResult {
-    pub input_ids: Vec<TokenId>,
-    pub selected_index: usize,
-    pub scores: Vec<ChoiceScore>,
+    pub choice: String,
+    pub confidence: f32,
+    pub probabilities: Vec<ChoiceProbability>,
 }
 
 /// Checked structured-choice failure.
@@ -357,7 +365,7 @@ impl fmt::Display for ChoiceError {
                 )
             }
             Self::InvalidChoices(reason) => {
-                write!(formatter, "invalid choice selectors: {reason}")
+                write!(formatter, "invalid choice request: {reason}")
             }
             Self::NonFiniteLogit { choice_index } => write!(
                 formatter,
@@ -381,70 +389,94 @@ impl From<ExecutorError> for ChoiceError {
     }
 }
 
-/// Validated, tokenized choice state. Produced by [`prepare_choice`],
-/// consumed by [`finish_choice`]; async hosts prefill `input_ids()` once and
-/// pass `token_ids()` to `TokenChoiceExecutor::choice_logits` so only the
-/// selector logits cross to the host.
-pub struct PreparedChoice {
+/// One prepared criterion: its caller-provided name and tokenized prompt
+/// input for that criterion's prefill.
+pub struct PreparedCriterion {
+    name: String,
     input_ids: Vec<TokenId>,
-    selectors: Vec<String>,
-    token_ids: Vec<TokenId>,
 }
 
-impl PreparedChoice {
-    /// The tokenized prompt input for the single prefill.
+impl PreparedCriterion {
+    /// The criterion's caller-provided name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The tokenized prompt input for this criterion's prefill.
     #[must_use]
     pub fn input_ids(&self) -> &[TokenId] {
         &self.input_ids
     }
+}
 
-    /// The selector continuation token IDs in caller order.
+/// Validated, tokenized choice state. Produced by [`prepare_choice`],
+/// consumed by [`finish_choice`]; async hosts prefill each criterion's
+/// `input_ids()` serially and pass `token_ids()` to
+/// `TokenChoiceExecutor::choice_logits`, so only two logits per criterion
+/// cross to the host.
+pub struct PreparedChoice {
+    criteria: Vec<PreparedCriterion>,
+    token_ids: [TokenId; 2],
+}
+
+impl PreparedChoice {
+    /// The prepared criteria in caller order.
     #[must_use]
-    pub fn token_ids(&self) -> &[TokenId] {
+    pub fn criteria(&self) -> &[PreparedCriterion] {
+        &self.criteria
+    }
+
+    /// The shared `[true, false]` selector token IDs.
+    #[must_use]
+    pub fn token_ids(&self) -> &[TokenId; 2] {
         &self.token_ids
     }
 }
 
 /// Tokenize and validate a choice request without touching an executor.
 ///
-/// Every selector must be nonempty, encode to exactly one token without
-/// special tokens, carry a distinct token ID, and compose with the prompt:
-/// encoding `prompt + selector` must equal `input_ids` followed by that one
-/// token. `max_context_tokens` bounds the prompt input only.
+/// A request must list between 2 and 255 criteria. Every criterion name
+/// must be nonempty and unique, and every criterion
+/// prompt is encoded independently with the request's BOS policy and bounded
+/// by `max_context_tokens`. The true and false selectors must be nonempty,
+/// distinct, encode to exactly one distinct token each without special
+/// tokens, and compose with every criterion prompt: encoding
+/// `prompt + selector` must equal that prompt's IDs followed by exactly the
+/// selector token.
 ///
 /// # Errors
 ///
-/// Returns `InvalidChoices` when any selector rule fails, `ContextLimit`
-/// when the prompt exceeds the context bound, and `Tokenizer` for encoding
-/// failures.
+/// Returns `InvalidChoices` when any criterion or selector rule fails,
+/// `ContextLimit` when a prompt exceeds the context bound, and `Tokenizer`
+/// for encoding failures.
 pub fn prepare_choice(
     tokenizer: &Tokenizer,
     request: &ChoiceRequest<'_>,
 ) -> Result<PreparedChoice, ChoiceError> {
-    if request.selectors.len() < 2 {
+    if request.criteria.len() < 2 {
         return Err(ChoiceError::InvalidChoices(
-            "choice requires at least two selectors",
+            "choice requires at least two criteria",
         ));
     }
-    let input_ids = tokenizer.encode(
-        request.prompt,
-        EncodeOptions {
-            add_special_tokens: request.add_bos,
-        },
-    )?;
-    if input_ids.len() > request.max_context_tokens {
-        return Err(ChoiceError::ContextLimit {
-            required: input_ids.len(),
-            limit: request.max_context_tokens,
-        });
+    if request.criteria.len() > 255 {
+        return Err(ChoiceError::InvalidChoices(
+            "choice supports at most 255 criteria",
+        ));
     }
-    let mut selectors = Vec::with_capacity(request.selectors.len());
-    let mut token_ids = Vec::with_capacity(request.selectors.len());
-    let mut continued = String::new();
-    for selector in request.selectors {
-        if selector.is_empty() {
-            return Err(ChoiceError::InvalidChoices("choice selector is empty"));
-        }
+    if request.true_selector.is_empty() || request.false_selector.is_empty() {
+        return Err(ChoiceError::InvalidChoices("choice selector is empty"));
+    }
+    if request.true_selector == request.false_selector {
+        return Err(ChoiceError::InvalidChoices(
+            "choice selectors must be distinct",
+        ));
+    }
+    let mut token_ids = [0; 2];
+    for (slot, selector) in [request.true_selector, request.false_selector]
+        .iter()
+        .enumerate()
+    {
         let ids = tokenizer.encode(
             selector,
             EncodeOptions {
@@ -456,108 +488,149 @@ pub fn prepare_choice(
                 "choice selector must encode to exactly one token",
             ));
         }
-        let token_id = ids[0];
-        if token_ids.contains(&token_id) {
+        token_ids[slot] = ids[0];
+    }
+    if token_ids[0] == token_ids[1] {
+        return Err(ChoiceError::InvalidChoices(
+            "choice selector token IDs must be distinct",
+        ));
+    }
+    let mut criteria = Vec::with_capacity(request.criteria.len());
+    let mut continued = String::new();
+    for criterion in request.criteria {
+        if criterion.name.is_empty() {
+            return Err(ChoiceError::InvalidChoices("criterion name is empty"));
+        }
+        if criteria
+            .iter()
+            .any(|prepared: &PreparedCriterion| prepared.name == criterion.name)
+        {
             return Err(ChoiceError::InvalidChoices(
-                "choice selector token IDs must be distinct",
+                "criterion names must be unique",
             ));
         }
-        continued.clear();
-        continued.push_str(request.prompt);
-        continued.push_str(selector);
-        let continued_ids = tokenizer.encode(
-            &continued,
+        let input_ids = tokenizer.encode(
+            criterion.prompt,
             EncodeOptions {
                 add_special_tokens: request.add_bos,
             },
         )?;
-        if continued_ids.len() != input_ids.len() + 1
-            || continued_ids[..input_ids.len()] != input_ids[..]
-            || continued_ids.last() != Some(&token_id)
-        {
-            return Err(ChoiceError::InvalidChoices(
-                "choice selector is not a compositional continuation of the prompt",
-            ));
+        if input_ids.len() > request.max_context_tokens {
+            return Err(ChoiceError::ContextLimit {
+                required: input_ids.len(),
+                limit: request.max_context_tokens,
+            });
         }
-        token_ids.push(token_id);
-        selectors.push((*selector).to_owned());
+        for (selector, token_id) in [request.true_selector, request.false_selector]
+            .iter()
+            .zip(token_ids.iter())
+        {
+            continued.clear();
+            continued.push_str(criterion.prompt);
+            continued.push_str(selector);
+            let continued_ids = tokenizer.encode(
+                &continued,
+                EncodeOptions {
+                    add_special_tokens: request.add_bos,
+                },
+            )?;
+            if continued_ids.len() != input_ids.len() + 1
+                || continued_ids[..input_ids.len()] != input_ids[..]
+                || continued_ids.last() != Some(token_id)
+            {
+                return Err(ChoiceError::InvalidChoices(
+                    "choice selector is not a compositional continuation of the prompt",
+                ));
+            }
+        }
+        criteria.push(PreparedCriterion {
+            name: criterion.name.to_owned(),
+            input_ids,
+        });
     }
     Ok(PreparedChoice {
-        input_ids,
-        selectors,
+        criteria,
         token_ids,
     })
 }
 
-/// Normalize the selector logits of a completed choice readback.
+/// Normalize the per-criterion `[true, false]` logit pairs of a completed
+/// choice.
 ///
-/// `logits` must contain exactly one value per selector, in caller order.
-/// The softmax runs in f64 over only the selected logits and emits f32
-/// probabilities; the first selector wins an exact-logit tie.
+/// `logit_pairs` must contain exactly one two-value pair per criterion, in
+/// caller order. Each pair's evidence is `true - false` in f64; a stable f64
+/// softmax over all evidence values yields the probabilities, the first
+/// strict evidence maximum wins, and confidence is
+/// `(K * max_probability - 1) / (K - 1)` clamped to `[0, 1]`.
 ///
 /// # Errors
 ///
-/// Returns `Executor` when the logit count differs from the selector count
-/// and `NonFiniteLogit` when any selected value is non-finite.
+/// Returns `Executor` when the pair count or a pair's length differs from
+/// the prepared request and `NonFiniteLogit` when any selected value is
+/// non-finite.
 #[allow(clippy::needless_pass_by_value)]
 pub fn finish_choice(
     prepared: PreparedChoice,
-    logits: Vec<f32>,
+    logit_pairs: Vec<Vec<f32>>,
 ) -> Result<ChoiceResult, ChoiceError> {
-    let PreparedChoice {
-        input_ids,
-        selectors,
-        token_ids,
-    } = prepared;
-    if logits.len() != token_ids.len() {
+    let PreparedChoice { criteria, .. } = prepared;
+    if logit_pairs.len() != criteria.len() {
         return Err(ChoiceError::Executor(ExecutorError::InvalidShape(
-            "executor returned a logit count different from the selector count",
+            "executor returned a logit pair count different from the criterion count",
         )));
     }
-    for (choice_index, &logit) in logits.iter().enumerate() {
-        if !logit.is_finite() {
+    let mut evidence = Vec::with_capacity(criteria.len());
+    for (choice_index, pair) in logit_pairs.iter().enumerate() {
+        if pair.len() != 2 {
+            return Err(ChoiceError::Executor(ExecutorError::InvalidShape(
+                "executor returned a logit pair that is not [true, false]",
+            )));
+        }
+        if !pair[0].is_finite() || !pair[1].is_finite() {
             return Err(ChoiceError::NonFiniteLogit { choice_index });
         }
+        evidence.push(f64::from(pair[0]) - f64::from(pair[1]));
     }
-    let selected_index = logits
+    let selected_index = evidence
         .iter()
         .enumerate()
-        .fold((0_usize, logits[0]), |best, (index, &logit)| {
-            if logit > best.1 { (index, logit) } else { best }
+        .fold((0_usize, evidence[0]), |best, (index, &value)| {
+            if value > best.1 { (index, value) } else { best }
         })
         .0;
-    let maximum = logits
-        .iter()
-        .copied()
-        .map(f64::from)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let mut weights = Vec::with_capacity(logits.len());
+    let maximum = evidence.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let mut weights = Vec::with_capacity(criteria.len());
     let mut denominator = 0.0_f64;
-    for &logit in &logits {
-        let weight = (f64::from(logit) - maximum).exp();
+    for &value in &evidence {
+        let weight = (value - maximum).exp();
         weights.push(weight);
         denominator += weight;
     }
-    let mut scores = Vec::with_capacity(token_ids.len());
-    for ((selector, token_id), weight) in selectors.into_iter().zip(token_ids).zip(weights) {
+    #[allow(clippy::cast_precision_loss)]
+    let count = criteria.len() as f64;
+    let max_probability = weights[selected_index] / denominator;
+    #[allow(clippy::cast_possible_truncation)]
+    let confidence = ((count * max_probability - 1.0) / (count - 1.0)).clamp(0.0, 1.0) as f32;
+    let mut probabilities = Vec::with_capacity(criteria.len());
+    for (criterion, weight) in criteria.iter().zip(&weights) {
         #[allow(clippy::cast_possible_truncation)]
         let probability = (weight / denominator) as f32;
-        scores.push(ChoiceScore {
-            selector,
-            token_id,
+        probabilities.push(ChoiceProbability {
+            name: criterion.name.clone(),
             probability,
         });
     }
     Ok(ChoiceResult {
-        input_ids,
-        selected_index,
-        scores,
+        choice: criteria[selected_index].name.clone(),
+        confidence,
+        probabilities,
     })
 }
 
-/// Single-pass structured choice: one prompt prefill plus one selector-logit
-/// readback, then a candidate-only softmax. No output tokens are generated
-/// and no full vocabulary row crosses to the host.
+/// Serial structured choice: each criterion prompt gets one prefill plus one
+/// `[true, false]` selector-logit readback, completed before the next
+/// criterion starts. No output tokens are generated and no full vocabulary
+/// row crosses to the host.
 ///
 /// # Errors
 ///
@@ -574,11 +647,14 @@ where
     C: Cancellation,
 {
     let prepared = prepare_choice(tokenizer, request)?;
-    let mut prefill = executor.prefill(TokenChunk::all(prepared.input_ids()))?;
-    let prefix = complete_choice(&mut prefill, cancellation)?;
-    let mut selected = executor.choice_logits(&prefix, prepared.token_ids())?;
-    let logits = complete_choice(&mut selected, cancellation)?;
-    finish_choice(prepared, logits)
+    let mut logit_pairs = Vec::with_capacity(prepared.criteria().len());
+    for criterion in prepared.criteria() {
+        let mut prefill = executor.prefill(TokenChunk::all(criterion.input_ids()))?;
+        let prefix = complete_choice(&mut prefill, cancellation)?;
+        let mut selected = executor.choice_logits(&prefix, prepared.token_ids())?;
+        logit_pairs.push(complete_choice(&mut selected, cancellation)?);
+    }
+    finish_choice(prepared, logit_pairs)
 }
 
 fn complete_choice<T, C>(completion: &mut T, cancellation: &mut C) -> Result<T::Output, ChoiceError>

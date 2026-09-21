@@ -13,7 +13,7 @@ pub use lfm2::{
     ChoiceLogitsTask, LayerKind, Lfm2Config, Lfm2ExecutionLimits, Lfm2Executor,
     Lfm2LayerWeightRole, Lfm2LoadRequest, Lfm2Prefix, Lfm2ResolvedWeight, Lfm2StorageDType,
     Lfm2TypedWeights, Lfm2WeightFormat, Lfm2WeightLoadTask, Lfm2WeightPlan, Lfm2WeightRole,
-    LogitsTask, NumericalMode, PrefixTask, ScoreTask, parse_lfm2_config,
+    LogitsTask, NumericalMode, PrefillChoiceTask, PrefixTask, ScoreTask, parse_lfm2_config,
 };
 pub use loader::{
     LoadRequest, LoaderError, LoaderLimits, LoaderPoll, LoaderResourceReport, LoaderStage,

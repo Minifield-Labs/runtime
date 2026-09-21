@@ -10,7 +10,7 @@ use minifield_backend_cpu::CpuBackend;
 use minifield_backend_wgpu::WgpuBackend;
 use minifield_engine_api::{
     CompletionPoll, InferenceCompletion, InferenceOps, MemoryAssetProvider, ResourceLimits,
-    TokenChunk, TokenExecutor,
+    TokenChoiceExecutor, TokenChunk, TokenExecutor,
 };
 use minifield_executor_core::{
     Lfm2ExecutionLimits, Lfm2Executor, Lfm2LoadRequest, Lfm2WeightFormat, Lfm2WeightLoadTask,
@@ -21,14 +21,17 @@ use sha2::{Digest, Sha256};
 const LOGIT_TOLERANCE: f32 = 0.05;
 
 fn ready<T, C: InferenceCompletion<Output = T>>(completion: &mut C) -> T {
-    for _ in 0..1_000_000 {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
         match completion.poll_step() {
-            CompletionPoll::Pending => {}
+            CompletionPoll::Pending if std::time::Instant::now() < deadline => {
+                std::thread::yield_now();
+            }
+            CompletionPoll::Pending => panic!("completion did not become ready"),
             CompletionPoll::Ready(Ok(value)) => return value,
             CompletionPoll::Ready(Err(error)) => panic!("completion error: {error:?}"),
         }
     }
-    panic!("completion did not become ready")
 }
 
 fn load<B: InferenceOps>(mut backend: B, config: &[u8], weights: &[u8]) -> Lfm2Executor<B> {
@@ -369,4 +372,24 @@ fn wgpu_packed_executor_matches_cpu_on_real_model() {
         Some(42),
         "cpu masked prefill must emit the only allowed id"
     );
+
+    // Direct choice readback: one bulk prefill plus a selected-column gather,
+    // no published prefix. wgpu must agree with CPU on the selected values.
+    let selectors = [42_u32, 7, 100];
+    let mut gpu_choice = gpu_exec
+        .prefill_choice_logits(TokenChunk::all(&tokens), &selectors)
+        .expect("gpu choice prefill");
+    let gpu_selected = ready(&mut gpu_choice);
+    let mut cpu_choice = cpu_exec
+        .prefill_choice_logits(TokenChunk::all(&tokens), &selectors)
+        .expect("cpu choice prefill");
+    let cpu_selected = ready(&mut cpu_choice);
+    assert_eq!(gpu_selected.len(), selectors.len());
+    assert_eq!(cpu_selected.len(), selectors.len());
+    for (index, (gpu_value, cpu_value)) in gpu_selected.iter().zip(&cpu_selected).enumerate() {
+        assert!(
+            (gpu_value - cpu_value).abs() <= LOGIT_TOLERANCE,
+            "selector {index}: wgpu {gpu_value} diverged from cpu {cpu_value}"
+        );
+    }
 }

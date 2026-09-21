@@ -24,6 +24,7 @@ struct FakeExecutor {
     prefill_calls: usize,
     logits_calls: usize,
     choice_calls: usize,
+    choice_prefill_calls: usize,
     choice_ids: Vec<TokenId>,
     events: Vec<&'static str>,
     fail_append: bool,
@@ -40,6 +41,7 @@ impl FakeExecutor {
             prefill_calls: 0,
             logits_calls: 0,
             choice_calls: 0,
+            choice_prefill_calls: 0,
             choice_ids: Vec::new(),
             events: Vec::new(),
             fail_append: false,
@@ -185,6 +187,7 @@ impl TokenExecutor for FakeExecutor {
 
 impl TokenChoiceExecutor for FakeExecutor {
     type ChoiceLogits = ReadyCompletion<Vec<f32>>;
+    type ChoicePrefill = ReadyCompletion<Vec<f32>>;
 
     fn choice_logits(
         &mut self,
@@ -193,6 +196,23 @@ impl TokenChoiceExecutor for FakeExecutor {
     ) -> ExecutorResult<Self::ChoiceLogits> {
         self.choice_calls += 1;
         self.events.push("choice");
+        self.choice_ids.extend_from_slice(token_ids);
+        let result = self
+            .logits
+            .pop_front()
+            .unwrap_or(Err(ExecutorError::BackendFailure(
+                "unexpected logits request",
+            )));
+        Ok(ReadyCompletion::new(result))
+    }
+
+    fn prefill_choice_logits(
+        &mut self,
+        _input: TokenChunk<'_>,
+        token_ids: &[TokenId],
+    ) -> ExecutorResult<Self::ChoicePrefill> {
+        self.choice_prefill_calls += 1;
+        self.events.push("choice_prefill");
         self.choice_ids.extend_from_slice(token_ids);
         let result = self
             .logits
@@ -517,14 +537,13 @@ fn choose_scores_each_criterion_serially() {
     )
     .unwrap_or_else(|error| panic!("choice should succeed: {error}"));
 
-    assert_eq!(executor.prefill_calls, 3);
-    assert_eq!(executor.choice_calls, 3);
+    assert_eq!(executor.prefill_calls, 0);
+    assert_eq!(executor.choice_calls, 0);
+    assert_eq!(executor.choice_prefill_calls, 3);
     assert_eq!(executor.choice_ids, vec![4, 2, 4, 2, 4, 2]);
     assert_eq!(
         executor.events,
-        [
-            "prefill", "choice", "prefill", "choice", "prefill", "choice"
-        ]
+        ["choice_prefill", "choice_prefill", "choice_prefill"]
     );
     assert_eq!(executor.logits_calls, 0);
     assert_eq!(executor.masked_calls, 0);
@@ -767,8 +786,9 @@ fn choose_propagates_executor_failure_and_late_cancellation() {
             "test choice failure"
         )))
     );
-    assert_eq!(failing.prefill_calls, 2);
-    assert_eq!(failing.choice_calls, 2);
+    assert_eq!(failing.prefill_calls, 0);
+    assert_eq!(failing.choice_calls, 0);
+    assert_eq!(failing.choice_prefill_calls, 2);
 
     let mut executor = FakeExecutor::new(vec![Ok(vec![1.0, 0.0]); 3]);
     let mut checks = 0_u8;
@@ -785,7 +805,8 @@ fn choose_propagates_executor_failure_and_late_cancellation() {
         ),
         Err(ChoiceError::Cancelled)
     );
-    assert_eq!(executor.prefill_calls, 2);
-    assert_eq!(executor.choice_calls, 1);
+    assert_eq!(executor.prefill_calls, 0);
+    assert_eq!(executor.choice_calls, 0);
+    assert_eq!(executor.choice_prefill_calls, 3);
     assert!(executor.appended.is_empty());
 }

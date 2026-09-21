@@ -10,8 +10,8 @@ use std::{
 
 use minifield_engine_api::{
     AllocationClass, BackendLease, CandidateScore, CompletionPoll, ExecutorError, FenceRetirement,
-    GatedShortConvSpec, GqaSpec, InferenceCompletion, InferenceOps, PackedHeadSpec, Result,
-    RotarySpec, Shape, TokenChoiceExecutor, TokenChunk, TokenExecutor, TokenId, TokenIds,
+    GatedShortConvSpec, GqaSpec, InferenceCompletion, InferenceOps, PackedHeadSpec, RectCopy2d,
+    Result, RotarySpec, Shape, TokenChoiceExecutor, TokenChunk, TokenExecutor, TokenId, TokenIds,
 };
 
 use super::{
@@ -550,26 +550,39 @@ fn push_scratch<B: InferenceOps>(
 }
 
 #[allow(clippy::too_many_lines, clippy::many_single_char_names)]
-fn append_token<B: InferenceOps>(
+fn append_tokens<B: InferenceOps>(
     context: &ModelContext<B>,
     backend: &mut B,
     state: &mut PrefixStorage<B>,
-    token: TokenId,
+    tokens: &[TokenId],
     ids: TokenIds<'_, B>,
-    mask: Option<&[u64]>,
     scratch: &mut Vec<B::Buffer>,
 ) -> Result<()> {
     let config = context.config();
-    if token >= config.vocab_size {
-        return Err(ExecutorError::OutOfBounds(
-            "valid token ID exceeds loaded model vocabulary",
+    if tokens.is_empty() {
+        return Err(ExecutorError::InvalidArgument(
+            "token pass requires at least one token",
         ));
     }
-    if state.length >= context.limits.max_logical_tokens {
+    for token in tokens {
+        if *token >= config.vocab_size {
+            return Err(ExecutorError::OutOfBounds(
+                "valid token ID exceeds loaded model vocabulary",
+            ));
+        }
+    }
+    let rows = u64::try_from(tokens.len())
+        .map_err(|_| ExecutorError::Overflow("token count exceeds u64"))?;
+    let base = state.length;
+    let length = base.checked_add(rows).ok_or(ExecutorError::Overflow(
+        "prefix logical length overflows u64",
+    ))?;
+    if length > context.limits.max_logical_tokens {
         return Err(ExecutorError::OutOfBounds(
             "append exceeds configured logical prefix capacity",
         ));
     }
+    let positions: Vec<u64> = (0..rows).map(|offset| base + offset).collect();
     let hidden = u64::from(config.hidden_size);
     let intermediate = u64::from(config.effective_intermediate_size);
     let kv_width = u64::from(config.key_value_heads)
@@ -577,7 +590,7 @@ fn append_token<B: InferenceOps>(
         .ok_or(ExecutorError::Overflow(
             "LFM2 key/value width overflows u64",
         ))?;
-    let mut x = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
+    let mut x = allocate(backend, shape(rows, hidden)?, AllocationClass::Scratch)?;
     match context.weights.resolve(Lfm2WeightRole::TokenEmbedding)? {
         Lfm2ResolvedWeight::Dense(embedding) => {
             backend.gather_rows(&mut x.buffer, embedding, ids)?;
@@ -592,7 +605,7 @@ fn append_token<B: InferenceOps>(
     // `u` (the already-normed input for the layer about to run). The final
     // iteration's fused norm uses the embedding norm weight, producing the
     // lm_head input without a separate pass.
-    let mut u = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
+    let mut u = allocate(backend, shape(rows, hidden)?, AllocationClass::Scratch)?;
     if !config.layers.is_empty() {
         backend.row_rms_norm(
             &mut u.buffer,
@@ -604,13 +617,13 @@ fn append_token<B: InferenceOps>(
         )?;
     }
     for (index, kind) in config.layers.iter().copied().enumerate() {
-        let mut operator = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
+        let mut operator = allocate(backend, shape(rows, hidden)?, AllocationClass::Scratch)?;
         match kind {
             LayerKind::Conv => {
                 let mut projection = allocate(
                     backend,
                     shape(
-                        1,
+                        rows,
                         hidden.checked_mul(3).ok_or(ExecutorError::Overflow(
                             "LFM2 convolution projection width overflows u64",
                         ))?,
@@ -624,7 +637,8 @@ fn append_token<B: InferenceOps>(
                     &context.weights,
                     layer_role(index, Lfm2LayerWeightRole::ConvInProjection),
                 )?;
-                let mut convolved = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
+                let mut convolved =
+                    allocate(backend, shape(rows, hidden)?, AllocationClass::Scratch)?;
                 let Some(LayerCache::Conv { history }) = state.layers.get_mut(index) else {
                     return Err(ExecutorError::InvalidArgument(
                         "prefix convolution cache does not match model layer",
@@ -649,9 +663,9 @@ fn append_token<B: InferenceOps>(
                 push_scratch::<B>(scratch, [projection.buffer, convolved.buffer]);
             }
             LayerKind::FullAttention => {
-                let mut q = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
-                let mut k = allocate(backend, shape(1, kv_width)?, AllocationClass::Scratch)?;
-                let mut v = allocate(backend, shape(1, kv_width)?, AllocationClass::Scratch)?;
+                let mut q = allocate(backend, shape(rows, hidden)?, AllocationClass::Scratch)?;
+                let mut k = allocate(backend, shape(rows, kv_width)?, AllocationClass::Scratch)?;
+                let mut v = allocate(backend, shape(rows, kv_width)?, AllocationClass::Scratch)?;
                 weight_linear(
                     backend,
                     &mut q.buffer,
@@ -703,8 +717,9 @@ fn append_token<B: InferenceOps>(
                 }
                 let query_heads = PackedHeadSpec::new(config.attention_heads, config.head_dim)?;
                 let key_value_heads = PackedHeadSpec::new(config.key_value_heads, config.head_dim)?;
-                let mut q_rope = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
-                let mut k_rope = allocate(backend, shape(1, kv_width)?, AllocationClass::Scratch)?;
+                let mut q_rope = allocate(backend, shape(rows, hidden)?, AllocationClass::Scratch)?;
+                let mut k_rope =
+                    allocate(backend, shape(rows, kv_width)?, AllocationClass::Scratch)?;
                 backend.qk_norm_rope(
                     &mut q_rope.buffer,
                     &mut k_rope.buffer,
@@ -716,12 +731,13 @@ fn append_token<B: InferenceOps>(
                     context
                         .weights
                         .buffer_for(layer_role(index, Lfm2LayerWeightRole::KeyNorm))?,
-                    &[state.length],
+                    &positions,
                     RotarySpec::new(query_heads, config.rope_theta)?,
                     key_value_heads,
                     config.block_norm_epsilon,
                 )?;
-                let mut attention = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
+                let mut attention =
+                    allocate(backend, shape(rows, hidden)?, AllocationClass::Scratch)?;
                 let Some(LayerCache::Attention { key, value, length }) =
                     state.layers.get_mut(index)
                 else {
@@ -763,8 +779,8 @@ fn append_token<B: InferenceOps>(
                 );
             }
         }
-        let mut residual = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
-        let mut ffn_input = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
+        let mut residual = allocate(backend, shape(rows, hidden)?, AllocationClass::Scratch)?;
+        let mut ffn_input = allocate(backend, shape(rows, hidden)?, AllocationClass::Scratch)?;
         backend.add_row_rms_norm(
             &mut residual.buffer,
             &mut ffn_input.buffer,
@@ -775,8 +791,16 @@ fn append_token<B: InferenceOps>(
                 .buffer_for(layer_role(index, Lfm2LayerWeightRole::FfnNorm))?,
             config.block_norm_epsilon,
         )?;
-        let mut gate = allocate(backend, shape(1, intermediate)?, AllocationClass::Scratch)?;
-        let mut up = allocate(backend, shape(1, intermediate)?, AllocationClass::Scratch)?;
+        let mut gate = allocate(
+            backend,
+            shape(rows, intermediate)?,
+            AllocationClass::Scratch,
+        )?;
+        let mut up = allocate(
+            backend,
+            shape(rows, intermediate)?,
+            AllocationClass::Scratch,
+        )?;
         if let (
             Lfm2ResolvedWeight::Packed {
                 codes: gate_codes,
@@ -819,7 +843,7 @@ fn append_token<B: InferenceOps>(
                 layer_role(index, Lfm2LayerWeightRole::FfnW3),
             )?;
         }
-        let mut down = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
+        let mut down = allocate(backend, shape(rows, hidden)?, AllocationClass::Scratch)?;
         match context
             .weights
             .resolve(layer_role(index, Lfm2LayerWeightRole::FfnW2))?
@@ -834,8 +858,11 @@ fn append_token<B: InferenceOps>(
                 )?;
             }
             Lfm2ResolvedWeight::Dense(_) => {
-                let mut activated =
-                    allocate(backend, shape(1, intermediate)?, AllocationClass::Scratch)?;
+                let mut activated = allocate(
+                    backend,
+                    shape(rows, intermediate)?,
+                    AllocationClass::Scratch,
+                )?;
                 backend.swiglu(&mut activated.buffer, &gate.buffer, &up.buffer)?;
                 weight_linear(
                     backend,
@@ -849,8 +876,8 @@ fn append_token<B: InferenceOps>(
         }
         // The next layer's operator norm (or the final embedding norm) rides
         // on the same fused add+norm pass that produces the residual base.
-        let mut next_x = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
-        let mut next_u = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
+        let mut next_x = allocate(backend, shape(rows, hidden)?, AllocationClass::Scratch)?;
+        let mut next_u = allocate(backend, shape(rows, hidden)?, AllocationClass::Scratch)?;
         let (next_norm, next_epsilon) = if index + 1 < config.layers.len() {
             (
                 layer_role(index + 1, Lfm2LayerWeightRole::OperatorNorm),
@@ -896,18 +923,46 @@ fn append_token<B: InferenceOps>(
         shape(1, u64::from(config.vocab_size))?,
         AllocationClass::Cache,
     )?;
-    weight_linear(
-        backend,
-        &mut logits.buffer,
-        &u.buffer,
-        &context.weights,
-        Lfm2WeightRole::TiedLmHead,
-    )?;
+    if rows == 1 {
+        weight_linear(
+            backend,
+            &mut logits.buffer,
+            &u.buffer,
+            &context.weights,
+            Lfm2WeightRole::TiedLmHead,
+        )?;
+    } else {
+        let mut last = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
+        backend.copy_rect_2d(
+            &mut last.buffer,
+            &u.buffer,
+            RectCopy2d::new(rows - 1, 0, 0, 0, 1, hidden),
+        )?;
+        weight_linear(
+            backend,
+            &mut logits.buffer,
+            &last.buffer,
+            &context.weights,
+            Lfm2WeightRole::TiedLmHead,
+        )?;
+        push_scratch::<B>(scratch, [last.buffer]);
+    }
     push_scratch::<B>(scratch, [x.buffer, u.buffer]);
-    // Reduce the fresh logits to a device-resident greedy token. The publish
-    // readback then only needs this one f32: NaN means the logits row held a
-    // non-finite value, and a finite value doubles as the next append's
-    // embedding-gather selector.
+    state.next_logits = Some(logits);
+    state.history.extend_from_slice(tokens);
+    state.length = length;
+    Ok(())
+}
+
+/// Greedy-sample epilogue: reduce the staged `[1, V]` logits to a
+/// device-resident token id. The publish readback then only needs this one
+/// f32: NaN means the logits row held a non-finite value, and a finite value
+/// doubles as the next append's embedding-gather selector.
+fn sample_epilogue<B: InferenceOps>(
+    backend: &mut B,
+    state: &mut PrefixStorage<B>,
+    mask: Option<&[u64]>,
+) -> Result<()> {
     if state.sampled.is_none() {
         state.sampled = Some(allocate(
             backend,
@@ -915,19 +970,30 @@ fn append_token<B: InferenceOps>(
             AllocationClass::Cache,
         )?);
     }
-    if let Some(sampled) = state.sampled.as_mut() {
-        match mask {
-            Some(mask) => backend.argmax_masked(&mut sampled.buffer, &logits.buffer, mask)?,
-            None => backend.argmax(&mut sampled.buffer, &logits.buffer)?,
-        }
+    let (Some(logits), Some(sampled)) = (state.next_logits.as_ref(), state.sampled.as_mut()) else {
+        return Err(ExecutorError::BackendFailure(
+            "token pass produced no logits boundary",
+        ));
+    };
+    match mask {
+        Some(mask) => backend.argmax_masked(&mut sampled.buffer, &logits.buffer, mask)?,
+        None => backend.argmax(&mut sampled.buffer, &logits.buffer)?,
     }
     state.sampled_id = None;
-    state.next_logits = Some(logits);
-    state.history.push(token);
-    state.length = state.length.checked_add(1).ok_or(ExecutorError::Overflow(
-        "prefix logical length overflows u64",
-    ))?;
     Ok(())
+}
+
+fn append_token<B: InferenceOps>(
+    context: &ModelContext<B>,
+    backend: &mut B,
+    state: &mut PrefixStorage<B>,
+    token: TokenId,
+    ids: TokenIds<'_, B>,
+    mask: Option<&[u64]>,
+    scratch: &mut Vec<B::Buffer>,
+) -> Result<()> {
+    append_tokens(context, backend, state, &[token], ids, scratch)?;
+    sample_epilogue(backend, state, mask)
 }
 
 enum PrefixAction<B: InferenceOps> {
@@ -952,7 +1018,8 @@ enum PrefixAction<B: InferenceOps> {
 
 enum PrefixPhase<B: InferenceOps> {
     New,
-    /// A cooperative token step is ready. Each poll submits at most one model token.
+    /// A cooperative build step is ready. Prefill submits the whole prompt in
+    /// one pass; appends still submit at most one model token per poll.
     Building,
     Fence(B::Fence),
     Readback(B::Readback),
@@ -1205,23 +1272,36 @@ impl<B: InferenceOps> PrefixTask<B> {
         Ok(())
     }
 
-    fn build_one_token(&mut self) -> Result<()> {
+    #[allow(clippy::too_many_lines)]
+    fn build_step(&mut self) -> Result<()> {
         enum Step<B: InferenceOps> {
             Host(TokenId),
             Device(TokenId, Tensor<B>),
         }
         self.context.validate_backend()?;
+        if let Some(PrefixAction::Prefill { tokens, mask }) = self.action.as_ref() {
+            let mut backend = self.context.borrow_backend()?;
+            let Some(staged) = self.staged.as_mut() else {
+                return Err(ExecutorError::BackendFailure(
+                    "staged prefix state is unavailable while building",
+                ));
+            };
+            append_tokens(
+                &self.context,
+                &mut *backend,
+                staged,
+                tokens,
+                TokenIds::Host(tokens),
+                &mut self.scratch,
+            )?;
+            sample_epilogue(&mut *backend, staged, mask.as_deref())?;
+            drop(backend);
+            self.action = None;
+            return self.submit_fence();
+        }
         // The mask constrains only the argmax that publishes the next greedy
-        // sample: for prefill that's the final prompt token's epilogue, for
-        // append_argmax the single appended token's.
+        // sample: for append_argmax that's the single appended token's.
         let (step, mask): (Option<Step<B>>, Option<Rc<[u64]>>) = match self.action.as_ref() {
-            Some(PrefixAction::Prefill { tokens, mask }) => {
-                let last = self.next_token + 1 == tokens.len();
-                (
-                    tokens.get(self.next_token).copied().map(Step::Host),
-                    last.then(|| mask.clone()).flatten(),
-                )
-            }
             Some(PrefixAction::Append { tokens }) => {
                 (tokens.get(self.next_token).copied().map(Step::Host), None)
             }
@@ -1244,7 +1324,7 @@ impl<B: InferenceOps> PrefixTask<B> {
                     (None, None)
                 }
             }
-            Some(PrefixAction::Fork { .. }) | None => {
+            Some(PrefixAction::Prefill { .. } | PrefixAction::Fork { .. }) | None => {
                 return Err(ExecutorError::CompletionConsumed);
             }
         };
@@ -1292,9 +1372,6 @@ impl<B: InferenceOps> PrefixTask<B> {
                 "prefix token progress overflows usize",
             ))?;
         if matches!(
-            self.action.as_ref(),
-            Some(PrefixAction::Prefill { tokens, .. }) if self.next_token == tokens.len()
-        ) || matches!(
             self.action.as_ref(),
             Some(PrefixAction::Append { tokens }) if self.next_token == tokens.len()
         ) || matches!(
@@ -1371,7 +1448,7 @@ impl<B: InferenceOps> InferenceCompletion for PrefixTask<B> {
                 }
                 Err(error) => self.terminal(Err(error)),
             },
-            PrefixPhase::Building => match self.build_one_token() {
+            PrefixPhase::Building => match self.build_step() {
                 Ok(()) => CompletionPoll::Pending,
                 Err(error) => {
                     // A backend may have accepted an earlier primitive in this token before a
@@ -1674,6 +1751,96 @@ impl<B: InferenceOps> InferenceCompletion for ChoiceLogitsTask<B> {
         }
         self.prefix = None;
         drop(self.gathered.take());
+        self.readback = None;
+        self.terminal = true;
+        Ok(())
+    }
+}
+
+/// Nonblocking one-pass prefill plus caller-selected logits readback.
+///
+/// The whole prompt runs as one `[T, ...]` model pass over freshly staged
+/// prefix storage; only the selected columns of its final `[1, V]` logits row
+/// are gathered into `[1, K]` and read back. The staged storage, gathered
+/// buffer, and scratch stay retained until the readback is terminal, so only
+/// K f32 values ever cross to the host. No prefix is published and no greedy
+/// sample is computed.
+pub struct PrefillChoiceTask<B: InferenceOps> {
+    context: Rc<ModelContext<B>>,
+    staged: Option<PrefixStorage<B>>,
+    gathered: Option<Tensor<B>>,
+    scratch: Vec<B::Buffer>,
+    readback: Option<B::Readback>,
+    expected: usize,
+    terminal: bool,
+}
+
+impl<B: InferenceOps> PrefillChoiceTask<B> {
+    fn new(
+        context: Rc<ModelContext<B>>,
+        staged: PrefixStorage<B>,
+        gathered: Tensor<B>,
+        scratch: Vec<B::Buffer>,
+        readback: B::Readback,
+        expected: usize,
+    ) -> Self {
+        Self {
+            context,
+            staged: Some(staged),
+            gathered: Some(gathered),
+            scratch,
+            readback: Some(readback),
+            expected,
+            terminal: false,
+        }
+    }
+
+    fn finish(&mut self, result: Result<Vec<f32>>) -> CompletionPoll<Vec<f32>> {
+        self.staged = None;
+        self.gathered = None;
+        self.scratch.clear();
+        self.readback = None;
+        self.terminal = true;
+        CompletionPoll::Ready(result)
+    }
+}
+
+impl<B: InferenceOps> InferenceCompletion for PrefillChoiceTask<B> {
+    type Output = Vec<f32>;
+    fn poll_step(&mut self) -> CompletionPoll<Self::Output> {
+        if self.terminal {
+            return CompletionPoll::Ready(Err(ExecutorError::CompletionConsumed));
+        }
+        let Some(readback) = self.readback.as_mut() else {
+            return self.finish(Err(ExecutorError::CompletionConsumed));
+        };
+        match readback.poll_step() {
+            CompletionPoll::Pending => CompletionPoll::Pending,
+            CompletionPoll::Ready(Err(error)) => self.finish(Err(error)),
+            CompletionPoll::Ready(Ok(values)) if values.len() != self.expected => self.finish(Err(
+                ExecutorError::BackendFailure("choice readback returned the wrong value count"),
+            )),
+            CompletionPoll::Ready(Ok(values)) if values.iter().all(|value| value.is_finite()) => {
+                if let Err(error) = self.context.validate_backend() {
+                    return self.finish(Err(error));
+                }
+                self.finish(Ok(values))
+            }
+            CompletionPoll::Ready(Ok(_)) => self.finish(Err(ExecutorError::BackendFailure(
+                "selected LFM2 logits contain a non-finite value",
+            ))),
+        }
+    }
+    fn cancel(&mut self) -> Result<()> {
+        if self.terminal {
+            return Err(ExecutorError::CompletionConsumed);
+        }
+        if let Some(readback) = self.readback.as_mut() {
+            readback.cancel()?;
+        }
+        self.staged = None;
+        self.gathered = None;
+        self.scratch.clear();
         self.readback = None;
         self.terminal = true;
         Ok(())
@@ -2059,6 +2226,7 @@ impl<B: InferenceOps> TokenExecutor for Lfm2Executor<B> {
 
 impl<B: InferenceOps> TokenChoiceExecutor for Lfm2Executor<B> {
     type ChoiceLogits = ChoiceLogitsTask<B>;
+    type ChoicePrefill = PrefillChoiceTask<B>;
 
     fn choice_logits(
         &mut self,
@@ -2095,6 +2263,77 @@ impl<B: InferenceOps> TokenChoiceExecutor for Lfm2Executor<B> {
             prefix.clone(),
             gathered,
             readback,
+        ))
+    }
+
+    fn prefill_choice_logits(
+        &mut self,
+        input: TokenChunk<'_>,
+        token_ids: &[TokenId],
+    ) -> Result<Self::ChoicePrefill> {
+        let tokens = self.accepted_tokens(input, 0)?;
+        if tokens.is_empty() {
+            return Err(ExecutorError::InvalidArgument(
+                "choice prefill requires a nonempty prompt",
+            ));
+        }
+        if token_ids.is_empty() {
+            return Err(ExecutorError::InvalidArgument(
+                "choice selector list is empty",
+            ));
+        }
+        for token in token_ids {
+            if *token >= self.context.config().vocab_size {
+                return Err(ExecutorError::OutOfBounds(
+                    "choice token ID exceeds loaded model vocabulary",
+                ));
+            }
+        }
+        self.context.validate_backend()?;
+        let count = u64::try_from(token_ids.len())
+            .map_err(|_| ExecutorError::Overflow("choice token count exceeds u64"))?;
+        let mut backend = self.context.borrow_backend()?;
+        let mut staged = allocate_empty(&self.context, &mut *backend)?;
+        let mut scratch = Vec::new();
+        let mut gathered = allocate(&mut *backend, shape(1, count)?, AllocationClass::Scratch)?;
+        let recorded = (|| -> Result<B::Readback> {
+            append_tokens(
+                &self.context,
+                &mut *backend,
+                &mut staged,
+                &tokens,
+                TokenIds::Host(&tokens),
+                &mut scratch,
+            )?;
+            let Some(logits) = staged.next_logits.as_ref() else {
+                return Err(ExecutorError::BackendFailure(
+                    "choice prefill produced no logits boundary",
+                ));
+            };
+            backend.gather_columns(&mut gathered.buffer, &logits.buffer, token_ids)?;
+            backend.read_f32_async(&gathered.buffer)
+        })();
+        let readback = match recorded {
+            Ok(readback) => readback,
+            Err(error) => {
+                // Recorded work may be live in a pending device queue without a
+                // completion boundary; retain every owned buffer rather than
+                // dropping it into an unknown device state.
+                scratch.push(gathered.buffer);
+                scratch.extend(staged.into_buffers());
+                drop(backend);
+                self.context.quarantine_unfenced(scratch, Vec::new());
+                return Err(error);
+            }
+        };
+        drop(backend);
+        Ok(PrefillChoiceTask::new(
+            Rc::clone(&self.context),
+            staged,
+            gathered,
+            scratch,
+            readback,
+            token_ids.len(),
         ))
     }
 }

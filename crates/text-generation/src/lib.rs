@@ -649,10 +649,9 @@ where
     let prepared = prepare_choice(tokenizer, request)?;
     let mut logit_pairs = Vec::with_capacity(prepared.criteria().len());
     for criterion in prepared.criteria() {
-        let mut prefill = executor.prefill(TokenChunk::all(criterion.input_ids()))?;
-        let prefix = complete_choice(&mut prefill, cancellation)?;
-        let mut selected = executor.choice_logits(&prefix, prepared.token_ids())?;
-        logit_pairs.push(complete_choice(&mut selected, cancellation)?);
+        let mut task = executor
+            .prefill_choice_logits(TokenChunk::all(criterion.input_ids()), prepared.token_ids())?;
+        logit_pairs.push(complete_choice(&mut task, cancellation)?);
     }
     finish_choice(prepared, logit_pairs)
 }

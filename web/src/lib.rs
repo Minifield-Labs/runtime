@@ -251,16 +251,11 @@ impl WebDemo {
         .map_err(js_error)?;
         let mut logit_pairs = Vec::with_capacity(prepared.criteria().len());
         for criterion in prepared.criteria() {
-            let mut prefill = self
+            let mut task = self
                 .executor
-                .prefill(TokenChunk::all(criterion.input_ids()))
+                .prefill_choice_logits(TokenChunk::all(criterion.input_ids()), prepared.token_ids())
                 .map_err(js_error)?;
-            let prefix: Lfm2Prefix<WgpuBackend> = pump(&mut prefill).await?;
-            let mut selected = self
-                .executor
-                .choice_logits(&prefix, prepared.token_ids())
-                .map_err(js_error)?;
-            logit_pairs.push(pump(&mut selected).await?);
+            logit_pairs.push(pump(&mut task).await?);
         }
         let result = finish_choice(prepared, logit_pairs).map_err(js_error)?;
 

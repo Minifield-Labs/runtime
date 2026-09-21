@@ -57,9 +57,9 @@ required). The page fetches `config.json`, the packed safetensors, and
   `JsonEnforcer` for general JSON-shaped output and `ToolCallEnforcer` for
   the simpler `{"<name>":true|false}` shape.
 - `choose(names, prompts)` runs `text-generation`'s typed choice scoring.
-  Each criterion is an independent prompt scored serially: one prefill, then
-  a gather of its true/false selector logits, so only 2 logits per criterion
-  cross to the host. It resolves to the standard answer
+  Each criterion is an independent prompt scored serially: one multi-token
+  prefill pass, then a gather of its true/false selector logits, so only 2
+  logits per criterion cross to the host. It resolves to the standard answer
   `{ type: "choice", choice, confidence, probabilities }`, where
   `probabilities` maps each criterion name to its relative score. The page's
   "Structured choice" section drives it with a state textarea and one

@@ -1683,12 +1683,25 @@ pub trait TokenExecutor {
 /// vocabulary, and prefixes that carry no logits boundary.
 pub trait TokenChoiceExecutor: TokenExecutor {
     type ChoiceLogits: InferenceCompletion<Output = Vec<f32>>;
+    type ChoicePrefill: InferenceCompletion<Output = Vec<f32>>;
 
     fn choice_logits(
         &mut self,
         prefix: &Self::Prefix,
         token_ids: &[TokenId],
     ) -> Result<Self::ChoiceLogits>;
+
+    /// Prefill `input` as one single-sequence pass and resolve to the
+    /// `token_ids` logits at the final position in caller order, preserving
+    /// duplicates, with exactly `token_ids.len()` finite values. No prefix is
+    /// published and no greedy sample is computed. Implementations reject an
+    /// empty accepted prompt, an empty selector list, and ids outside the
+    /// vocabulary.
+    fn prefill_choice_logits(
+        &mut self,
+        input: TokenChunk<'_>,
+        token_ids: &[TokenId],
+    ) -> Result<Self::ChoicePrefill>;
 }
 
 /// Per-step decode constraint driven by a generation loop: supplies the

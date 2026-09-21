@@ -674,6 +674,146 @@ fn append_argmax_extends_prefix_with_resolved_greedy_token() {
     }
 }
 
+/// The tiny fixture's conv + `full_attention` layer pair exercises both state
+/// paths in one bulk pass. On CPU every op computes each row independently,
+/// so bulk prefill must equal the serial one-token reference bitwise.
+#[test]
+fn bulk_prefill_matches_serial_token_appends() {
+    let (config, packed_bytes, dequant_bytes) = tiny_packed_fixture();
+    let tokens: Vec<u32> = vec![3, 5, 9, 42, 7];
+    for (weights, format, label) in [
+        (&dequant_bytes, Lfm2WeightFormat::Dense, "dense"),
+        (&packed_bytes, Lfm2WeightFormat::TernaryV1, "packed"),
+    ] {
+        let mut bulk = load_executor(&config, weights, format, 1 << 24);
+        let mut serial = load_executor(&config, weights, format, 1 << 24);
+
+        let mut bulk_task = bulk
+            .prefill(TokenChunk::all(&tokens))
+            .expect("bulk prefill");
+        let bulk_prefix = ready(&mut bulk_task);
+
+        let mut empty_task = serial.prefill(TokenChunk::all(&[])).expect("empty prefill");
+        let mut serial_prefix = ready(&mut empty_task);
+        for token in &tokens {
+            let mut append = serial
+                .append_known(&serial_prefix, TokenChunk::all(&[*token]))
+                .expect("serial append");
+            serial_prefix = ready(&mut append);
+        }
+
+        assert_eq!(
+            bulk_prefix.logical_length(),
+            serial_prefix.logical_length(),
+            "{label}: logical length"
+        );
+        assert_eq!(
+            bulk_prefix.token_history(),
+            serial_prefix.token_history(),
+            "{label}: history"
+        );
+        assert_eq!(
+            bulk.sampled_token(&bulk_prefix).expect("bulk sampled"),
+            serial
+                .sampled_token(&serial_prefix)
+                .expect("serial sampled"),
+            "{label}: sampled token"
+        );
+
+        let mut bulk_logits = bulk.next_logits(&bulk_prefix).expect("bulk logits");
+        let mut serial_logits = serial.next_logits(&serial_prefix).expect("serial logits");
+        assert_eq!(
+            ready(&mut bulk_logits),
+            ready(&mut serial_logits),
+            "{label}: final logits diverged"
+        );
+
+        let mut bulk_append = bulk
+            .append_known(&bulk_prefix, TokenChunk::all(&[11]))
+            .expect("bulk continuation");
+        let mut serial_append = serial
+            .append_known(&serial_prefix, TokenChunk::all(&[11]))
+            .expect("serial continuation");
+        let bulk_next = ready(&mut bulk_append);
+        let serial_next = ready(&mut serial_append);
+        assert_eq!(
+            bulk_next.token_history(),
+            serial_next.token_history(),
+            "{label}: continuation history"
+        );
+        let mut bulk_next_logits = bulk.next_logits(&bulk_next).expect("bulk next logits");
+        let mut serial_next_logits = serial
+            .next_logits(&serial_next)
+            .expect("serial next logits");
+        assert_eq!(
+            ready(&mut bulk_next_logits),
+            ready(&mut serial_next_logits),
+            "{label}: continuation logits diverged"
+        );
+    }
+}
+
+#[test]
+fn prefill_choice_logits_reads_selected_columns_directly() {
+    let (config, packed_bytes, dequant_bytes) = tiny_packed_fixture();
+    let prompt = [3_u32, 5, 9, 42];
+    let selectors = [41_u32, 7, 100, 7];
+    for (weights, format, label) in [
+        (&dequant_bytes, Lfm2WeightFormat::Dense, "dense"),
+        (&packed_bytes, Lfm2WeightFormat::TernaryV1, "packed"),
+    ] {
+        let mut executor = load_executor(&config, weights, format, 1 << 24);
+
+        let mut task = executor
+            .prefill_choice_logits(TokenChunk::all(&prompt), &selectors)
+            .expect("choice prefill");
+        let values = ready(&mut task);
+        assert_eq!(
+            task.poll_step(),
+            CompletionPoll::Ready(Err(ExecutorError::CompletionConsumed)),
+            "{label}: completion must be consumed"
+        );
+
+        // Same prompt through the publishing prefill path yields identical
+        // final logits on CPU; the direct task must equal that selection.
+        let mut prefill = executor.prefill(TokenChunk::all(&prompt)).expect("prefill");
+        let prefix = ready(&mut prefill);
+        let mut logits_task = executor.next_logits(&prefix).expect("logits");
+        let full = ready(&mut logits_task);
+        let expected: Vec<f32> = selectors.iter().map(|&id| full[id as usize]).collect();
+        assert_eq!(values, expected, "{label}: selected logits diverged");
+
+        assert!(
+            executor
+                .prefill_choice_logits(TokenChunk::all(&[]), &selectors)
+                .is_err(),
+            "{label}: empty prompt accepted"
+        );
+        assert!(
+            executor
+                .prefill_choice_logits(TokenChunk::all(&prompt), &[])
+                .is_err(),
+            "{label}: empty selectors accepted"
+        );
+        assert!(
+            executor
+                .prefill_choice_logits(TokenChunk::all(&prompt), &[1, 128])
+                .is_err(),
+            "{label}: out-of-vocab selector accepted"
+        );
+
+        let mut cancelled = executor
+            .prefill_choice_logits(TokenChunk::all(&prompt), &selectors)
+            .expect("choice prefill");
+        cancelled.cancel().expect("cancel");
+        assert_eq!(
+            cancelled.poll_step(),
+            CompletionPoll::Ready(Err(ExecutorError::CompletionConsumed)),
+            "{label}: cancelled task must not produce values"
+        );
+    }
+}
+
 #[test]
 fn choice_logits_reads_back_only_selected_columns_in_caller_order() {
     let (config, packed_bytes, _) = tiny_packed_fixture();

@@ -7,8 +7,8 @@
 use core::fmt;
 
 use minifield_engine_api::{
-    CompletionPoll, DecodeConstraint, ExecutorError, InferenceCompletion, TokenChunk,
-    TokenExecutor, TokenId,
+    CompletionPoll, DecodeConstraint, ExecutorError, InferenceCompletion, TokenChoiceExecutor,
+    TokenChunk, TokenExecutor, TokenId,
 };
 use minifield_text_tokenizer::{EncodeOptions, Tokenizer, TokenizerError};
 
@@ -303,6 +303,299 @@ fn ensure_context(required: usize, limit: usize) -> Result<(), GenerationError> 
         return Err(GenerationError::ContextLimit { required, limit });
     }
     Ok(())
+}
+
+/// Caller-provided structured-choice request. The prompt is prefilled once
+/// and each selector contributes exactly one continuation token whose logit
+/// is scored; no output tokens are generated.
+#[derive(Clone, Debug)]
+pub struct ChoiceRequest<'a> {
+    pub prompt: &'a str,
+    pub add_bos: bool,
+    pub selectors: &'a [&'a str],
+    pub max_context_tokens: usize,
+}
+
+/// One selector's score within a completed choice.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChoiceScore {
+    pub selector: String,
+    pub token_id: TokenId,
+    pub probability: f32,
+}
+
+/// Completed choice: the normalized selector scores in caller order plus the
+/// index of the winning selector.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChoiceResult {
+    pub input_ids: Vec<TokenId>,
+    pub selected_index: usize,
+    pub scores: Vec<ChoiceScore>,
+}
+
+/// Checked structured-choice failure.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ChoiceError {
+    Tokenizer(TokenizerError),
+    Executor(ExecutorError),
+    Cancelled,
+    ContextLimit { required: usize, limit: usize },
+    InvalidChoices(&'static str),
+    NonFiniteLogit { choice_index: usize },
+}
+
+impl fmt::Display for ChoiceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Tokenizer(error) => write!(formatter, "tokenizer error: {error}"),
+            Self::Executor(error) => write!(formatter, "executor error: {error}"),
+            Self::Cancelled => formatter.write_str("choice cancelled"),
+            Self::ContextLimit { required, limit } => {
+                write!(
+                    formatter,
+                    "choice requires {required} context tokens, above limit {limit}"
+                )
+            }
+            Self::InvalidChoices(reason) => {
+                write!(formatter, "invalid choice selectors: {reason}")
+            }
+            Self::NonFiniteLogit { choice_index } => write!(
+                formatter,
+                "executor returned non-finite logit for choice {choice_index}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ChoiceError {}
+
+impl From<TokenizerError> for ChoiceError {
+    fn from(error: TokenizerError) -> Self {
+        Self::Tokenizer(error)
+    }
+}
+
+impl From<ExecutorError> for ChoiceError {
+    fn from(error: ExecutorError) -> Self {
+        Self::Executor(error)
+    }
+}
+
+/// Validated, tokenized choice state. Produced by [`prepare_choice`],
+/// consumed by [`finish_choice`]; async hosts prefill `input_ids()` once and
+/// pass `token_ids()` to `TokenChoiceExecutor::choice_logits` so only the
+/// selector logits cross to the host.
+pub struct PreparedChoice {
+    input_ids: Vec<TokenId>,
+    selectors: Vec<String>,
+    token_ids: Vec<TokenId>,
+}
+
+impl PreparedChoice {
+    /// The tokenized prompt input for the single prefill.
+    #[must_use]
+    pub fn input_ids(&self) -> &[TokenId] {
+        &self.input_ids
+    }
+
+    /// The selector continuation token IDs in caller order.
+    #[must_use]
+    pub fn token_ids(&self) -> &[TokenId] {
+        &self.token_ids
+    }
+}
+
+/// Tokenize and validate a choice request without touching an executor.
+///
+/// Every selector must be nonempty, encode to exactly one token without
+/// special tokens, carry a distinct token ID, and compose with the prompt:
+/// encoding `prompt + selector` must equal `input_ids` followed by that one
+/// token. `max_context_tokens` bounds the prompt input only.
+///
+/// # Errors
+///
+/// Returns `InvalidChoices` when any selector rule fails, `ContextLimit`
+/// when the prompt exceeds the context bound, and `Tokenizer` for encoding
+/// failures.
+pub fn prepare_choice(
+    tokenizer: &Tokenizer,
+    request: &ChoiceRequest<'_>,
+) -> Result<PreparedChoice, ChoiceError> {
+    if request.selectors.len() < 2 {
+        return Err(ChoiceError::InvalidChoices(
+            "choice requires at least two selectors",
+        ));
+    }
+    let input_ids = tokenizer.encode(
+        request.prompt,
+        EncodeOptions {
+            add_special_tokens: request.add_bos,
+        },
+    )?;
+    if input_ids.len() > request.max_context_tokens {
+        return Err(ChoiceError::ContextLimit {
+            required: input_ids.len(),
+            limit: request.max_context_tokens,
+        });
+    }
+    let mut selectors = Vec::with_capacity(request.selectors.len());
+    let mut token_ids = Vec::with_capacity(request.selectors.len());
+    let mut continued = String::new();
+    for selector in request.selectors {
+        if selector.is_empty() {
+            return Err(ChoiceError::InvalidChoices("choice selector is empty"));
+        }
+        let ids = tokenizer.encode(
+            selector,
+            EncodeOptions {
+                add_special_tokens: false,
+            },
+        )?;
+        if ids.len() != 1 {
+            return Err(ChoiceError::InvalidChoices(
+                "choice selector must encode to exactly one token",
+            ));
+        }
+        let token_id = ids[0];
+        if token_ids.contains(&token_id) {
+            return Err(ChoiceError::InvalidChoices(
+                "choice selector token IDs must be distinct",
+            ));
+        }
+        continued.clear();
+        continued.push_str(request.prompt);
+        continued.push_str(selector);
+        let continued_ids = tokenizer.encode(
+            &continued,
+            EncodeOptions {
+                add_special_tokens: request.add_bos,
+            },
+        )?;
+        if continued_ids.len() != input_ids.len() + 1
+            || continued_ids[..input_ids.len()] != input_ids[..]
+            || continued_ids.last() != Some(&token_id)
+        {
+            return Err(ChoiceError::InvalidChoices(
+                "choice selector is not a compositional continuation of the prompt",
+            ));
+        }
+        token_ids.push(token_id);
+        selectors.push((*selector).to_owned());
+    }
+    Ok(PreparedChoice {
+        input_ids,
+        selectors,
+        token_ids,
+    })
+}
+
+/// Normalize the selector logits of a completed choice readback.
+///
+/// `logits` must contain exactly one value per selector, in caller order.
+/// The softmax runs in f64 over only the selected logits and emits f32
+/// probabilities; the first selector wins an exact-logit tie.
+///
+/// # Errors
+///
+/// Returns `Executor` when the logit count differs from the selector count
+/// and `NonFiniteLogit` when any selected value is non-finite.
+#[allow(clippy::needless_pass_by_value)]
+pub fn finish_choice(
+    prepared: PreparedChoice,
+    logits: Vec<f32>,
+) -> Result<ChoiceResult, ChoiceError> {
+    let PreparedChoice {
+        input_ids,
+        selectors,
+        token_ids,
+    } = prepared;
+    if logits.len() != token_ids.len() {
+        return Err(ChoiceError::Executor(ExecutorError::InvalidShape(
+            "executor returned a logit count different from the selector count",
+        )));
+    }
+    for (choice_index, &logit) in logits.iter().enumerate() {
+        if !logit.is_finite() {
+            return Err(ChoiceError::NonFiniteLogit { choice_index });
+        }
+    }
+    let selected_index = logits
+        .iter()
+        .enumerate()
+        .fold((0_usize, logits[0]), |best, (index, &logit)| {
+            if logit > best.1 { (index, logit) } else { best }
+        })
+        .0;
+    let maximum = logits
+        .iter()
+        .copied()
+        .map(f64::from)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let mut weights = Vec::with_capacity(logits.len());
+    let mut denominator = 0.0_f64;
+    for &logit in &logits {
+        let weight = (f64::from(logit) - maximum).exp();
+        weights.push(weight);
+        denominator += weight;
+    }
+    let mut scores = Vec::with_capacity(token_ids.len());
+    for ((selector, token_id), weight) in selectors.into_iter().zip(token_ids).zip(weights) {
+        #[allow(clippy::cast_possible_truncation)]
+        let probability = (weight / denominator) as f32;
+        scores.push(ChoiceScore {
+            selector,
+            token_id,
+            probability,
+        });
+    }
+    Ok(ChoiceResult {
+        input_ids,
+        selected_index,
+        scores,
+    })
+}
+
+/// Single-pass structured choice: one prompt prefill plus one selector-logit
+/// readback, then a candidate-only softmax. No output tokens are generated
+/// and no full vocabulary row crosses to the host.
+///
+/// # Errors
+///
+/// Same as [`prepare_choice`] and [`finish_choice`], plus `Executor` for
+/// executor failures and `Cancelled` when the caller's probe fires.
+pub fn choose<E, C>(
+    executor: &mut E,
+    tokenizer: &Tokenizer,
+    request: &ChoiceRequest<'_>,
+    cancellation: &mut C,
+) -> Result<ChoiceResult, ChoiceError>
+where
+    E: TokenChoiceExecutor,
+    C: Cancellation,
+{
+    let prepared = prepare_choice(tokenizer, request)?;
+    let mut prefill = executor.prefill(TokenChunk::all(prepared.input_ids()))?;
+    let prefix = complete_choice(&mut prefill, cancellation)?;
+    let mut selected = executor.choice_logits(&prefix, prepared.token_ids())?;
+    let logits = complete_choice(&mut selected, cancellation)?;
+    finish_choice(prepared, logits)
+}
+
+fn complete_choice<T, C>(completion: &mut T, cancellation: &mut C) -> Result<T::Output, ChoiceError>
+where
+    T: InferenceCompletion,
+    C: Cancellation,
+{
+    loop {
+        if cancellation.is_cancelled() {
+            completion.cancel()?;
+            return Err(ChoiceError::Cancelled);
+        }
+        match completion.poll_step() {
+            CompletionPoll::Pending => {}
+            CompletionPoll::Ready(result) => return result.map_err(ChoiceError::from),
+        }
+    }
 }
 
 fn complete<T, C>(completion: &mut T, cancellation: &mut C) -> Result<T::Output, GenerationError>

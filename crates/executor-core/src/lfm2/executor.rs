@@ -11,7 +11,7 @@ use std::{
 use minifield_engine_api::{
     AllocationClass, BackendLease, CandidateScore, CompletionPoll, ExecutorError, FenceRetirement,
     GatedShortConvSpec, GqaSpec, InferenceCompletion, InferenceOps, PackedHeadSpec, Result,
-    RotarySpec, Shape, TokenChunk, TokenExecutor, TokenId, TokenIds,
+    RotarySpec, Shape, TokenChoiceExecutor, TokenChunk, TokenExecutor, TokenId, TokenIds,
 };
 
 use super::{
@@ -242,6 +242,7 @@ impl<B: InferenceOps> Lfm2Executor<B> {
                 minifield_engine_api::OperationKind::Copy,
                 minifield_engine_api::OperationKind::RectCopy2d,
                 minifield_engine_api::OperationKind::GatherRows,
+                minifield_engine_api::OperationKind::GatherColumns,
                 minifield_engine_api::OperationKind::Add,
                 minifield_engine_api::OperationKind::Multiply,
                 minifield_engine_api::OperationKind::Linear,
@@ -1603,6 +1604,82 @@ impl<B: InferenceOps> InferenceCompletion for LogitsTask<B> {
     }
 }
 
+/// Nonblocking host readback of caller-selected logits columns. The prefix
+/// and the `[1, K]` gathered buffer stay retained until the readback is
+/// terminal, so only K f32 values ever cross to the host.
+pub struct ChoiceLogitsTask<B: InferenceOps> {
+    context: Rc<ModelContext<B>>,
+    prefix: Option<Lfm2Prefix<B>>,
+    gathered: Option<Tensor<B>>,
+    readback: Option<B::Readback>,
+    terminal: bool,
+}
+
+impl<B: InferenceOps> ChoiceLogitsTask<B> {
+    fn new(
+        context: Rc<ModelContext<B>>,
+        prefix: Lfm2Prefix<B>,
+        gathered: Tensor<B>,
+        readback: B::Readback,
+    ) -> Self {
+        Self {
+            context,
+            prefix: Some(prefix),
+            gathered: Some(gathered),
+            readback: Some(readback),
+            terminal: false,
+        }
+    }
+    fn finish(&mut self, result: Result<Vec<f32>>) -> CompletionPoll<Vec<f32>> {
+        self.prefix = None;
+        drop(self.gathered.take());
+        self.readback = None;
+        self.terminal = true;
+        CompletionPoll::Ready(result)
+    }
+}
+
+impl<B: InferenceOps> InferenceCompletion for ChoiceLogitsTask<B> {
+    type Output = Vec<f32>;
+    fn poll_step(&mut self) -> CompletionPoll<Self::Output> {
+        if self.terminal {
+            return CompletionPoll::Ready(Err(ExecutorError::CompletionConsumed));
+        }
+        let Some(readback) = self.readback.as_mut() else {
+            return self.finish(Err(ExecutorError::CompletionConsumed));
+        };
+        match readback.poll_step() {
+            CompletionPoll::Pending => CompletionPoll::Pending,
+            CompletionPoll::Ready(Err(error)) => self.finish(Err(error)),
+            CompletionPoll::Ready(Ok(values)) if values.iter().all(|value| value.is_finite()) => {
+                let Some(prefix) = self.prefix.as_ref() else {
+                    return self.finish(Err(ExecutorError::CompletionConsumed));
+                };
+                if let Err(error) = self.context.validate_prefix(prefix) {
+                    return self.finish(Err(error));
+                }
+                self.finish(Ok(values))
+            }
+            CompletionPoll::Ready(Ok(_)) => self.finish(Err(ExecutorError::BackendFailure(
+                "selected LFM2 logits contain a non-finite value",
+            ))),
+        }
+    }
+    fn cancel(&mut self) -> Result<()> {
+        if self.terminal {
+            return Err(ExecutorError::CompletionConsumed);
+        }
+        if let Some(readback) = self.readback.as_mut() {
+            readback.cancel()?;
+        }
+        self.prefix = None;
+        drop(self.gathered.take());
+        self.readback = None;
+        self.terminal = true;
+        Ok(())
+    }
+}
+
 fn candidate_score_transport(accumulated: f64) -> Result<f32> {
     if !accumulated.is_finite() {
         return Err(ExecutorError::BackendFailure(
@@ -1976,6 +2053,48 @@ impl<B: InferenceOps> TokenExecutor for Lfm2Executor<B> {
             Rc::clone(&self.context),
             prefix.clone(),
             owned,
+        ))
+    }
+}
+
+impl<B: InferenceOps> TokenChoiceExecutor for Lfm2Executor<B> {
+    type ChoiceLogits = ChoiceLogitsTask<B>;
+
+    fn choice_logits(
+        &mut self,
+        prefix: &Self::Prefix,
+        token_ids: &[TokenId],
+    ) -> Result<Self::ChoiceLogits> {
+        self.context.validate_prefix(prefix)?;
+        let Some(logits) = prefix.storage.next_logits.as_ref() else {
+            return Err(ExecutorError::InvalidArgument(
+                "empty prefix has no next-token logits",
+            ));
+        };
+        if token_ids.is_empty() {
+            return Err(ExecutorError::InvalidArgument(
+                "choice selector list is empty",
+            ));
+        }
+        for token in token_ids {
+            if *token >= self.context.config().vocab_size {
+                return Err(ExecutorError::OutOfBounds(
+                    "choice token ID exceeds loaded model vocabulary",
+                ));
+            }
+        }
+        let count = u64::try_from(token_ids.len())
+            .map_err(|_| ExecutorError::Overflow("choice token count exceeds u64"))?;
+        let mut backend = self.context.borrow_backend()?;
+        let mut gathered = allocate(&mut *backend, shape(1, count)?, AllocationClass::Scratch)?;
+        backend.gather_columns(&mut gathered.buffer, &logits.buffer, token_ids)?;
+        let readback = backend.read_f32_async(&gathered.buffer)?;
+        drop(backend);
+        Ok(ChoiceLogitsTask::new(
+            Rc::clone(&self.context),
+            prefix.clone(),
+            gathered,
+            readback,
         ))
     }
 }

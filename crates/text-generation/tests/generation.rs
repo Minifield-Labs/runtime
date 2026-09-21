@@ -3,11 +3,11 @@ use std::rc::Rc;
 
 use minifield_engine_api::{
     CandidateScore, DecodeConstraint, ExecutorError, ReadyCompletion, Result as ExecutorResult,
-    TokenChunk, TokenExecutor, TokenId,
+    TokenChoiceExecutor, TokenChunk, TokenExecutor, TokenId,
 };
 use minifield_text_generation::{
-    GenerationError, GenerationPolicy, GenerationRequest, NeverCancel, StopReason, generate,
-    generate_constrained,
+    ChoiceError, ChoiceRequest, ChoiceScore, GenerationError, GenerationPolicy, GenerationRequest,
+    NeverCancel, StopReason, choose, finish_choice, generate, generate_constrained, prepare_choice,
 };
 use minifield_text_tokenizer::{MODEL_VOCAB_SIZE, Tokenizer, TokenizerLimits};
 
@@ -22,6 +22,8 @@ struct FakeExecutor {
     masked_calls: usize,
     prefill_calls: usize,
     logits_calls: usize,
+    choice_calls: usize,
+    choice_ids: Vec<TokenId>,
     fail_append: bool,
 }
 
@@ -35,6 +37,8 @@ impl FakeExecutor {
             masked_calls: 0,
             prefill_calls: 0,
             logits_calls: 0,
+            choice_calls: 0,
+            choice_ids: Vec::new(),
             fail_append: false,
         }
     }
@@ -172,6 +176,32 @@ impl TokenExecutor for FakeExecutor {
         _candidates: &[&[TokenId]],
     ) -> ExecutorResult<Self::Scores> {
         Ok(ReadyCompletion::new(Ok(Vec::new())))
+    }
+}
+
+impl TokenChoiceExecutor for FakeExecutor {
+    type ChoiceLogits = ReadyCompletion<Vec<f32>>;
+
+    fn choice_logits(
+        &mut self,
+        _prefix: &Self::Prefix,
+        token_ids: &[TokenId],
+    ) -> ExecutorResult<Self::ChoiceLogits> {
+        self.choice_calls += 1;
+        self.choice_ids = token_ids.to_vec();
+        let result = self
+            .logits
+            .pop_front()
+            .unwrap_or(Err(ExecutorError::BackendFailure(
+                "unexpected logits request",
+            )))
+            .map(|row| {
+                token_ids
+                    .iter()
+                    .map(|id| row.get(*id as usize).copied().unwrap_or(f32::NAN))
+                    .collect()
+            });
+        Ok(ReadyCompletion::new(result))
     }
 }
 
@@ -450,4 +480,190 @@ fn constrained_generate_surfaces_an_empty_candidate_row() {
             "mask excluded every candidate"
         )))
     );
+}
+
+fn choice_request<'a>(selectors: &'a [&'a str]) -> ChoiceRequest<'a> {
+    ChoiceRequest {
+        prompt: "a",
+        add_bos: false,
+        selectors,
+        max_context_tokens: 32,
+    }
+}
+
+#[test]
+#[allow(clippy::cast_possible_truncation)]
+fn choose_softmaxes_only_the_selected_logits() {
+    let tokenizer = tokenizer();
+    let mut executor = FakeExecutor::new(vec![Ok(logits(&[(9, 100.0), (4, 1.5), (3, 0.5)]))]);
+    let mut cancellation = NeverCancel;
+    let result = choose(
+        &mut executor,
+        &tokenizer,
+        &choice_request(&["x", "ab"]),
+        &mut cancellation,
+    )
+    .unwrap_or_else(|error| panic!("choice should succeed: {error}"));
+
+    assert_eq!(result.input_ids, vec![0]);
+    assert_eq!(result.selected_index, 0);
+    let denominator = 1.0_f64 + (0.5_f64 - 1.5).exp();
+    assert_eq!(
+        result.scores,
+        vec![
+            ChoiceScore {
+                selector: "x".to_owned(),
+                token_id: 4,
+                probability: (1.0_f64 / denominator) as f32,
+            },
+            ChoiceScore {
+                selector: "ab".to_owned(),
+                token_id: 3,
+                probability: ((0.5_f64 - 1.5).exp() / denominator) as f32,
+            },
+        ]
+    );
+    assert_eq!(executor.prefill_calls, 1);
+    assert_eq!(executor.choice_calls, 1);
+    assert_eq!(executor.choice_ids, vec![4, 3]);
+    assert_eq!(executor.logits_calls, 0);
+    assert_eq!(executor.masked_calls, 0);
+    assert!(executor.appended.is_empty());
+}
+
+#[test]
+#[allow(clippy::float_cmp)]
+fn choose_prefers_the_first_selector_on_an_exact_tie() {
+    let tokenizer = tokenizer();
+    let mut executor = FakeExecutor::new(vec![Ok(logits(&[(3, 2.0), (4, 2.0)]))]);
+    let mut cancellation = NeverCancel;
+    let result = choose(
+        &mut executor,
+        &tokenizer,
+        &choice_request(&["x", "ab"]),
+        &mut cancellation,
+    )
+    .unwrap_or_else(|error| panic!("tied choice should succeed: {error}"));
+
+    assert_eq!(result.selected_index, 0);
+    assert_eq!(result.scores[0].probability, 0.5);
+    assert_eq!(result.scores[1].probability, 0.5);
+}
+
+#[test]
+#[allow(clippy::float_cmp)]
+fn choose_selects_by_logit_when_probabilities_round_equal() {
+    let tokenizer = tokenizer();
+    let mut executor = FakeExecutor::new(vec![Ok(logits(&[(4, -1e-9), (3, 0.0)]))]);
+    let mut cancellation = NeverCancel;
+    let result = choose(
+        &mut executor,
+        &tokenizer,
+        &choice_request(&["x", "ab"]),
+        &mut cancellation,
+    )
+    .unwrap_or_else(|error| panic!("choice should succeed: {error}"));
+
+    assert_eq!(result.scores[0].probability, result.scores[1].probability);
+    assert_eq!(result.selected_index, 1);
+}
+
+#[test]
+fn prepare_choice_validates_selectors_and_prompt_boundary() {
+    let tokenizer = tokenizer();
+
+    let prepared = prepare_choice(&tokenizer, &choice_request(&["x", "ab"]))
+        .unwrap_or_else(|error| panic!("valid selectors should prepare: {error}"));
+    assert_eq!(prepared.input_ids(), &[0]);
+    assert_eq!(prepared.token_ids(), &[4, 3]);
+
+    let mut bos = choice_request(&["x", "ab"]);
+    bos.add_bos = true;
+    let prepared = prepare_choice(&tokenizer, &bos)
+        .unwrap_or_else(|error| panic!("BOS request should prepare: {error}"));
+    assert_eq!(prepared.input_ids(), &[1, 0]);
+
+    for selectors in [
+        &["x"][..],
+        &["x", ""][..],
+        &["ax", "x"][..],
+        &["x", "x"][..],
+        &["b", "x"][..],
+    ] {
+        assert!(
+            matches!(
+                prepare_choice(&tokenizer, &choice_request(selectors)),
+                Err(ChoiceError::InvalidChoices(_))
+            ),
+            "selectors {selectors:?} should be rejected"
+        );
+    }
+
+    let mut tight = choice_request(&["x", "ab"]);
+    tight.max_context_tokens = 0;
+    assert!(matches!(
+        prepare_choice(&tokenizer, &tight),
+        Err(ChoiceError::ContextLimit {
+            required: 1,
+            limit: 0
+        })
+    ));
+}
+
+#[test]
+fn finish_choice_requires_exactly_k_finite_logits() {
+    let tokenizer = tokenizer();
+    let prepared = prepare_choice(&tokenizer, &choice_request(&["x", "ab"]))
+        .unwrap_or_else(|error| panic!("valid selectors should prepare: {error}"));
+    assert!(matches!(
+        finish_choice(prepared, vec![0.5]),
+        Err(ChoiceError::Executor(ExecutorError::InvalidShape(_)))
+    ));
+
+    let prepared = prepare_choice(&tokenizer, &choice_request(&["x", "ab"]))
+        .unwrap_or_else(|error| panic!("valid selectors should prepare: {error}"));
+    assert_eq!(
+        finish_choice(prepared, vec![0.5, f32::NAN]),
+        Err(ChoiceError::NonFiniteLogit { choice_index: 1 })
+    );
+}
+
+#[test]
+fn choose_propagates_executor_failure_and_cancellation() {
+    let tokenizer = tokenizer();
+
+    let mut failing = FakeExecutor::new(vec![Err(ExecutorError::BackendFailure(
+        "test choice failure",
+    ))]);
+    let mut cancellation = NeverCancel;
+    assert_eq!(
+        choose(
+            &mut failing,
+            &tokenizer,
+            &choice_request(&["x", "ab"]),
+            &mut cancellation
+        ),
+        Err(ChoiceError::Executor(ExecutorError::BackendFailure(
+            "test choice failure"
+        )))
+    );
+
+    let mut executor = FakeExecutor::new(vec![Ok(logits(&[(4, 1.0), (3, 0.0)]))]);
+    let mut checks = 0_u8;
+    let mut cancelling = || {
+        checks += 1;
+        checks >= 2
+    };
+    assert_eq!(
+        choose(
+            &mut executor,
+            &tokenizer,
+            &choice_request(&["x", "ab"]),
+            &mut cancelling
+        ),
+        Err(ChoiceError::Cancelled)
+    );
+    assert_eq!(executor.prefill_calls, 1);
+    assert_eq!(executor.choice_calls, 1);
+    assert!(executor.appended.is_empty());
 }

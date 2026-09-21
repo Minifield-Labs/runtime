@@ -15,7 +15,7 @@ use minifield_engine_api::{
     BufferDescriptor, CompletionPoll, DType, DTypeSet, ExecutorError, FenceRetirement,
     GatedShortConvSpec, GqaSpec, InferenceCompletion, InferenceOps, OperationKind, OperationSet,
     PackedHeadSpec, PrecisionPolicy, RectCopy2d, ResourceLimits, ResourceReport, Result,
-    RetirementRejection, RotarySpec, Shape, TensorLayout, TokenIds,
+    RetirementRejection, RotarySpec, Shape, TensorLayout, TokenId, TokenIds,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -360,6 +360,7 @@ impl CpuBackend {
             .with(OperationKind::Copy)
             .with(OperationKind::RectCopy2d)
             .with(OperationKind::GatherRows)
+            .with(OperationKind::GatherColumns)
             .with(OperationKind::Add)
             .with(OperationKind::Multiply)
             .with(OperationKind::Linear)
@@ -910,6 +911,48 @@ impl CpuBackend {
                     ))?;
             output.values[destination_start..destination_start + columns]
                 .copy_from_slice(&table.values[source_start..source_start + columns]);
+        }
+        Ok(())
+    }
+
+    /// Gather selected columns from a contiguous [rows, width] f32 input:
+    /// `output[r, k] = input[r, columns[k]]`. Caller order and duplicates are
+    /// preserved; an empty `columns` is a valid no-op.
+    pub fn gather_columns(
+        &self,
+        output: &mut CpuBuffer,
+        input: &CpuBuffer,
+        columns: &[TokenId],
+    ) -> Result<()> {
+        self.check_operation(OperationKind::GatherColumns)?;
+        self.check_f32_buffer(input)?;
+        let input_shape = input.descriptor.layout.shape();
+        if input_shape.rank() != 2 {
+            return Err(ExecutorError::InvalidShape(
+                "column gather input must be rank two",
+            ));
+        }
+        let rows = usize::try_from(input_shape.dim(0)?)
+            .map_err(|_| ExecutorError::Overflow("row count exceeds usize"))?;
+        let width = input_shape.dim(1)?;
+        for id in columns {
+            if u64::from(*id) >= width {
+                return Err(ExecutorError::OutOfBounds(
+                    "column gather identifier exceeds input width",
+                ));
+            }
+        }
+        let count = u64::try_from(columns.len())
+            .map_err(|_| ExecutorError::Overflow("column count overflows u64"))?;
+        self.check_output_shape(output, Shape::new(&[input_shape.dim(0)?, count])?)?;
+        let width = usize::try_from(width)
+            .map_err(|_| ExecutorError::Overflow("input width exceeds usize"))?;
+        for (k, id) in columns.iter().copied().enumerate() {
+            let column = usize::try_from(id)
+                .map_err(|_| ExecutorError::OutOfBounds("gather identifier exceeds usize"))?;
+            for row in 0..rows {
+                output.values[row * columns.len() + k] = input.values[row * width + column];
+            }
         }
         Ok(())
     }
@@ -2368,6 +2411,15 @@ impl InferenceOps for CpuBackend {
         CpuBackend::gather_rows(self, output, table, ids)
     }
 
+    fn gather_columns(
+        &self,
+        output: &mut Self::Buffer,
+        input: &Self::Buffer,
+        columns: &[TokenId],
+    ) -> Result<()> {
+        CpuBackend::gather_columns(self, output, input, columns)
+    }
+
     fn packed_gather_rows(
         &self,
         output: &mut Self::Buffer,
@@ -3050,6 +3102,59 @@ mod tests {
         assert!(
             backend
                 .gather_rows(&mut gathered, &table, TokenIds::Device(&bad_ids))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn gather_columns_preserves_caller_order_duplicates_and_rows() {
+        let mut backend = CpuBackend::new(12, limits());
+        let input = backend
+            .upload_f32(
+                Shape::new(&[3, 4]).expect("input"),
+                &[
+                    0.0, 1.0, 2.0, 3.0, 10.0, 11.0, 12.0, 13.0, 20.0, 21.0, 22.0, 23.0,
+                ],
+            )
+            .expect("input");
+        let mut out = backend
+            .allocate_f32(Shape::new(&[3, 3]).expect("out"))
+            .expect("out");
+        backend
+            .gather_columns(&mut out, &input, &[2, 0, 2])
+            .expect("gather");
+        assert_eq!(
+            out.as_slice(),
+            &[2.0, 0.0, 2.0, 12.0, 10.0, 12.0, 22.0, 20.0, 22.0]
+        );
+
+        let mut empty = backend
+            .allocate_f32(Shape::new(&[3, 0]).expect("empty"))
+            .expect("empty");
+        backend
+            .gather_columns(&mut empty, &input, &[])
+            .expect("empty gather");
+
+        assert!(backend.gather_columns(&mut out, &input, &[1, 4]).is_err());
+        assert!(
+            backend
+                .gather_columns(&mut out, &input, &[u32::MAX])
+                .is_err()
+        );
+        let flat = backend
+            .upload_f32(Shape::new(&[4]).expect("flat"), &[0.0; 4])
+            .expect("flat");
+        assert!(backend.gather_columns(&mut out, &flat, &[0]).is_err());
+        let mut wrong = backend
+            .allocate_f32(Shape::new(&[3, 3]).expect("wrong"))
+            .expect("wrong");
+        assert!(backend.gather_columns(&mut wrong, &input, &[0, 1]).is_err());
+        let mut wrong_rows = backend
+            .allocate_f32(Shape::new(&[2, 2]).expect("wrong rows"))
+            .expect("wrong rows");
+        assert!(
+            backend
+                .gather_columns(&mut wrong_rows, &input, &[0, 1])
                 .is_err()
         );
     }

@@ -212,6 +212,7 @@ pub enum OperationKind {
     PackedSwigluLinear,
     QkNormRope,
     Argmax,
+    GatherColumns,
 }
 
 impl OperationKind {
@@ -1115,6 +1116,21 @@ pub trait InferenceOps {
         ids: TokenIds<'_, Self>,
     ) -> Result<()>;
 
+    /// Column-wise gather over a contiguous f32 `[rows, width]` input:
+    /// `output[r, k] = input[r, columns[k]]`. `output` is f32
+    /// `[rows, columns.len()]`. Caller order and duplicate column ids are
+    /// preserved, so `columns` acts as a typed selector list. An empty
+    /// `columns` is a valid no-op producing `[rows, 0]` output. Out-of-range
+    /// ids are rejected. Unlike [`InferenceOps::gather_rows`], ids always
+    /// arrive as host `TokenId`s; callers needing only a few columns can use
+    /// this to avoid a full-width host readback.
+    fn gather_columns(
+        &self,
+        output: &mut Self::Buffer,
+        input: &Self::Buffer,
+        columns: &[TokenId],
+    ) -> Result<()>;
+
     /// Gather packed ternary rows and dequantize them into an f32 `[ids, K]` output.
     ///
     /// `codes` is a U8 `[rows, K/4]` buffer in `minifield.ternary.v1` layout: each
@@ -1657,6 +1673,22 @@ pub trait TokenExecutor {
         prefix: &Self::Prefix,
         candidates: &[&[TokenId]],
     ) -> Result<Self::Scores>;
+}
+
+/// Single-pass structured choice extension: reads back only the logits of
+/// caller-selected one-token ids instead of the full vocabulary row. A
+/// successful `choice_logits` completion returns the selected logits in
+/// caller order, preserving duplicates, with exactly `token_ids.len()`
+/// values. Implementations reject an empty selector list, ids outside the
+/// vocabulary, and prefixes that carry no logits boundary.
+pub trait TokenChoiceExecutor: TokenExecutor {
+    type ChoiceLogits: InferenceCompletion<Output = Vec<f32>>;
+
+    fn choice_logits(
+        &mut self,
+        prefix: &Self::Prefix,
+        token_ids: &[TokenId],
+    ) -> Result<Self::ChoiceLogits>;
 }
 
 /// Per-step decode constraint driven by a generation loop: supplies the

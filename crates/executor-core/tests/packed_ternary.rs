@@ -23,8 +23,8 @@ use std::{fs, path::PathBuf};
 
 use minifield_backend_cpu::CpuBackend;
 use minifield_engine_api::{
-    CompletionPoll, InferenceCompletion, MemoryAssetProvider, ResourceLimits, Shape, TokenChunk,
-    TokenExecutor, TokenIds,
+    CompletionPoll, ExecutorError, InferenceCompletion, MemoryAssetProvider, ResourceLimits, Shape,
+    TokenChoiceExecutor, TokenChunk, TokenExecutor, TokenIds,
 };
 use minifield_executor_core::{
     Lfm2ExecutionLimits, Lfm2Executor, Lfm2LoadRequest, Lfm2WeightFormat, Lfm2WeightLoadTask,
@@ -672,6 +672,37 @@ fn append_argmax_extends_prefix_with_resolved_greedy_token() {
         assert_eq!(ready(&mut greedy_logits), ready(&mut known_logits));
         prefix = greedy_prefix;
     }
+}
+
+#[test]
+fn choice_logits_reads_back_only_selected_columns_in_caller_order() {
+    let (config, packed_bytes, _) = tiny_packed_fixture();
+    let mut executor = load_executor(&config, &packed_bytes, Lfm2WeightFormat::TernaryV1, 1 << 24);
+    let mut task = executor
+        .prefill(TokenChunk::all(&[3, 5, 9]))
+        .expect("prefill");
+    let prefix = ready(&mut task);
+
+    let selectors = [41_u32, 7, 100, 7];
+    let mut logits_task = executor.next_logits(&prefix).expect("logits");
+    let full = ready(&mut logits_task);
+    let expected: Vec<f32> = selectors.iter().map(|&id| full[id as usize]).collect();
+    let mut choice = executor
+        .choice_logits(&prefix, &selectors)
+        .expect("choice logits");
+    assert_eq!(ready(&mut choice), expected);
+    assert_eq!(
+        choice.poll_step(),
+        CompletionPoll::Ready(Err(ExecutorError::CompletionConsumed))
+    );
+
+    assert!(executor.choice_logits(&prefix, &[]).is_err());
+    assert!(executor.choice_logits(&prefix, &[1, 128]).is_err());
+    let mut empty_task = executor
+        .prefill(TokenChunk::all(&[]))
+        .expect("empty prefill");
+    let empty_prefix = ready(&mut empty_task);
+    assert!(executor.choice_logits(&empty_prefix, &[1]).is_err());
 }
 
 /// Teacher-forces `tokens` through the executor and returns the final

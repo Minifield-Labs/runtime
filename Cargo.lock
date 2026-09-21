@@ -533,6 +533,7 @@ dependencies = [
  "minifield-engine-api",
  "minifield-executor-core",
  "minifield-json-grammar",
+ "minifield-text-generation",
  "minifield-text-tokenizer",
  "sha2",
  "wasm-bindgen",

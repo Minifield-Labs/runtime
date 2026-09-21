@@ -32,7 +32,7 @@ use minifield_engine_api::{
     BufferDescriptor, CompletionPoll, DType, DTypeSet, ExecutorError, FenceRetirement,
     GatedShortConvSpec, GqaSpec, InferenceCompletion, InferenceOps, OperationKind, OperationSet,
     PackedHeadSpec, PrecisionPolicy, RectCopy2d, ResourceLimits, ResourceReport, Result,
-    RotarySpec, Shape, TensorLayout, TokenIds,
+    RotarySpec, Shape, TensorLayout, TokenId, TokenIds,
 };
 
 pub use completion::{WgpuFence, WgpuFenceRetirement, WgpuReadback};
@@ -193,6 +193,7 @@ impl WgpuBackend {
             .with(OperationKind::Copy)
             .with(OperationKind::RectCopy2d)
             .with(OperationKind::GatherRows)
+            .with(OperationKind::GatherColumns)
             .with(OperationKind::Add)
             .with(OperationKind::Multiply)
             .with(OperationKind::Linear)
@@ -765,6 +766,63 @@ impl WgpuBackend {
         if let Some(scratch) = staged {
             self.device.defer_free(scratch);
         }
+        result
+    }
+
+    /// Gather selected columns of a contiguous [rows, width] f32 input:
+    /// `output[r, k] = input[r, columns[k]]`. The host u32 selector list is
+    /// range-checked, staged once into pooled scratch, and consumed by a
+    /// single element-parallel dispatch covering `rows * columns.len()`.
+    pub fn gather_columns(
+        &self,
+        output: &mut WgpuBuffer,
+        input: &WgpuBuffer,
+        columns: &[TokenId],
+    ) -> Result<()> {
+        self.check_operation(OperationKind::GatherColumns)?;
+        self.check_f32_buffer(input)?;
+        let input_shape = input.descriptor.layout.shape();
+        if input_shape.rank() != 2 {
+            return Err(ExecutorError::InvalidShape(
+                "column gather input must be rank two",
+            ));
+        }
+        let rows = input_shape.dim(0)?;
+        let width = input_shape.dim(1)?;
+        for id in columns {
+            if u64::from(*id) >= width {
+                return Err(ExecutorError::OutOfBounds(
+                    "column gather identifier exceeds input width",
+                ));
+            }
+        }
+        let count = u64::try_from(columns.len())
+            .map_err(|_| ExecutorError::Overflow("column count overflows u64"))?;
+        self.check_output_shape(output, Shape::new(&[rows, count])?)?;
+        if rows == 0 || count == 0 {
+            return Ok(());
+        }
+        let id_bytes = count.checked_mul(4).ok_or(ExecutorError::Overflow(
+            "gather ids byte count overflows u64",
+        ))?;
+        let scratch = self.device.alloc_storage(id_bytes)?;
+        let mut bytes = Vec::with_capacity(columns.len() * 4);
+        for id in columns {
+            bytes.extend_from_slice(&id.to_le_bytes());
+        }
+        self.device.queue.write_buffer(&scratch.buffer, 0, &bytes);
+        let groups = element_groups(rows.checked_mul(count).ok_or(ExecutorError::Overflow(
+            "column gather element count overflows u64",
+        ))?);
+        let source = input.wgpu_buffer()?.clone();
+        let destination = output.wgpu_buffer()?.clone();
+        let result = self.device.dispatch(
+            Kernel::GatherColumns,
+            &[&source, &scratch.buffer, &destination],
+            &params(&[param32(rows)?, param32(count)?, param32(width)?]),
+            flat_grid(groups)?,
+        );
+        self.device.defer_free(scratch);
         result
     }
 
@@ -2147,6 +2205,15 @@ impl InferenceOps for WgpuBackend {
         ids: TokenIds<'_, Self>,
     ) -> Result<()> {
         WgpuBackend::gather_rows(self, output, table, ids)
+    }
+
+    fn gather_columns(
+        &self,
+        output: &mut Self::Buffer,
+        input: &Self::Buffer,
+        columns: &[TokenId],
+    ) -> Result<()> {
+        WgpuBackend::gather_columns(self, output, input, columns)
     }
 
     fn argmax(&self, output: &mut Self::Buffer, input: &Self::Buffer) -> Result<()> {

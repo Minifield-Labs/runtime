@@ -129,6 +129,32 @@ fn main(
 }
 ";
 
+/// Gather selected columns from a contiguous [rows, width] f32 input:
+/// dst[r*count + k] = src[r*width + cols[k]]. `cols` carries staged host u32
+/// selectors, already range-checked against `width` on the host; caller
+/// order and duplicates are preserved.
+const GATHER_COLUMNS: &str = r"
+struct Params { p: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read> src: array<f32>;
+@group(0) @binding(2) var<storage, read> cols: array<u32>;
+@group(0) @binding(3) var<storage, read_write> dst: array<f32>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let i = flat_wg(wid, numw) * 256u + lid.x;
+    let total = pc.p.x * pc.p.y;
+    if i >= total { return; }
+    let r = i / pc.p.y;
+    let k = i - r * pc.p.y;
+    dst[i] = src[r * pc.p.z + cols[k]];
+}
+";
+
 /// GEMV for the m == 1 decode path: dst[j] = `sum_l` x[l] * w[j,l].
 /// One workgroup per output column; 256 threads tree-reduce over k in shared
 /// memory. `w4` binds the same weight buffer as a vec4 view: a weight row that
@@ -1279,6 +1305,7 @@ pub enum Kernel {
     Argmax,
     ArgmaxBlocks,
     ArgmaxFinal,
+    GatherColumns,
 }
 
 impl Kernel {
@@ -1305,6 +1332,7 @@ impl Kernel {
         Self::Argmax,
         Self::ArgmaxBlocks,
         Self::ArgmaxFinal,
+        Self::GatherColumns,
     ];
 
     /// Bitmask over storage binding positions (1..=storage_bindings) the
@@ -1319,6 +1347,7 @@ impl Kernel {
             Self::PackedSwigluGemv => 0b11111100,        // gate, up, codes, scales, gate4, up4
             Self::Argmax | Self::ArgmaxBlocks => 0b1100, // src, allow
             Self::ArgmaxFinal => 0b100,                  // partials
+            Self::GatherColumns => 0b110,                // src, cols
             _ => 0,
         }
     }
@@ -1348,6 +1377,7 @@ impl Kernel {
             Self::Argmax => ARGMAX,
             Self::ArgmaxBlocks => ARGMAX_BLOCKS,
             Self::ArgmaxFinal => ARGMAX_FINAL,
+            Self::GatherColumns => GATHER_COLUMNS,
         };
         let mut source = String::with_capacity(WGSL_INDEX.len() + body.len() + 1);
         source.push_str(WGSL_INDEX);
@@ -1364,6 +1394,7 @@ impl Kernel {
             | Self::ArgmaxBlocks
             | Self::Binary
             | Self::Gather
+            | Self::GatherColumns
             | Self::Gemm
             | Self::RmsNorm
             | Self::Rotary
@@ -1400,6 +1431,7 @@ impl Kernel {
             Self::Argmax => "argmax",
             Self::ArgmaxBlocks => "argmax_blocks",
             Self::ArgmaxFinal => "argmax_final",
+            Self::GatherColumns => "gather_columns",
         }
     }
 }

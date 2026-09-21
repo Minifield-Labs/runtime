@@ -224,6 +224,63 @@ fn gather_rows_matches_cpu() {
 }
 
 #[test]
+fn gather_columns_matches_cpu() {
+    let Some(mut backend) = gpu() else { return };
+    let mut reference = cpu();
+    let input_shape = Shape::new(&[5, 9]).expect("input shape");
+    let input = values(53, 45);
+    let columns = [7_u32, 0, 7, 3];
+    let out_shape = Shape::new(&[5, 4]).expect("out shape");
+    let gpu_input = backend.upload_f32(input_shape, &input).expect("gpu input");
+    let cpu_input = reference
+        .upload_f32(input_shape, &input)
+        .expect("cpu input");
+    let mut gpu_out = backend.allocate_f32(out_shape).expect("gpu out");
+    let mut cpu_out = reference.allocate_f32(out_shape).expect("cpu out");
+    backend
+        .gather_columns(&mut gpu_out, &gpu_input, &columns)
+        .expect("gpu gather");
+    reference
+        .gather_columns(&mut cpu_out, &cpu_input, &columns)
+        .expect("cpu gather");
+    assert_exact(&read(&backend, &gpu_out), cpu_out.as_slice());
+
+    let empty_shape = Shape::new(&[5, 0]).expect("empty shape");
+    let mut gpu_empty = backend.allocate_f32(empty_shape).expect("gpu empty");
+    let mut cpu_empty = reference.allocate_f32(empty_shape).expect("cpu empty");
+    backend
+        .gather_columns(&mut gpu_empty, &gpu_input, &[])
+        .expect("gpu empty gather");
+    reference
+        .gather_columns(&mut cpu_empty, &cpu_input, &[])
+        .expect("cpu empty gather");
+
+    assert!(
+        backend
+            .gather_columns(&mut gpu_out, &gpu_input, &[0, 9])
+            .is_err()
+    );
+    assert!(
+        reference
+            .gather_columns(&mut cpu_out, &cpu_input, &[0, 9])
+            .is_err()
+    );
+    let wrong_shape = Shape::new(&[5, 2]).expect("wrong shape");
+    let mut gpu_wrong = backend.allocate_f32(wrong_shape).expect("gpu wrong");
+    let mut cpu_wrong = reference.allocate_f32(wrong_shape).expect("cpu wrong");
+    assert!(
+        backend
+            .gather_columns(&mut gpu_wrong, &gpu_input, &columns)
+            .is_err()
+    );
+    assert!(
+        reference
+            .gather_columns(&mut cpu_wrong, &cpu_input, &columns)
+            .is_err()
+    );
+}
+
+#[test]
 fn linear_gemv_and_gemm_match_cpu() {
     let Some(mut backend) = gpu() else { return };
     let mut reference = cpu();

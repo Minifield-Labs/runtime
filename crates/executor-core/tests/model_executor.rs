@@ -13,7 +13,7 @@ use minifield_engine_api::{
     FenceRetirement, GatedShortConvSpec, GqaSpec, InferenceCompletion, InferenceOps,
     MemoryAssetProvider, MemoryAssetRead, PackedHeadSpec, RectCopy2d, ResourceLimits,
     ResourceReport, Result, RetirementRejection, RotarySpec, Shape, TokenChunk, TokenExecutor,
-    TokenIds,
+    TokenId, TokenIds,
 };
 use minifield_executor_core::{
     Lfm2ExecutionLimits, Lfm2Executor, Lfm2LoadRequest, Lfm2WeightLoadTask, LoaderLimits,
@@ -500,6 +500,15 @@ impl InferenceOps for DeferredBackend {
                 TokenIds::Device(buffer) => TokenIds::Device(buffer),
             },
         )
+    }
+
+    fn gather_columns(
+        &self,
+        output: &mut Self::Buffer,
+        input: &Self::Buffer,
+        columns: &[TokenId],
+    ) -> Result<()> {
+        self.cpu.gather_columns(output, input, columns)
     }
 
     fn argmax(&self, output: &mut Self::Buffer, input: &Self::Buffer) -> Result<()> {

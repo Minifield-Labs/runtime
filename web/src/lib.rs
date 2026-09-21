@@ -13,13 +13,14 @@ use js_sys::{Function, Promise, Reflect};
 use minifield_backend_wgpu::WgpuBackend;
 use minifield_engine_api::{
     CompletionPoll, DecodeConstraint, InferenceCompletion, MemoryAssetProvider, ResourceLimits,
-    TokenChunk, TokenExecutor, TokenId,
+    TokenChoiceExecutor, TokenChunk, TokenExecutor, TokenId,
 };
 use minifield_executor_core::{
     Lfm2ExecutionLimits, Lfm2Executor, Lfm2LoadRequest, Lfm2Prefix, Lfm2WeightFormat,
     Lfm2WeightLoadTask, LoaderLimits, LoaderPoll,
 };
 use minifield_json_grammar::AssistantCallEnforcer;
+use minifield_text_generation::{ChoiceRequest, finish_choice, prepare_choice};
 use minifield_text_tokenizer::{EncodeOptions, MODEL_VOCAB_SIZE, Tokenizer, TokenizerLimits};
 use sha2::{Digest, Sha256};
 use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
@@ -198,6 +199,92 @@ impl WebDemo {
         }
         text.push_str(&decoder.finish().map_err(js_error)?);
         stats(&text, generated, stopped)
+    }
+
+    /// Score a prompt against one-token selectors in a single pass: prefill
+    /// once, gather the selector logits, normalize, and return the winner.
+    /// Only the selected logits cross to the host. Every array element must
+    /// be a string. Resolves to `{ selectedIndex, selected, tokenId,
+    /// scores }` where each score is `{ selector, tokenId, probability }`.
+    pub async fn choose(
+        &mut self,
+        prompt: String,
+        selectors: js_sys::Array,
+    ) -> Result<JsValue, JsValue> {
+        let mut owned = Vec::with_capacity(selectors.length() as usize);
+        for value in selectors.iter() {
+            owned.push(
+                value
+                    .as_string()
+                    .ok_or_else(|| JsValue::from_str("selectors must be strings"))?,
+            );
+        }
+        let selector_refs: Vec<&str> = owned.iter().map(String::as_str).collect();
+        let prepared = prepare_choice(
+            &self.tokenizer,
+            &ChoiceRequest {
+                prompt: &prompt,
+                add_bos: true,
+                selectors: &selector_refs,
+                max_context_tokens: usize::try_from(MAX_LOGICAL_TOKENS).unwrap_or(usize::MAX),
+            },
+        )
+        .map_err(js_error)?;
+        let mut prefill = self
+            .executor
+            .prefill(TokenChunk::all(prepared.input_ids()))
+            .map_err(js_error)?;
+        let prefix: Lfm2Prefix<WgpuBackend> = pump(&mut prefill).await?;
+        let mut selected = self
+            .executor
+            .choice_logits(&prefix, prepared.token_ids())
+            .map_err(js_error)?;
+        let logits = pump(&mut selected).await?;
+        let result = finish_choice(prepared, logits).map_err(js_error)?;
+
+        let scores = js_sys::Array::new();
+        for score in &result.scores {
+            let entry = js_sys::Object::new();
+            Reflect::set(
+                &entry,
+                &JsValue::from_str("selector"),
+                &JsValue::from_str(&score.selector),
+            )?;
+            Reflect::set(
+                &entry,
+                &JsValue::from_str("tokenId"),
+                &JsValue::from_f64(f64::from(score.token_id)),
+            )?;
+            Reflect::set(
+                &entry,
+                &JsValue::from_str("probability"),
+                &JsValue::from_f64(f64::from(score.probability)),
+            )?;
+            scores.push(&entry);
+        }
+        let winner = &result.scores[result.selected_index];
+        let out = js_sys::Object::new();
+        Reflect::set(
+            &out,
+            &JsValue::from_str("selectedIndex"),
+            &JsValue::from_f64(
+                u32::try_from(result.selected_index)
+                    .unwrap_or(u32::MAX)
+                    .into(),
+            ),
+        )?;
+        Reflect::set(
+            &out,
+            &JsValue::from_str("selected"),
+            &JsValue::from_str(&winner.selector),
+        )?;
+        Reflect::set(
+            &out,
+            &JsValue::from_str("tokenId"),
+            &JsValue::from_f64(f64::from(winner.token_id)),
+        )?;
+        Reflect::set(&out, &JsValue::from_str("scores"), &scores)?;
+        Ok(out.into())
     }
 
     /// Prefill and cache the tool-call prompt's fixed system block so the

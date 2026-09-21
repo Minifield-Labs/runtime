@@ -8,7 +8,7 @@ use minifield_engine_api::{
     CompletionPoll, ExecutorError, FenceRetirement, GatedShortConvSpec, GqaSpec,
     InferenceCompletion, InferenceOps, MemoryAssetProvider, MemoryAssetRead, PackedHeadSpec,
     RectCopy2d, ResourceLimits, ResourceReport, Result, RetirementRejection, RotarySpec, Shape,
-    TokenIds,
+    TokenId, TokenIds,
 };
 use minifield_executor_core::{
     Lfm2LoadRequest, Lfm2TypedWeights, Lfm2WeightLoadTask, Lfm2WeightPlan, Lfm2WeightRole,
@@ -1289,6 +1289,14 @@ impl InferenceOps for DeferredFenceBackend {
                 TokenIds::Device(buffer) => TokenIds::Device(buffer),
             },
         )
+    }
+    fn gather_columns(
+        &self,
+        output: &mut CpuBuffer,
+        input: &CpuBuffer,
+        columns: &[TokenId],
+    ) -> Result<()> {
+        self.cpu.gather_columns(output, input, columns)
     }
     fn argmax(&self, output: &mut CpuBuffer, input: &CpuBuffer) -> Result<()> {
         self.cpu.argmax(output, input)

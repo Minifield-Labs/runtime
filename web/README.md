@@ -56,6 +56,10 @@ required). The page fetches `config.json`, the packed safetensors, and
   lfm2-chatml-tool-json training serializer. The crate also exposes
   `JsonEnforcer` for general JSON-shaped output and `ToolCallEnforcer` for
   the simpler `{"<name>":true|false}` shape.
+- `choose(prompt, selectors)` runs `text-generation`'s single-pass typed
+  choice scoring: one prefill, one selector-logit gather, and a candidate-only
+  softmax, so only the K selected logits cross to the host. It resolves to
+  `{ selectedIndex, selected, tokenId, scores }`.
 - The prompt is wrapped in the lfm2-chatml-tool-json template
   (`<|im_start|>` turns plus an `Available tools:` system block). The system
   block is fixed per tool-name set, so `warm_tools` prefills it once at load

@@ -128,6 +128,8 @@ function toolNames() {
     .filter(Boolean);
 }
 
+const CHOICE_SELECTORS = [" A", " B", " C", " D", " E", " F", " G", " H"];
+
 const status = document.getElementById("status");
 const out = document.getElementById("out");
 const go = document.getElementById("go");
@@ -135,6 +137,17 @@ const goJson = document.getElementById("goJson");
 const prompt = document.getElementById("prompt");
 const tools = document.getElementById("tools");
 const max = document.getElementById("max");
+const choiceState = document.getElementById("choiceState");
+const choiceOptions = document.getElementById("choiceOptions");
+const goChoice = document.getElementById("goChoice");
+const choiceStatus = document.getElementById("choiceStatus");
+const choiceOut = document.getElementById("choiceOut");
+
+function setButtons(disabled) {
+  go.disabled = disabled;
+  goJson.disabled = disabled;
+  goChoice.disabled = disabled;
+}
 
 function fail(what, error) {
   status.innerHTML = `<span class="err">${what}: ${error?.message ?? error}</span>`;
@@ -186,8 +199,8 @@ async function boot() {
     status.textContent = "prefilling tool list…";
     await demo.warm_tools(chatmlSys(toolNames()));
     status.innerHTML = `<span class="ok">model loaded in ${((performance.now() - t0) / 1000).toFixed(1)}s</span>`;
-    go.disabled = false;
-    goJson.disabled = false;
+    setButtons(false);
+    choiceStatus.textContent = "ready";
   } catch (error) {
     fail("load failed", error);
   }
@@ -195,8 +208,7 @@ async function boot() {
 
 function run(generate, label) {
   return async () => {
-    go.disabled = true;
-    goJson.disabled = true;
+    setButtons(true);
     out.textContent = "";
     const t0 = performance.now();
     try {
@@ -221,8 +233,7 @@ function run(generate, label) {
     } catch (error) {
       fail("generate failed", error);
     } finally {
-      go.disabled = false;
-      goJson.disabled = false;
+      setButtons(false);
     }
   };
 }
@@ -245,5 +256,82 @@ goJson.addEventListener(
     "tool",
   ),
 );
+
+function choicePrompt(state, options) {
+  const lines = options
+    .map((option, i) => `${String.fromCharCode(65 + i)}. ${option}`)
+    .join("\n");
+  return (
+    `<|im_start|>user\nChoose the best category for the state below.\n\n` +
+    `State:\n${state}\n\nChoices:\n${lines}\n\n` +
+    `Respond with only the choice letter.<|im_end|>\n` +
+    `<|im_start|>assistant\nAnswer:\n`
+  );
+}
+
+function renderChoice(result, options, ms) {
+  choiceOut.textContent = "";
+  const winner = document.createElement("p");
+  winner.className = "cwinner";
+  winner.textContent =
+    `${options[result.selectedIndex]} · ` +
+    `${String.fromCharCode(65 + result.selectedIndex)} · ` +
+    `token ${result.tokenId} · ${ms.toFixed(0)} ms`;
+  choiceOut.appendChild(winner);
+  result.scores.forEach((score, i) => {
+    const row = document.createElement("div");
+    row.className = i === result.selectedIndex ? "crow selected" : "crow";
+    const label = document.createElement("span");
+    label.className = "clabel";
+    label.textContent = `${String.fromCharCode(65 + i)}. ${options[i]}`;
+    const track = document.createElement("span");
+    track.className = "ctrack";
+    const bar = document.createElement("span");
+    bar.className = "cbar";
+    const pct = Math.min(100, Math.max(0, score.probability * 100));
+    bar.style.width = `${pct}%`;
+    track.appendChild(bar);
+    const pctEl = document.createElement("span");
+    pctEl.className = "cpct";
+    pctEl.textContent = `${pct.toFixed(1)}%`;
+    const idEl = document.createElement("span");
+    idEl.className = "cid";
+    idEl.textContent = score.tokenId;
+    row.append(label, track, pctEl, idEl);
+    choiceOut.appendChild(row);
+  });
+}
+
+goChoice.addEventListener("click", async () => {
+  const options = choiceOptions.value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (options.length < 2 || options.length > CHOICE_SELECTORS.length) {
+    choiceOut.textContent = "";
+    choiceStatus.textContent =
+      `enter 2 to ${CHOICE_SELECTORS.length} nonblank choices ` +
+      `(got ${options.length})`;
+    return;
+  }
+  setButtons(true);
+  const t0 = performance.now();
+  try {
+    const result = await demo.choose(
+      choicePrompt(choiceState.value.trim(), options),
+      CHOICE_SELECTORS.slice(0, options.length),
+    );
+    const ms = performance.now() - t0;
+    renderChoice(result, options, ms);
+    choiceStatus.textContent =
+      `${result.scores.length} logits · ${ms.toFixed(0)} ms`;
+  } catch (error) {
+    choiceOut.textContent = "";
+    choiceStatus.textContent = `choice failed: ${error?.message ?? error}`;
+    console.error("choice failed", error);
+  } finally {
+    setButtons(false);
+  }
+});
 
 boot();

@@ -77,7 +77,7 @@
     font: inherit;
   }
   input:focus { outline: none; border-color: var(--accent); }
-  #status { color: var(--dim); white-space: pre-wrap; }
+  #status, #choiceStatus { color: var(--dim); white-space: pre-wrap; }
   #status .ok { color: var(--accent); }
   #out {
     margin-top: 10px;
@@ -99,13 +99,52 @@
     margin-right: 6px;
   }
   .err { color: #e06c5f; }
+  .choice {
+    margin-top: 38px;
+    border-top: 1px solid var(--line);
+    padding-top: 22px;
+  }
+  .choice h2 { font-size: 15px; font-weight: 600; margin: 0 0 6px; }
+  .choice textarea { margin-bottom: 14px; }
+  #choiceState { height: 64px; }
+  #choiceOptions { height: 88px; }
+  .choice .row { flex-wrap: wrap; }
+  .cwinner { margin: 0 0 12px; }
+  .crow {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 5px 8px;
+    border-radius: 4px;
+  }
+  .crow.selected { background: var(--line); }
+  .crow.selected .clabel { color: var(--accent); }
+  .clabel { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ctrack {
+    flex: 1;
+    min-width: 80px;
+    height: 8px;
+    background: #101114;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .cbar { display: block; height: 100%; background: var(--accent); }
+  .cpct { min-width: 46px; text-align: right; }
+  .cid {
+    color: var(--accent);
+    font-size: 11px;
+    min-width: 42px;
+    text-align: right;
+  }
 </style>
 </head>
 <body>
 <main>
   <h1>LFM2.5-230M &middot; packed ternary &middot; WebGPU</h1>
   <p class="sub">All inference runs locally in this tab. The naive ternary export is a
-  speed fixture, not a quality bar &mdash; expect confident nonsense.</p>
+  speed fixture, not a quality bar: expect confident nonsense.</p>
 
   <label for="prompt">Prompt</label>
   <textarea id="prompt">The meeting has been moved to</textarea>
@@ -119,6 +158,24 @@
     <span id="status">loading&hellip;</span>
   </div>
   <div id="out"></div>
+
+  <section class="choice">
+    <h2>Single-pass choice</h2>
+    <p class="sub">Score a fixed set of one-token selectors after one prompt
+    prefill. Probabilities are raw model scores, not calibrated confidence.</p>
+
+    <label for="choiceState">State</label>
+    <textarea id="choiceState">A customer says: “I was charged twice for the same order.”</textarea>
+    <label for="choiceOptions">Choices, one per line</label>
+    <textarea id="choiceOptions">Billing
+Technical support
+General question</textarea>
+    <div class="row">
+      <button id="goChoice" disabled>Score choices</button>
+      <span id="choiceStatus">waiting for model</span>
+    </div>
+    <div id="choiceOut" aria-live="polite"></div>
+  </section>
 </main>
 <script type="module" src="./main.js"></script>
 </body>

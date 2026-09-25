@@ -196,6 +196,9 @@ async fn load_weights(
 pub struct WebClassifier {
     classifier: Lfm2Classifier<WgpuBackend>,
     tokenizer: Tokenizer,
+    anchor_ids: Option<Vec<u32>>,
+    shared_head: Option<usize>,
+    base: Option<Lfm2Prefix<WgpuBackend>>,
 }
 
 #[wasm_bindgen]
@@ -219,6 +222,9 @@ pub async fn load_classifier(
     Ok(WebClassifier {
         classifier,
         tokenizer,
+        anchor_ids: None,
+        shared_head: None,
+        base: None,
     })
 }
 
@@ -235,6 +241,71 @@ impl WebClassifier {
                 },
             )
             .map_err(js_error)?;
+        let mut task = self
+            .classifier
+            .classify(TokenChunk::all(&ids))
+            .map_err(js_error)?;
+        pump(&mut task).await
+    }
+
+    /// Classify with shared-prefix reuse: the token head common to every
+    /// prompt seen so far is prefilled once into a cached base, and each
+    /// decision branches from that base by appending only its own tail.
+    /// Falls back to a full prefill when a prompt does not share the head.
+    pub async fn classify_cached(&mut self, prompt: String) -> Result<Vec<f32>, JsValue> {
+        let ids = self
+            .tokenizer
+            .encode(
+                &prompt,
+                EncodeOptions {
+                    add_special_tokens: false,
+                },
+            )
+            .map_err(js_error)?;
+
+        match &self.anchor_ids {
+            None => {
+                self.anchor_ids = Some(ids.clone());
+                self.shared_head = Some(ids.len());
+            }
+            Some(anchor) => {
+                let mut head = self
+                    .shared_head
+                    .unwrap_or(0)
+                    .min(ids.len())
+                    .min(anchor.len());
+                while head > 0 && ids[..head] != anchor[..head] {
+                    head -= 1;
+                }
+                self.shared_head = Some(head);
+            }
+        }
+
+        let head = self.shared_head.unwrap_or(0);
+        let base_fits = self.base.as_ref().is_some_and(|b| {
+            ids.len() > b.logical_length() as usize
+                && ids[..b.logical_length() as usize] == *b.token_history()
+        });
+        if !base_fits && head >= 16 {
+            let anchor_head = self.anchor_ids.as_ref().expect("anchor")[..head].to_vec();
+            let mut task = self
+                .classifier
+                .prefill_base(TokenChunk::all(&anchor_head))
+                .map_err(js_error)?;
+            self.base = Some(pump(&mut task).await?);
+        }
+
+        if let Some(base) = self.base.clone() {
+            let head = base.token_history();
+            if ids.len() > head.len() && ids[..head.len()] == *head {
+                let mut task = self
+                    .classifier
+                    .classify_tail(&base, TokenChunk::all(&ids[head.len()..]))
+                    .map_err(js_error)?;
+                return pump(&mut task).await;
+            }
+        }
+
         let mut task = self
             .classifier
             .classify(TokenChunk::all(&ids))

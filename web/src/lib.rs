@@ -17,7 +17,7 @@ use minifield_engine_api::{
 };
 use minifield_executor_core::{
     Lfm2Classifier, Lfm2ExecutionLimits, Lfm2Executor, Lfm2LoadRequest, Lfm2Prefix,
-    Lfm2TypedWeights, Lfm2WeightFormat, Lfm2WeightLoadTask, LoaderLimits, LoaderPoll,
+    Lfm2TypedWeights, Lfm2WeightLoadTask, LoaderLimits, LoaderPoll, detect_lfm2_weight_format,
 };
 use minifield_json_grammar::AssistantCallEnforcer;
 use minifield_text_generation::{ChoiceCriterion, ChoiceRequest, finish_choice, prepare_choice};
@@ -159,14 +159,16 @@ async fn load_weights(
         max_tensors: 4096,
         max_rank: 4,
     };
+    let format = detect_lfm2_weight_format(&weights).map_err(js_debug)?;
     let request = match classes {
-        Some(classes) => Lfm2LoadRequest::new_classifier(
+        Some(classes) => Lfm2LoadRequest::new_classifier_with_format(
             config.clone(),
             Sha256::digest(&config).into(),
             weights_len,
             Sha256::digest(&weights).into(),
             loader_limits,
             classes,
+            format,
         ),
         None => Lfm2LoadRequest::new_with_format(
             config.clone(),
@@ -174,7 +176,7 @@ async fn load_weights(
             weights_len,
             Sha256::digest(&weights).into(),
             loader_limits,
-            Lfm2WeightFormat::TernaryV1,
+            format,
         ),
     }
     .map_err(js_debug)?;

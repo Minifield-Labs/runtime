@@ -267,6 +267,16 @@ impl<B: InferenceOps> Lfm2Executor<B> {
             ] {
                 capabilities.validate(minifield_engine_api::DType::F32, operation, 2, 0, 0)?;
             }
+            if weights.format().is_packed() {
+                for operation in [
+                    minifield_engine_api::OperationKind::PackedGatherRows,
+                    minifield_engine_api::OperationKind::PackedLinear,
+                    minifield_engine_api::OperationKind::PackedLinearPair,
+                    minifield_engine_api::OperationKind::PackedSwigluLinear,
+                ] {
+                    capabilities.validate(minifield_engine_api::DType::F32, operation, 2, 0, 0)?;
+                }
+            }
             (observed, backend.borrow().fence_retirement())
         };
         validate_roles::<B>(&weights)?;

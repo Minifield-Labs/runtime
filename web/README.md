@@ -74,14 +74,18 @@ required). The page fetches `config.json`, the packed safetensors, and
   cached KV prefix; the tail's pending sample is verified against the
   grammar mask, with a full masked prefill as the fallback.
 
-## Dense classifiers
+## Classifiers
 
-`load_classifier(config, weights, tokenizer, classes)` loads a dense F32 or
-BF16 backbone with `classification_head.weight` shaped `[classes, hidden]`.
-BF16 expands to FP32 at load time. `classify(prompt)` returns raw class
-scores from the final valid token. It adds no template or special tokens,
-and starts with empty attention and convolution state on every call.
-Callers own action masks, sampling, prompts, and game state.
+`load_classifier(config, weights, tokenizer, classes)` loads a backbone with
+`classification_head.weight` shaped `[classes, hidden]`. Dense F32 or BF16
+artifacts are accepted, and so are packed `minifield.ternary.v1` and
+`minifield.nf4.v1` bundles: the weight-load plan infers the format from each
+`X.codes`/`X.scales` pair's shape, so the caller API doesn't change. BF16
+expands to FP32 at load time; packed streams upload and decode on device.
+`classify(prompt)` returns raw class scores from the final valid token. It
+adds no template or special tokens, and starts with empty attention and
+convolution state on every call. Callers own action masks, sampling,
+prompts, and game state.
 
 The core `Lfm2Classifier` uses the same backbone and backend operations as
 `Lfm2Executor`. Input vocabulary size remains independent of class count.

@@ -12,8 +12,8 @@ implemented.
 ## Current implementation
 
 - engines/engine-api: backend-neutral tensor, resource, completion, asset, token, and finite inference-operation contracts.
-- crates/backend-cpu: owned scalar FP32 storage and arithmetic, packed-ternary, fused decode, linear, normalization, convolution, rotary-position, and attention kernels.
-- engines/backend-wgpu: wgpu 30 backend implementing the same finite operation contract (F32 and packed-ternary, fused decode kernels) with batched command recording and nonblocking completions.
+- crates/backend-cpu: owned scalar FP32 storage and arithmetic, packed-ternary and packed-NF4, fused decode, linear, normalization, convolution, rotary-position, and attention kernels.
+- engines/backend-wgpu: wgpu 30 backend implementing the same finite operation contract (F32 plus `minifield.ternary.v1` and `minifield.nf4.v1` packed kernels) with batched command recording and nonblocking completions.
 - crates/executor-core: checked configuration and bounded typed weight loading, full LFM2 execution, prefix caches, append/fork operations, and complete candidate scoring.
 - crates/text-tokenizer: owned bounded tokenizer asset parsing, byte-level BPE, Unicode pretokenization, and incremental UTF-8 decoding.
 - crates/text-generation: backend-neutral bounded greedy plaintext generation and typed binary-criterion choice scoring over a caller-provided tokenizer and token executor; choice scoring evaluates each criterion serially and reads back only its true/false logits.

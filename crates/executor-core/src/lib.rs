@@ -14,7 +14,7 @@ pub use lfm2::{
     Lfm2Executor, Lfm2LayerWeightRole, Lfm2LoadRequest, Lfm2Prefix, Lfm2ResolvedWeight,
     Lfm2StorageDType, Lfm2TypedWeights, Lfm2WeightFormat, Lfm2WeightLoadTask, Lfm2WeightPlan,
     Lfm2WeightRole, LogitsTask, NumericalMode, PrefillChoiceTask, PrefixTask, ScoreTask,
-    parse_lfm2_config,
+    detect_lfm2_weight_format, parse_lfm2_config,
 };
 pub use loader::{
     LoadRequest, LoaderError, LoaderLimits, LoaderPoll, LoaderResourceReport, LoaderStage,

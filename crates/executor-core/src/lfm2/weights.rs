@@ -28,6 +28,59 @@ pub enum Lfm2WeightFormat {
     /// `<tensor>.codes` U8 [rows, k/4] tensor plus a `<tensor>.scales` F16
     /// [rows, k/128] tensor. Norm and convolution-kernel roles stay dense.
     TernaryV1,
+    /// `minifield.nf4.v1` split streams: every matrix weight is a
+    /// `<tensor>.codes` U8 [rows, k/2] tensor (two NF4 level indices per byte,
+    /// low nibble first) plus a `<tensor>.scales` F16 [rows, k/128] tensor.
+    /// Norm and convolution-kernel roles stay dense.
+    Nf4V1,
+}
+
+impl Lfm2WeightFormat {
+    /// Whether matmul roles are stored as packed code/scale split streams.
+    #[must_use]
+    pub const fn is_packed(self) -> bool {
+        matches!(self, Self::TernaryV1 | Self::Nf4V1)
+    }
+}
+
+/// Sniff a `SafeTensors` asset's `__metadata__.format` marker without
+/// ingesting tensors. Dense remains the default when no marker is present.
+/// This is a routing hint for callers; the real header validation happens in
+/// the bounded loader.
+pub fn detect_lfm2_weight_format(asset: &[u8]) -> Result<Lfm2WeightFormat> {
+    const MAX_SNIFF_HEADER_BYTES: usize = 8 << 20;
+    let prefix = asset.get(..8).ok_or(ExecutorError::InvalidArgument(
+        "asset is shorter than a safetensors prefix",
+    ))?;
+    let header_len = u64::from_le_bytes(
+        prefix
+            .try_into()
+            .map_err(|_| ExecutorError::InvalidArgument("safetensors prefix is unreadable"))?,
+    );
+    let header_len = usize::try_from(header_len)
+        .map_err(|_| ExecutorError::Overflow("header length exceeds usize"))?;
+    if header_len > MAX_SNIFF_HEADER_BYTES {
+        return Err(ExecutorError::ResourceLimit(
+            "safetensors header exceeds sniff limit",
+        ));
+    }
+    let header =
+        asset
+            .get(8..8_usize.saturating_add(header_len))
+            .ok_or(ExecutorError::OutOfBounds(
+                "safetensors header extends beyond asset bytes",
+            ))?;
+    let value: serde_json::Value = serde_json::from_slice(header)
+        .map_err(|_| ExecutorError::InvalidArgument("safetensors header is not valid JSON"))?;
+    match value
+        .get("__metadata__")
+        .and_then(|metadata| metadata.get("format"))
+        .and_then(serde_json::Value::as_str)
+    {
+        Some("minifield.ternary.v1") => Ok(Lfm2WeightFormat::TernaryV1),
+        Some("minifield.nf4.v1") => Ok(Lfm2WeightFormat::Nf4V1),
+        _ => Ok(Lfm2WeightFormat::Dense),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -298,16 +351,28 @@ impl Lfm2WeightPlan {
 
     /// Dense backbone with an independent last-token classification projection.
     pub fn from_config_classifier(config: Lfm2Config, classes: u32) -> Result<Self> {
+        Self::from_config_classifier_with_format(config, classes, Lfm2WeightFormat::Dense)
+    }
+
+    /// Classifier backbone in either stored format. The classification head
+    /// always stays dense; packed formats (`minifield.ternary.v1`,
+    /// `minifield.nf4.v1`) pack every rank-two matmul role including the token
+    /// embedding, while `tied_lm_head` is dropped.
+    pub fn from_config_classifier_with_format(
+        config: Lfm2Config,
+        classes: u32,
+        format: Lfm2WeightFormat,
+    ) -> Result<Self> {
         if classes == 0 || classes > 65_536 {
             return Err(ExecutorError::InvalidArgument(
                 "classifier needs 1..=65536 classes",
             ));
         }
-        let mut result = Self::from_config(config)?;
+        let mut result = Self::from_config_with_format(config, format)?;
         result
             .plan
             .requirements
-            .retain(|item| item.role != "tied_lm_head");
+            .retain(|item| item.role != "tied_lm_head" && !item.role.starts_with("tied_lm_head."));
         let dtype = match result.config.weight_storage_dtype {
             Lfm2StorageDType::F32 => StorageDType::F32,
             Lfm2StorageDType::BF16 => StorageDType::BF16,
@@ -479,10 +544,12 @@ fn push(
     Ok(())
 }
 
-/// Emit one dense requirement or the `minifield.ternary.v1` split-stream pair,
-/// depending on the plan's stored format. Packed roles keep the base name as a
-/// prefix: `<role>.codes` is U8 `[rows, k/4]` and `<role>.scales` is F16
-/// `[rows, k/128]`, where `[rows, k]` is the dense operator shape.
+/// Emit one dense requirement or the packed split-stream pair for the plan's
+/// stored format. Packed roles keep the base name as a prefix: `<role>.codes`
+/// is U8 `[rows, k/weights_per_byte]` (four ternary weights per byte for
+/// `minifield.ternary.v1`, two NF4 weights per byte for `minifield.nf4.v1`)
+/// and `<role>.scales` is F16 `[rows, k/128]`, where `[rows, k]` is the dense
+/// operator shape.
 fn push_matmul(
     requirements: &mut Vec<WeightRequirement>,
     format: Lfm2WeightFormat,
@@ -492,50 +559,52 @@ fn push_matmul(
     dimensions: &[u64],
     tied_to_role: Option<&str>,
 ) -> Result<()> {
-    match format {
-        Lfm2WeightFormat::Dense => push(
-            requirements,
-            role,
-            tensor_name,
-            storage_dtype,
-            dimensions,
-            WeightLayout::Identity,
-            tied_to_role,
-        ),
-        Lfm2WeightFormat::TernaryV1 => {
-            if dimensions.len() != 2 {
-                return Err(ExecutorError::InvalidShape(
-                    "packed weight requirement must be rank two",
-                ));
-            }
-            let (rows, columns) = (dimensions[0], dimensions[1]);
-            if columns % 128 != 0 {
-                return Err(ExecutorError::InvalidShape(
-                    "packed weight input width must be a multiple of 128",
-                ));
-            }
-            let tied_codes = tied_to_role.map(|tied| format!("{tied}.codes"));
-            let tied_scales = tied_to_role.map(|tied| format!("{tied}.scales"));
-            push(
+    let weights_per_byte = match format {
+        Lfm2WeightFormat::Dense => {
+            return push(
                 requirements,
-                &format!("{role}.codes"),
-                &format!("{tensor_name}.codes"),
-                StorageDType::U8,
-                &[rows, columns / 4],
+                role,
+                tensor_name,
+                storage_dtype,
+                dimensions,
                 WeightLayout::Identity,
-                tied_codes.as_deref(),
-            )?;
-            push(
-                requirements,
-                &format!("{role}.scales"),
-                &format!("{tensor_name}.scales"),
-                StorageDType::F16,
-                &[rows, columns / 128],
-                WeightLayout::Identity,
-                tied_scales.as_deref(),
-            )
+                tied_to_role,
+            );
         }
+        Lfm2WeightFormat::TernaryV1 => 4,
+        Lfm2WeightFormat::Nf4V1 => 2,
+    };
+    if dimensions.len() != 2 {
+        return Err(ExecutorError::InvalidShape(
+            "packed weight requirement must be rank two",
+        ));
     }
+    let (rows, columns) = (dimensions[0], dimensions[1]);
+    if columns % 128 != 0 {
+        return Err(ExecutorError::InvalidShape(
+            "packed weight input width must be a multiple of 128",
+        ));
+    }
+    let tied_codes = tied_to_role.map(|tied| format!("{tied}.codes"));
+    let tied_scales = tied_to_role.map(|tied| format!("{tied}.scales"));
+    push(
+        requirements,
+        &format!("{role}.codes"),
+        &format!("{tensor_name}.codes"),
+        StorageDType::U8,
+        &[rows, columns / weights_per_byte],
+        WeightLayout::Identity,
+        tied_codes.as_deref(),
+    )?;
+    push(
+        requirements,
+        &format!("{role}.scales"),
+        &format!("{tensor_name}.scales"),
+        StorageDType::F16,
+        &[rows, columns / 128],
+        WeightLayout::Identity,
+        tied_scales.as_deref(),
+    )
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -598,8 +667,29 @@ impl Lfm2LoadRequest {
         limits: LoaderLimits,
         classes: u32,
     ) -> Result<Self> {
+        Self::new_classifier_with_format(
+            config_bytes,
+            expected_config_sha256,
+            declared_asset_bytes,
+            expected_asset_sha256,
+            limits,
+            classes,
+            Lfm2WeightFormat::Dense,
+        )
+    }
+
+    /// Load classifier weights in the given stored format.
+    pub fn new_classifier_with_format(
+        config_bytes: Vec<u8>,
+        expected_config_sha256: [u8; 32],
+        declared_asset_bytes: u64,
+        expected_asset_sha256: [u8; 32],
+        limits: LoaderLimits,
+        classes: u32,
+        format: Lfm2WeightFormat,
+    ) -> Result<Self> {
         let config = parse_lfm2_config(&config_bytes)?;
-        let plan = Lfm2WeightPlan::from_config_classifier(config, classes)?;
+        let plan = Lfm2WeightPlan::from_config_classifier_with_format(config, classes, format)?;
         Ok(Self {
             request: LoadRequest {
                 config_name: LFM2_CONFIG_NAME.to_owned(),
@@ -718,10 +808,10 @@ impl<Buffer> Lfm2TypedWeights<Buffer> {
     }
 
     /// Resolve a role to its stored operand set: one dense buffer, or the
-    /// packed ternary code/scale pair for packed matmul roles.
+    /// packed code/scale pair for packed matmul roles.
     pub fn resolve(&self, role: Lfm2WeightRole) -> Result<Lfm2ResolvedWeight<'_, Buffer>> {
         let base = self.plan.role_base_name(role)?;
-        if self.plan.format == Lfm2WeightFormat::TernaryV1
+        if self.plan.format.is_packed()
             && self
                 .plan
                 .plan
@@ -744,7 +834,9 @@ impl<Buffer> Lfm2TypedWeights<Buffer> {
 pub enum Lfm2ResolvedWeight<'a, Buffer> {
     /// One dense f32 buffer used by `linear`/`gather_rows`.
     Dense(&'a Buffer),
-    /// `minifield.ternary.v1` split streams used by `packed_linear`/`packed_gather_rows`.
+    /// Packed split streams used by `packed_linear`/`packed_gather_rows`;
+    /// the code width selects the decode (`minifield.ternary.v1` vs
+    /// `minifield.nf4.v1`).
     Packed {
         codes: &'a Buffer,
         scales: &'a Buffer,

@@ -363,6 +363,241 @@ fn main(
 }
 ";
 
+/// NF4 codebook for `minifield.nf4.v1` streams: decode
+/// `w = NF4[code] * scale` where `code` indexes this sorted 16-entry
+/// normal-float table (bitsandbytes-compatible levels for zero-mean data).
+/// Each u32 codes word carries eight 4-bit indices, low nibble first, so a
+/// word covers 8 weights and a 128-weight group spans 16 words.
+const NF4_LUT: &str = "
+const NF4: array<f32, 16> = array<f32, 16>(
+    -1.0, -0.6961928009986877, -0.5250730514526367, -0.39491748809814453,
+    -0.28444138169288635, -0.18477343022823334, -0.09105003625154495, 0.0,
+    0.07958029955625534, 0.16093020141124725, 0.24611230194568634,
+    0.33791524171829224, 0.44070982933044434, 0.5626170039176941,
+    0.7229568362236023, 1.0
+);
+";
+
+/// Packed NF4 GEMV for `minifield.nf4.v1` weights:
+/// dst[i*n + j] = `sum_l` x[i*k + l] * NF4[code(j,l)] * scale(j, l/128).
+/// Same lane-grouped reduce layout as `PACKED_GEMV`; each u32 word decodes
+/// eight 4-bit NF4 level indices instead of sixteen 2-bit ternary codes.
+const PACKED_GEMV_NF4: &str = r"
+struct Params { p: vec4<u32>, q: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<storage, read> x: array<f32>;
+@group(0) @binding(3) var<storage, read> codes: array<u32>;
+@group(0) @binding(4) var<storage, read> scales: array<f32>;
+@group(0) @binding(5) var<storage, read> x4: array<vec4<f32>>;
+
+var<workgroup> part: array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let flat = flat_wg(wid, numw);
+    let n = pc.p.x;
+    let k = pc.p.y;
+    let lanes = pc.p.z;
+    let tiles = pc.p.w;
+    let rows_per_wg = 256u / lanes;
+    let i = flat / tiles;
+    let row0 = (flat - i * tiles) * rows_per_wg;
+    let tid = lid.x;
+    let group = tid / lanes;
+    let lane = tid - group * lanes;
+    let j = row0 + group;
+    let words = (k + 7u) >> 3u;
+    let groups = (k + 127u) >> 7u;
+    let xbase = i * k;
+    var acc = 0.0;
+    if (j < n) {
+        let cbase = j * words;
+        let sbase = j * groups;
+        let vec_ok = pc.q.x != 0u;
+        for (var w = lane; w < words; w = w + lanes) {
+            let word = codes[cbase + w];
+            let scale = scales[sbase + (w >> 4u)];
+            let base = w << 3u;
+            var dot = 0.0;
+            if (vec_ok && base + 8u <= k) {
+                // Whole word: two 128-bit activation loads cover 8 elements.
+                let b4 = (xbase + base) >> 2u;
+                for (var q = 0u; q < 2u; q = q + 1u) {
+                    let xv = x4[b4 + q];
+                    let sh = q << 4u;
+                    dot = dot
+                        + xv.x * NF4[(word >> sh) & 0xFu]
+                        + xv.y * NF4[(word >> (sh + 4u)) & 0xFu]
+                        + xv.z * NF4[(word >> (sh + 8u)) & 0xFu]
+                        + xv.w * NF4[(word >> (sh + 12u)) & 0xFu];
+                }
+            } else {
+                let count = min(8u, k - base);
+                for (var e = 0u; e < count; e = e + 1u) {
+                    let nib = (word >> (e * 4u)) & 0xFu;
+                    dot = dot + x[xbase + base + e] * NF4[nib];
+                }
+            }
+            acc = acc + dot * scale;
+        }
+    }
+    part[tid] = acc;
+    workgroupBarrier();
+    if (tid < rows_per_wg) {
+        let o = row0 + tid;
+        if (o < n) {
+            var s = 0.0;
+            let pbase = tid * lanes;
+            for (var l = 0u; l < lanes; l = l + 1u) {
+                s = s + part[pbase + l];
+            }
+            dst[i * n + o] = s;
+        }
+    }
+}
+";
+
+/// Multi-token packed NF4 GEMV: same lane-grouped reduce as
+/// `PACKED_GEMV_NF4` but each workgroup covers MT input rows, so every codes
+/// word is decoded once and reused for all MT dots. Use for prefill-width
+/// inputs where per-row re-decode dominates; m=1 keeps the single-token
+/// kernel. `pc.q` = [m, `m_tiles`, `vec_ok`, 0].
+const PACKED_GEMV_MT_NF4: &str = r"
+const MT: u32 = 8u;
+struct Params { p: vec4<u32>, q: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<storage, read> x: array<f32>;
+@group(0) @binding(3) var<storage, read> codes: array<u32>;
+@group(0) @binding(4) var<storage, read> scales: array<f32>;
+@group(0) @binding(5) var<storage, read> x4: array<vec4<f32>>;
+
+var<workgroup> part: array<f32, 2048>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let flat = flat_wg(wid, numw);
+    let n = pc.p.x;
+    let k = pc.p.y;
+    let lanes = pc.p.z;
+    let tiles = pc.p.w;
+    let m = pc.q.x;
+    let rows_per_wg = 256u / lanes;
+    let i0 = (flat / tiles) * MT;
+    let row0 = (flat - (flat / tiles) * tiles) * rows_per_wg;
+    let tid = lid.x;
+    let group = tid / lanes;
+    let lane = tid - group * lanes;
+    let j = row0 + group;
+    let words = (k + 7u) >> 3u;
+    let groups = (k + 127u) >> 7u;
+    let vec_ok = pc.q.z != 0u;
+    var acc: array<f32, 8>;
+    for (var ml = 0u; ml < MT; ml = ml + 1u) {
+        acc[ml] = 0.0;
+    }
+    if (j < n) {
+        let cbase = j * words;
+        let sbase = j * groups;
+        for (var w = lane; w < words; w = w + lanes) {
+            let word = codes[cbase + w];
+            let scale = scales[sbase + (w >> 4u)];
+            let base = w << 3u;
+            var dw: array<f32, 8>;
+            for (var e = 0u; e < 8u; e = e + 1u) {
+                dw[e] = NF4[(word >> (e * 4u)) & 0xFu];
+            }
+            for (var ml = 0u; ml < MT; ml = ml + 1u) {
+                let i = i0 + ml;
+                if (i < m) {
+                    let xbase = i * k + base;
+                    var dot = 0.0;
+                    if (vec_ok && base + 8u <= k) {
+                        let b4 = xbase >> 2u;
+                        let xa = x4[b4];
+                        let xb = x4[b4 + 1u];
+                        dot = xa.x * dw[0] + xa.y * dw[1] + xa.z * dw[2] + xa.w * dw[3]
+                            + xb.x * dw[4] + xb.y * dw[5] + xb.z * dw[6] + xb.w * dw[7];
+                    } else {
+                        let count = min(8u, k - base);
+                        for (var e = 0u; e < count; e = e + 1u) {
+                            dot = dot + x[xbase + e] * dw[e];
+                        }
+                    }
+                    acc[ml] = acc[ml] + dot * scale;
+                }
+            }
+        }
+    }
+    for (var ml = 0u; ml < MT; ml = ml + 1u) {
+        part[ml * 256u + tid] = acc[ml];
+    }
+    workgroupBarrier();
+    if (tid < rows_per_wg) {
+        let o = row0 + tid;
+        if (o < n) {
+            let pbase = tid * lanes;
+            for (var ml = 0u; ml < MT; ml = ml + 1u) {
+                let i = i0 + ml;
+                if (i < m) {
+                    var s = 0.0;
+                    for (var l = 0u; l < lanes; l = l + 1u) {
+                        s = s + part[ml * 256u + pbase + l];
+                    }
+                    dst[i * n + o] = s;
+                }
+            }
+        }
+    }
+}
+";
+
+/// Packed NF4 gather: dst[r*k + l] = NF4[code(ids[r], l)] *
+/// scale(ids[r], l/128). One thread per output element.
+const PACKED_GATHER_NF4: &str = r"
+struct Params { p: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<storage, read_write> ids: array<f32>;
+@group(0) @binding(3) var<storage, read_write> codes: array<u32>;
+@group(0) @binding(4) var<storage, read_write> scales: array<f32>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let i = flat_wg(wid, numw) * 256u + lid.x;
+    let total = pc.p.x * pc.p.y;
+    if i >= total { return; }
+    let k = pc.p.y;
+    let r = i / k;
+    let l = i - r * k;
+    let srcf = ids[r];
+    var src = 0xFFFFFFFFu;
+    if srcf >= 0.0 && srcf < 16777216.0 && fract(srcf) == 0.0 {
+        src = u32(srcf);
+    }
+    if src >= pc.p.z {
+        dst[i] = bitcast<f32>(pc.p.w);
+        return;
+    }
+    let word = codes[src * (k >> 3u) + (l >> 3u)];
+    let nib = (word >> ((l & 7u) << 2u)) & 0xFu;
+    dst[i] = NF4[nib] * scales[src * (k >> 7u) + (l >> 7u)];
+}
+";
+
 /// Row-wise argmax over `[T, V]` f32 logits: one workgroup per row, 256
 /// threads tree-reduce (value, index) pairs keeping the smallest index on
 /// ties. `dst[r]` is the winning index as an exact f32 integer, or NaN when
@@ -771,6 +1006,422 @@ fn main(
 }
 ";
 
+/// Paired packed NF4 GEMV over one shared input: same lane-grouped layout as
+/// `PACKED_GEMV_PAIR` with the `minifield.nf4.v1` nibble decode.
+const PACKED_GEMV_PAIR_NF4: &str = r"
+struct Params { p: vec4<u32>, q: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read_write> dst_a: array<f32>;
+@group(0) @binding(2) var<storage, read_write> dst_b: array<f32>;
+@group(0) @binding(3) var<storage, read> x: array<f32>;
+@group(0) @binding(4) var<storage, read> codes_a: array<u32>;
+@group(0) @binding(5) var<storage, read> scales_a: array<f32>;
+@group(0) @binding(6) var<storage, read> codes_b: array<u32>;
+@group(0) @binding(7) var<storage, read> scales_b: array<f32>;
+@group(0) @binding(8) var<storage, read> x4: array<vec4<f32>>;
+
+var<workgroup> part: array<f32, 512>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let flat = flat_wg(wid, numw);
+    let n = pc.p.x;
+    let k = pc.p.y;
+    let lanes = pc.p.z;
+    let tiles = pc.p.w;
+    let rows_per_wg = 256u / lanes;
+    let i = flat / tiles;
+    let row0 = (flat - i * tiles) * rows_per_wg;
+    let tid = lid.x;
+    let group = tid / lanes;
+    let lane = tid - group * lanes;
+    let j = row0 + group;
+    let words = (k + 7u) >> 3u;
+    let groups = (k + 127u) >> 7u;
+    let xbase = i * k;
+    var acc_a = 0.0;
+    var acc_b = 0.0;
+    if (j < n) {
+        let cbase = j * words;
+        let sbase = j * groups;
+        let vec_ok = pc.q.x != 0u;
+        for (var w = lane; w < words; w = w + lanes) {
+            let word_a = codes_a[cbase + w];
+            let word_b = codes_b[cbase + w];
+            let scale_a = scales_a[sbase + (w >> 4u)];
+            let scale_b = scales_b[sbase + (w >> 4u)];
+            let base = w << 3u;
+            var dot_a = 0.0;
+            var dot_b = 0.0;
+            if (vec_ok && base + 8u <= k) {
+                let b4 = (xbase + base) >> 2u;
+                for (var q = 0u; q < 2u; q = q + 1u) {
+                    let xv = x4[b4 + q];
+                    let sh = q << 4u;
+                    let ca0 = NF4[(word_a >> sh) & 0xFu];
+                    let ca1 = NF4[(word_a >> (sh + 4u)) & 0xFu];
+                    let ca2 = NF4[(word_a >> (sh + 8u)) & 0xFu];
+                    let ca3 = NF4[(word_a >> (sh + 12u)) & 0xFu];
+                    let cb0 = NF4[(word_b >> sh) & 0xFu];
+                    let cb1 = NF4[(word_b >> (sh + 4u)) & 0xFu];
+                    let cb2 = NF4[(word_b >> (sh + 8u)) & 0xFu];
+                    let cb3 = NF4[(word_b >> (sh + 12u)) & 0xFu];
+                    dot_a = dot_a + xv.x * ca0 + xv.y * ca1 + xv.z * ca2 + xv.w * ca3;
+                    dot_b = dot_b + xv.x * cb0 + xv.y * cb1 + xv.z * cb2 + xv.w * cb3;
+                }
+            } else {
+                let count = min(8u, k - base);
+                for (var e = 0u; e < count; e = e + 1u) {
+                    let xv = x[xbase + base + e];
+                    let nib_a = (word_a >> (e * 4u)) & 0xFu;
+                    let nib_b = (word_b >> (e * 4u)) & 0xFu;
+                    dot_a = dot_a + xv * NF4[nib_a];
+                    dot_b = dot_b + xv * NF4[nib_b];
+                }
+            }
+            acc_a = acc_a + dot_a * scale_a;
+            acc_b = acc_b + dot_b * scale_b;
+        }
+    }
+    part[tid] = acc_a;
+    part[256u + tid] = acc_b;
+    workgroupBarrier();
+    if (tid < rows_per_wg) {
+        let o = row0 + tid;
+        if (o < n) {
+            var s_a = 0.0;
+            var s_b = 0.0;
+            let pbase = tid * lanes;
+            for (var l = 0u; l < lanes; l = l + 1u) {
+                s_a = s_a + part[pbase + l];
+                s_b = s_b + part[256u + pbase + l];
+            }
+            dst_a[i * n + o] = s_a;
+            dst_b[i * n + o] = s_b;
+        }
+    }
+}
+";
+
+/// Packed NF4 GEMV over an on-the-fly SiLU(gate) * up activation: same
+/// lane-grouped layout as `PACKED_SWIGLU_GEMV` with the `minifield.nf4.v1`
+/// nibble decode.
+const PACKED_SWIGLU_GEMV_NF4: &str = r"
+struct Params { p: vec4<u32>, q: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<storage, read> gate: array<f32>;
+@group(0) @binding(3) var<storage, read> up: array<f32>;
+@group(0) @binding(4) var<storage, read> codes: array<u32>;
+@group(0) @binding(5) var<storage, read> scales: array<f32>;
+@group(0) @binding(6) var<storage, read> gate4: array<vec4<f32>>;
+@group(0) @binding(7) var<storage, read> up4: array<vec4<f32>>;
+
+var<workgroup> part: array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let flat = flat_wg(wid, numw);
+    let n = pc.p.x;
+    let k = pc.p.y;
+    let lanes = pc.p.z;
+    let tiles = pc.p.w;
+    let rows_per_wg = 256u / lanes;
+    let i = flat / tiles;
+    let row0 = (flat - i * tiles) * rows_per_wg;
+    let tid = lid.x;
+    let group = tid / lanes;
+    let lane = tid - group * lanes;
+    let j = row0 + group;
+    let words = (k + 7u) >> 3u;
+    let groups = (k + 127u) >> 7u;
+    let xbase = i * k;
+    var acc = 0.0;
+    if (j < n) {
+        let cbase = j * words;
+        let sbase = j * groups;
+        let vec_ok = pc.q.x != 0u;
+        for (var w = lane; w < words; w = w + lanes) {
+            let word = codes[cbase + w];
+            let scale = scales[sbase + (w >> 4u)];
+            let base = w << 3u;
+            var dot = 0.0;
+            if (vec_ok && base + 8u <= k) {
+                let b4 = (xbase + base) >> 2u;
+                for (var q = 0u; q < 2u; q = q + 1u) {
+                    let g = gate4[b4 + q];
+                    let sigmoid = vec4(1.0) / (vec4(1.0) + exp(-g));
+                    let xv = (g * sigmoid) * up4[b4 + q];
+                    let sh = q << 4u;
+                    dot = dot
+                        + xv.x * NF4[(word >> sh) & 0xFu]
+                        + xv.y * NF4[(word >> (sh + 4u)) & 0xFu]
+                        + xv.z * NF4[(word >> (sh + 8u)) & 0xFu]
+                        + xv.w * NF4[(word >> (sh + 12u)) & 0xFu];
+                }
+            } else {
+                let count = min(8u, k - base);
+                for (var e = 0u; e < count; e = e + 1u) {
+                    let l = xbase + base + e;
+                    let g = gate[l];
+                    let sigmoid = 1.0 / (1.0 + exp(-g));
+                    let xv = (g * sigmoid) * up[l];
+                    let nib = (word >> (e * 4u)) & 0xFu;
+                    dot = dot + xv * NF4[nib];
+                }
+            }
+            acc = acc + dot * scale;
+        }
+    }
+    part[tid] = acc;
+    workgroupBarrier();
+    if (tid < rows_per_wg) {
+        let o = row0 + tid;
+        if (o < n) {
+            var s = 0.0;
+            let pbase = tid * lanes;
+            for (var l = 0u; l < lanes; l = l + 1u) {
+                s = s + part[pbase + l];
+            }
+            dst[i * n + o] = s;
+        }
+    }
+}
+";
+
+/// Multi-token packed NF4 GEMV over two shared-input weights: decode each
+/// codes pair once, reuse across MT input rows. `pc.q` = [m, `m_tiles`, `vec_ok`,
+/// 0]. Partial buffers hold MT accumulators per thread.
+const PACKED_GEMV_PAIR_MT_NF4: &str = r"
+const MT: u32 = 8u;
+struct Params { p: vec4<u32>, q: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read_write> dst_a: array<f32>;
+@group(0) @binding(2) var<storage, read_write> dst_b: array<f32>;
+@group(0) @binding(3) var<storage, read> x: array<f32>;
+@group(0) @binding(4) var<storage, read> codes_a: array<u32>;
+@group(0) @binding(5) var<storage, read> scales_a: array<f32>;
+@group(0) @binding(6) var<storage, read> codes_b: array<u32>;
+@group(0) @binding(7) var<storage, read> scales_b: array<f32>;
+@group(0) @binding(8) var<storage, read> x4: array<vec4<f32>>;
+
+var<workgroup> part_a: array<f32, 2048>;
+var<workgroup> part_b: array<f32, 2048>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let flat = flat_wg(wid, numw);
+    let n = pc.p.x;
+    let k = pc.p.y;
+    let lanes = pc.p.z;
+    let tiles = pc.p.w;
+    let m = pc.q.x;
+    let rows_per_wg = 256u / lanes;
+    let i0 = (flat / tiles) * MT;
+    let row0 = (flat - (flat / tiles) * tiles) * rows_per_wg;
+    let tid = lid.x;
+    let group = tid / lanes;
+    let lane = tid - group * lanes;
+    let j = row0 + group;
+    let words = (k + 7u) >> 3u;
+    let groups = (k + 127u) >> 7u;
+    let vec_ok = pc.q.z != 0u;
+    var acc_a: array<f32, 8>;
+    var acc_b: array<f32, 8>;
+    for (var ml = 0u; ml < MT; ml = ml + 1u) {
+        acc_a[ml] = 0.0;
+        acc_b[ml] = 0.0;
+    }
+    if (j < n) {
+        let cbase = j * words;
+        let sbase = j * groups;
+        for (var w = lane; w < words; w = w + lanes) {
+            let word_a = codes_a[cbase + w];
+            let word_b = codes_b[cbase + w];
+            let scale_a = scales_a[sbase + (w >> 4u)];
+            let scale_b = scales_b[sbase + (w >> 4u)];
+            let base = w << 3u;
+            var dw_a: array<f32, 8>;
+            var dw_b: array<f32, 8>;
+            for (var e = 0u; e < 8u; e = e + 1u) {
+                let sh = e * 4u;
+                dw_a[e] = NF4[(word_a >> sh) & 0xFu];
+                dw_b[e] = NF4[(word_b >> sh) & 0xFu];
+            }
+            for (var ml = 0u; ml < MT; ml = ml + 1u) {
+                let i = i0 + ml;
+                if (i < m) {
+                    let xbase = i * k + base;
+                    var dot_a = 0.0;
+                    var dot_b = 0.0;
+                    if (vec_ok && base + 8u <= k) {
+                        let b4 = xbase >> 2u;
+                        let xa = x4[b4];
+                        let xb = x4[b4 + 1u];
+                        dot_a = xa.x * dw_a[0] + xa.y * dw_a[1] + xa.z * dw_a[2] + xa.w * dw_a[3]
+                              + xb.x * dw_a[4] + xb.y * dw_a[5] + xb.z * dw_a[6] + xb.w * dw_a[7];
+                        dot_b = xa.x * dw_b[0] + xa.y * dw_b[1] + xa.z * dw_b[2] + xa.w * dw_b[3]
+                              + xb.x * dw_b[4] + xb.y * dw_b[5] + xb.z * dw_b[6] + xb.w * dw_b[7];
+                    } else {
+                        let count = min(8u, k - base);
+                        for (var e = 0u; e < count; e = e + 1u) {
+                            let xv = x[xbase + e];
+                            dot_a = dot_a + xv * dw_a[e];
+                            dot_b = dot_b + xv * dw_b[e];
+                        }
+                    }
+                    acc_a[ml] = acc_a[ml] + dot_a * scale_a;
+                    acc_b[ml] = acc_b[ml] + dot_b * scale_b;
+                }
+            }
+        }
+    }
+    for (var ml = 0u; ml < MT; ml = ml + 1u) {
+        part_a[ml * 256u + tid] = acc_a[ml];
+        part_b[ml * 256u + tid] = acc_b[ml];
+    }
+    workgroupBarrier();
+    if (tid < rows_per_wg) {
+        let o = row0 + tid;
+        if (o < n) {
+            let pbase = tid * lanes;
+            for (var ml = 0u; ml < MT; ml = ml + 1u) {
+                let i = i0 + ml;
+                if (i < m) {
+                    var s_a = 0.0;
+                    var s_b = 0.0;
+                    for (var l = 0u; l < lanes; l = l + 1u) {
+                        s_a = s_a + part_a[ml * 256u + pbase + l];
+                        s_b = s_b + part_b[ml * 256u + pbase + l];
+                    }
+                    dst_a[i * n + o] = s_a;
+                    dst_b[i * n + o] = s_b;
+                }
+            }
+        }
+    }
+}
+";
+
+/// Multi-token packed NF4 GEMV over an on-the-fly `SiLU(gate) * up`
+/// activation: decode once per word, reuse across MT input rows. `pc.q` =
+/// [m, `m_tiles`, `vec_ok`, 0].
+const PACKED_SWIGLU_GEMV_MT_NF4: &str = r"
+const MT: u32 = 8u;
+struct Params { p: vec4<u32>, q: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<storage, read> gate: array<f32>;
+@group(0) @binding(3) var<storage, read> up: array<f32>;
+@group(0) @binding(4) var<storage, read> codes: array<u32>;
+@group(0) @binding(5) var<storage, read> scales: array<f32>;
+@group(0) @binding(6) var<storage, read> gate4: array<vec4<f32>>;
+@group(0) @binding(7) var<storage, read> up4: array<vec4<f32>>;
+
+var<workgroup> part: array<f32, 2048>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let flat = flat_wg(wid, numw);
+    let n = pc.p.x;
+    let k = pc.p.y;
+    let lanes = pc.p.z;
+    let tiles = pc.p.w;
+    let m = pc.q.x;
+    let rows_per_wg = 256u / lanes;
+    let i0 = (flat / tiles) * MT;
+    let row0 = (flat - (flat / tiles) * tiles) * rows_per_wg;
+    let tid = lid.x;
+    let group = tid / lanes;
+    let lane = tid - group * lanes;
+    let j = row0 + group;
+    let words = (k + 7u) >> 3u;
+    let groups = (k + 127u) >> 7u;
+    let vec_ok = pc.q.z != 0u;
+    var acc: array<f32, 8>;
+    for (var ml = 0u; ml < MT; ml = ml + 1u) {
+        acc[ml] = 0.0;
+    }
+    if (j < n) {
+        let cbase = j * words;
+        let sbase = j * groups;
+        for (var w = lane; w < words; w = w + lanes) {
+            let word = codes[cbase + w];
+            let scale = scales[sbase + (w >> 4u)];
+            let base = w << 3u;
+            var dw: array<f32, 8>;
+            for (var e = 0u; e < 8u; e = e + 1u) {
+                dw[e] = NF4[(word >> (e * 4u)) & 0xFu];
+            }
+            for (var ml = 0u; ml < MT; ml = ml + 1u) {
+                let i = i0 + ml;
+                if (i < m) {
+                    let abase = i * k + base;
+                    var dot = 0.0;
+                    if (vec_ok && base + 8u <= k) {
+                        let b4 = abase >> 2u;
+                        let ga = gate4[b4];
+                        let gb = gate4[b4 + 1u];
+                        let sa = vec4(1.0) / (vec4(1.0) + exp(-ga));
+                        let sb = vec4(1.0) / (vec4(1.0) + exp(-gb));
+                        let xa = (ga * sa) * up4[b4];
+                        let xb = (gb * sb) * up4[b4 + 1u];
+                        dot = xa.x * dw[0] + xa.y * dw[1] + xa.z * dw[2] + xa.w * dw[3]
+                            + xb.x * dw[4] + xb.y * dw[5] + xb.z * dw[6] + xb.w * dw[7];
+                    } else {
+                        let count = min(8u, k - base);
+                        for (var e = 0u; e < count; e = e + 1u) {
+                            let l = abase + e;
+                            let g = gate[l];
+                            let sigmoid = 1.0 / (1.0 + exp(-g));
+                            let xv = (g * sigmoid) * up[l];
+                            dot = dot + xv * dw[e];
+                        }
+                    }
+                    acc[ml] = acc[ml] + dot * scale;
+                }
+            }
+        }
+    }
+    for (var ml = 0u; ml < MT; ml = ml + 1u) {
+        part[ml * 256u + tid] = acc[ml];
+    }
+    workgroupBarrier();
+    if (tid < rows_per_wg) {
+        let o = row0 + tid;
+        if (o < n) {
+            let pbase = tid * lanes;
+            for (var ml = 0u; ml < MT; ml = ml + 1u) {
+                let i = i0 + ml;
+                if (i < m) {
+                    var s = 0.0;
+                    for (var l = 0u; l < lanes; l = l + 1u) {
+                        s = s + part[ml * 256u + pbase + l];
+                    }
+                    dst[i * n + o] = s;
+                }
+            }
+        }
+    }
+}
+";
+
 /// Fused residual add plus row RMS norm: `sum[r,c] = a[r,c] + b[r,c]` then
 /// `normed[r,c] = sum[r,c] * rsqrt(mean(sum[r,:]^2) + eps) * alpha[c]`.
 /// One workgroup per row; the two passes share one dispatch.
@@ -1137,6 +1788,116 @@ fn main(
     }
     let denom = sh[0];
 
+    storageBarrier();
+
+    // Weighted value sum per dimension.
+    for (var d = tid; d < head_dim; d = d + 256u) {
+        var acc = 0.0;
+        for (var ki = 0u; ki < visible; ki = ki + 1u) {
+            var vv: f32;
+            if ki < init {
+                vv = vcache[ki * kv_width + kvh * head_dim + d];
+            } else {
+                vv = v[(ki - init) * kv_width + kvh * head_dim + d];
+            }
+            acc = acc + scores[srow + ki] * vv;
+        }
+        dst[qbase + d] = acc / denom;
+    }
+}
+";
+
+/// Batched causal GQA for multi-token calls: identical math to `GQA` but one
+/// workgroup covers one (query head, token) pair of a token block, so a
+/// prefill-width batch dispatches once per block instead of once per token.
+/// Grid = `block_tokens` * `query_heads`; `p2` = [`query_heads`, `block_tokens`,
+/// `token_base`, 0]. Score scratch is one `new_cache_len` row per (t, h) pair
+/// in the block.
+const GQA_BATCH: &str = r"
+struct Params { p0: vec4<u32>, p1: vec4<u32>, p2: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read_write> q: array<f32>;
+@group(0) @binding(2) var<storage, read_write> k: array<f32>;
+@group(0) @binding(3) var<storage, read_write> v: array<f32>;
+@group(0) @binding(4) var<storage, read_write> kcache: array<f32>;
+@group(0) @binding(5) var<storage, read_write> vcache: array<f32>;
+@group(0) @binding(6) var<storage, read_write> scores: array<f32>;
+@group(0) @binding(7) var<storage, read_write> dst: array<f32>;
+
+var<workgroup> sh: array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let flat = flat_wg(wid, numw);
+    let tid = lid.x;
+    let group_size = pc.p0.x;
+    let head_dim = pc.p0.y;
+    let kv_width = pc.p0.z;
+    let q_width = pc.p0.w;
+    let init = pc.p1.x;
+    let score_stride = pc.p1.z;
+    let scale = bitcast<f32>(pc.p1.w);
+    let query_heads = pc.p2.x;
+    let block_tokens = pc.p2.y;
+    if flat >= block_tokens * query_heads { return; }
+    let token = pc.p2.z + flat / query_heads;
+    let qh = flat - (flat / query_heads) * query_heads;
+    let kvh = qh / group_size;
+    let visible = init + token + 1u;
+    let srow = flat * score_stride;
+    let qbase = token * q_width + qh * head_dim;
+
+    // Scaled dot scores for every visible key.
+    for (var ki = tid; ki < visible; ki = ki + 256u) {
+        var dot = 0.0;
+        for (var d = 0u; d < head_dim; d = d + 1u) {
+            var kv: f32;
+            if ki < init {
+                kv = kcache[ki * kv_width + kvh * head_dim + d];
+            } else {
+                kv = k[(ki - init) * kv_width + kvh * head_dim + d];
+            }
+            dot = dot + q[qbase + d] * kv;
+        }
+        scores[srow + ki] = dot * scale;
+    }
+    workgroupBarrier();
+
+    // Row max.
+    var partial = -3.402823466e+38;
+    for (var ki = tid; ki < visible; ki = ki + 256u) {
+        partial = max(partial, scores[srow + ki]);
+    }
+    sh[tid] = partial;
+    workgroupBarrier();
+    for (var s = 128u; s > 0u; s = s >> 1u) {
+        if tid < s { sh[tid] = max(sh[tid], sh[tid + s]); }
+        workgroupBarrier();
+    }
+    let maximum = sh[0];
+    workgroupBarrier();
+
+    // exp(score - max) in place, plus its denominator.
+    var denom_part = 0.0;
+    for (var ki = tid; ki < visible; ki = ki + 256u) {
+        let e = exp(scores[srow + ki] - maximum);
+        scores[srow + ki] = e;
+        denom_part = denom_part + e;
+    }
+    sh[tid] = denom_part;
+    workgroupBarrier();
+    for (var s = 128u; s > 0u; s = s >> 1u) {
+        if tid < s { sh[tid] = sh[tid] + sh[tid + s]; }
+        workgroupBarrier();
+    }
+    let denom = sh[0];
+
+    storageBarrier();
+
     // Weighted value sum per dimension.
     for (var d = tid; d < head_dim; d = d + 256u) {
         var acc = 0.0;
@@ -1280,6 +2041,62 @@ fn main(
 }
 ";
 
+const NF4_LINEAR_HEADER: &str = r"
+const PAIR: bool = false;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<storage, read> x: array<f32>;
+@group(0) @binding(3) var<storage, read> codes: array<u32>;
+@group(0) @binding(4) var<storage, read> scales: array<f32>;
+@group(0) @binding(5) var<storage, read> x4: array<vec4<f32>>;
+fn input_value(i: u32) -> f32 { return x[i]; }
+fn weight_a(row: u32, col: u32, k: u32) -> f32 {
+    let word = codes[row * (k / 8u) + col / 8u];
+    return NF4[(word >> ((col % 8u) * 4u)) & 15u] * scales[row * (k / 128u) + col / 128u];
+}
+fn weight_b(row: u32, col: u32, k: u32) -> f32 { return 0.0; }
+fn store_output(i: u32, a: f32, b: f32) { dst[i] = a; }
+";
+
+const NF4_PAIR_HEADER: &str = r"
+const PAIR: bool = true;
+@group(0) @binding(1) var<storage, read_write> dst_a: array<f32>;
+@group(0) @binding(2) var<storage, read_write> dst_b: array<f32>;
+@group(0) @binding(3) var<storage, read> x: array<f32>;
+@group(0) @binding(4) var<storage, read> codes_a: array<u32>;
+@group(0) @binding(5) var<storage, read> scales_a: array<f32>;
+@group(0) @binding(6) var<storage, read> codes_b: array<u32>;
+@group(0) @binding(7) var<storage, read> scales_b: array<f32>;
+@group(0) @binding(8) var<storage, read> x4: array<vec4<f32>>;
+fn input_value(i: u32) -> f32 { return x[i]; }
+fn weight_a(row: u32, col: u32, k: u32) -> f32 {
+    let word = codes_a[row * (k / 8u) + col / 8u];
+    return NF4[(word >> ((col % 8u) * 4u)) & 15u] * scales_a[row * (k / 128u) + col / 128u];
+}
+fn weight_b(row: u32, col: u32, k: u32) -> f32 {
+    let word = codes_b[row * (k / 8u) + col / 8u];
+    return NF4[(word >> ((col % 8u) * 4u)) & 15u] * scales_b[row * (k / 128u) + col / 128u];
+}
+fn store_output(i: u32, a: f32, b: f32) { dst_a[i] = a; dst_b[i] = b; }
+";
+
+const NF4_SWIGLU_HEADER: &str = r"
+const PAIR: bool = false;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<storage, read> gate: array<f32>;
+@group(0) @binding(3) var<storage, read> up: array<f32>;
+@group(0) @binding(4) var<storage, read> codes: array<u32>;
+@group(0) @binding(5) var<storage, read> scales: array<f32>;
+@group(0) @binding(6) var<storage, read> gate4: array<vec4<f32>>;
+@group(0) @binding(7) var<storage, read> up4: array<vec4<f32>>;
+fn input_value(i: u32) -> f32 { let g = gate[i]; return (g / (1.0 + exp(-g))) * up[i]; }
+fn weight_a(row: u32, col: u32, k: u32) -> f32 {
+    let word = codes[row * (k / 8u) + col / 8u];
+    return NF4[(word >> ((col % 8u) * 4u)) & 15u] * scales[row * (k / 128u) + col / 128u];
+}
+fn weight_b(row: u32, col: u32, k: u32) -> f32 { return 0.0; }
+fn store_output(i: u32, a: f32, b: f32) { dst[i] = a; }
+";
+
 /// Kernel identifiers in lazy-pipeline-cache order.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Kernel {
@@ -1292,6 +2109,7 @@ pub enum Kernel {
     RmsNorm,
     Rotary,
     Gqa,
+    GqaBatch,
     ConvGate,
     Conv,
     ConvStep,
@@ -1300,6 +2118,16 @@ pub enum Kernel {
     PackedGather,
     PackedGemvPair,
     PackedSwigluGemv,
+    PackedGemvNf4,
+    PackedGatherNf4,
+    PackedGemvPairNf4,
+    PackedSwigluGemvNf4,
+    PackedGemvMtNf4,
+    PackedGemmNf4,
+    PackedGemvPairMtNf4,
+    PackedGemmPairNf4,
+    PackedSwigluGemvMtNf4,
+    PackedSwigluGemmNf4,
     AddNorm,
     QkNormRope,
     Argmax,
@@ -1319,6 +2147,7 @@ impl Kernel {
         Self::RmsNorm,
         Self::Rotary,
         Self::Gqa,
+        Self::GqaBatch,
         Self::ConvGate,
         Self::Conv,
         Self::ConvStep,
@@ -1327,6 +2156,16 @@ impl Kernel {
         Self::PackedGather,
         Self::PackedGemvPair,
         Self::PackedSwigluGemv,
+        Self::PackedGemvNf4,
+        Self::PackedGatherNf4,
+        Self::PackedGemvPairNf4,
+        Self::PackedSwigluGemvNf4,
+        Self::PackedGemvMtNf4,
+        Self::PackedGemmNf4,
+        Self::PackedGemvPairMtNf4,
+        Self::PackedGemmPairNf4,
+        Self::PackedSwigluGemvMtNf4,
+        Self::PackedSwigluGemmNf4,
         Self::AddNorm,
         Self::QkNormRope,
         Self::Argmax,
@@ -1335,16 +2174,29 @@ impl Kernel {
         Self::GatherColumns,
     ];
 
-    /// Bitmask over storage binding positions (1..=storage_bindings) the
+    /// Bitmask over storage binding positions (1..=`storage_bindings`) the
     /// shader declares `read` rather than `read_write`. Dawn validates
     /// binding access in both directions, so the bind group layout must
     /// declare the same positions read-only.
     pub const fn read_only_mask(self) -> u32 {
         match self {
-            Self::Gemv => 0b11100,                       // x, w, w4
-            Self::PackedGemv => 0b111100,                // x, codes, scales, x4
-            Self::PackedGemvPair => 0b111111000,         // x, codes/scales a+b, x4
-            Self::PackedSwigluGemv => 0b11111100,        // gate, up, codes, scales, gate4, up4
+            Self::Gemv => 0b11100, // x, w, w4
+            Self::PackedGemv
+            | Self::PackedGemvNf4
+            | Self::PackedGemvMtNf4
+            | Self::PackedGemmNf4 => 0b11_1100, // x, codes, scales, x4
+            Self::PackedGemvPair
+            | Self::PackedGemvPairNf4
+            | Self::PackedGemvPairMtNf4
+            | Self::PackedGemmPairNf4 => {
+                0b1_1111_1000 // x, a+b, x4
+            }
+            Self::PackedSwigluGemv
+            | Self::PackedSwigluGemvNf4
+            | Self::PackedSwigluGemvMtNf4
+            | Self::PackedSwigluGemmNf4 => {
+                0b1111_1100 // gate..up4
+            }
             Self::Argmax | Self::ArgmaxBlocks => 0b1100, // src, allow
             Self::ArgmaxFinal => 0b100,                  // partials
             Self::GatherColumns => 0b110,                // src, cols
@@ -1355,6 +2207,9 @@ impl Kernel {
     /// WGSL source with the shared flattened-index helper prepended.
     pub fn source(self) -> String {
         let body = match self {
+            Self::PackedGemmNf4 => NF4_LINEAR_HEADER,
+            Self::PackedGemmPairNf4 => NF4_PAIR_HEADER,
+            Self::PackedSwigluGemmNf4 => NF4_SWIGLU_HEADER,
             Self::Fill => FILL,
             Self::Binary => BINARY,
             Self::Copy2d => COPY2D,
@@ -1364,6 +2219,7 @@ impl Kernel {
             Self::RmsNorm => RMSNORM,
             Self::Rotary => ROTARY,
             Self::Gqa => GQA,
+            Self::GqaBatch => GQA_BATCH,
             Self::ConvGate => CONV_GATE,
             Self::Conv => CONV,
             Self::ConvStep => CONV_STEP,
@@ -1372,6 +2228,13 @@ impl Kernel {
             Self::PackedGather => PACKED_GATHER,
             Self::PackedGemvPair => PACKED_GEMV_PAIR,
             Self::PackedSwigluGemv => PACKED_SWIGLU_GEMV,
+            Self::PackedGemvNf4 => PACKED_GEMV_NF4,
+            Self::PackedGatherNf4 => PACKED_GATHER_NF4,
+            Self::PackedGemvPairNf4 => PACKED_GEMV_PAIR_NF4,
+            Self::PackedSwigluGemvNf4 => PACKED_SWIGLU_GEMV_NF4,
+            Self::PackedGemvMtNf4 => PACKED_GEMV_MT_NF4,
+            Self::PackedGemvPairMtNf4 => PACKED_GEMV_PAIR_MT_NF4,
+            Self::PackedSwigluGemvMtNf4 => PACKED_SWIGLU_GEMV_MT_NF4,
             Self::AddNorm => ADD_NORM,
             Self::QkNormRope => QK_NORM_ROPE,
             Self::Argmax => ARGMAX,
@@ -1379,8 +2242,26 @@ impl Kernel {
             Self::ArgmaxFinal => ARGMAX_FINAL,
             Self::GatherColumns => GATHER_COLUMNS,
         };
+        if matches!(
+            self,
+            Self::PackedGemmNf4 | Self::PackedGemmPairNf4 | Self::PackedSwigluGemmNf4
+        ) {
+            return [WGSL_INDEX, NF4_LUT, body, include_str!("nf4_prefill.wgsl")].concat();
+        }
         let mut source = String::with_capacity(WGSL_INDEX.len() + body.len() + 1);
         source.push_str(WGSL_INDEX);
+        if matches!(
+            self,
+            Self::PackedGemvNf4
+                | Self::PackedGatherNf4
+                | Self::PackedGemvPairNf4
+                | Self::PackedSwigluGemvNf4
+                | Self::PackedGemvMtNf4
+                | Self::PackedGemvPairMtNf4
+                | Self::PackedSwigluGemvMtNf4
+        ) {
+            source.push_str(NF4_LUT);
+        }
         source.push_str(body);
         source
     }
@@ -1400,10 +2281,24 @@ impl Kernel {
             | Self::Rotary
             | Self::ConvGate
             | Self::SwiGlu => 3,
-            Self::Gemv | Self::Conv | Self::PackedGather => 4,
-            Self::AddNorm | Self::ConvStep | Self::PackedGemv => 5,
-            Self::Gqa | Self::PackedSwigluGemv | Self::QkNormRope => 7,
-            Self::PackedGemvPair => 8,
+            Self::Gemv | Self::Conv | Self::PackedGather | Self::PackedGatherNf4 => 4,
+            Self::AddNorm
+            | Self::ConvStep
+            | Self::PackedGemv
+            | Self::PackedGemvNf4
+            | Self::PackedGemvMtNf4
+            | Self::PackedGemmNf4 => 5,
+            Self::Gqa
+            | Self::GqaBatch
+            | Self::PackedSwigluGemv
+            | Self::PackedSwigluGemvNf4
+            | Self::PackedSwigluGemvMtNf4
+            | Self::PackedSwigluGemmNf4
+            | Self::QkNormRope => 7,
+            Self::PackedGemvPair
+            | Self::PackedGemvPairNf4
+            | Self::PackedGemvPairMtNf4
+            | Self::PackedGemmPairNf4 => 8,
         }
     }
 
@@ -1418,6 +2313,7 @@ impl Kernel {
             Self::RmsNorm => "rmsnorm",
             Self::Rotary => "rotary",
             Self::Gqa => "gqa",
+            Self::GqaBatch => "gqa_batch",
             Self::ConvGate => "conv_gate",
             Self::Conv => "conv",
             Self::ConvStep => "conv_step",
@@ -1426,6 +2322,16 @@ impl Kernel {
             Self::PackedGather => "packed_gather",
             Self::PackedGemvPair => "packed_gemv_pair",
             Self::PackedSwigluGemv => "packed_swiglu_gemv",
+            Self::PackedGemvNf4 => "packed_gemv_nf4",
+            Self::PackedGatherNf4 => "packed_gather_nf4",
+            Self::PackedGemvPairNf4 => "packed_gemv_pair_nf4",
+            Self::PackedSwigluGemvNf4 => "packed_swiglu_gemv_nf4",
+            Self::PackedGemmNf4 => "packed_gemm_nf4",
+            Self::PackedGemvMtNf4 => "packed_gemv_mt_nf4",
+            Self::PackedGemmPairNf4 => "packed_gemm_pair_nf4",
+            Self::PackedGemvPairMtNf4 => "packed_gemv_pair_mt_nf4",
+            Self::PackedSwigluGemmNf4 => "packed_swiglu_gemm_nf4",
+            Self::PackedSwigluGemvMtNf4 => "packed_swiglu_gemv_mt_nf4",
             Self::AddNorm => "add_norm",
             Self::QkNormRope => "qk_norm_rope",
             Self::Argmax => "argmax",

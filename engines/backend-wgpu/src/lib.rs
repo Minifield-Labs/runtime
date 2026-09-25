@@ -101,6 +101,19 @@ fn params(words: &[u32]) -> Vec<u8> {
     bytes
 }
 
+/// Packed weight stream decode, inferred from the codes/scale widths in
+/// `check_packed_operands`. Both formats share one scales layout
+/// (`[rows, k/128]` f32) and differ only in code packing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PackedStreamFormat {
+    /// `minifield.ternary.v1`: four 2-bit codes per byte, `k/4` code bytes
+    /// per row, `w = (code - 1) * scale`.
+    TernaryV1,
+    /// `minifield.nf4.v1`: two 4-bit codebook indices per byte (low nibble
+    /// first), `k/2` code bytes per row, `w = NF4[code] * scale`.
+    Nf4V1,
+}
+
 /// An owned f32 device buffer. Its storage cannot be used by another backend
 /// owner or generation, and dropping it quarantines the pooled allocation
 /// until any in-flight submission that could reference it is complete.
@@ -962,10 +975,16 @@ impl WgpuBackend {
         }
     }
 
-    /// Validate packed ternary operands and return (weight rows, inner
-    /// width). `codes` must be U8 [rows, k/4]; `scales` f32 [rows, k/128]; k
-    /// is a multiple of 128.
-    fn check_packed_operands(&self, codes: &WgpuBuffer, scales: &WgpuBuffer) -> Result<(u64, u64)> {
+    /// Validate packed weight operands and return (rows, inner weight width,
+    /// stream format). `scales` is always `[rows, k/128]`, so `k` comes from
+    /// the scales width; the codes width then selects the decode
+    /// unambiguously: `k/4` bytes is `minifield.ternary.v1`, `k/2` bytes is
+    /// `minifield.nf4.v1`.
+    fn check_packed_operands(
+        &self,
+        codes: &WgpuBuffer,
+        scales: &WgpuBuffer,
+    ) -> Result<(u64, u64, PackedStreamFormat)> {
         self.check_u8_buffer(codes)?;
         self.check_f32_buffer(scales)?;
         let codes_shape = codes.descriptor.layout.shape();
@@ -976,25 +995,31 @@ impl WgpuBackend {
             ));
         }
         let code_width = codes_shape.dim(1)?;
-        if !code_width.is_multiple_of(32) {
-            return Err(ExecutorError::InvalidShape(
-                "packed code width is not a whole number of 128-weight groups",
-            ));
-        }
-        let inner = code_width
-            .checked_mul(4)
+        let inner = scales_shape
+            .dim(1)?
+            .checked_mul(128)
             .ok_or(ExecutorError::Overflow("packed inner width overflows u64"))?;
-        if scales_shape.dim(0)? != codes_shape.dim(0)? || scales_shape.dim(1)? != inner / 128 {
+        let format = if code_width == inner / 4 {
+            PackedStreamFormat::TernaryV1
+        } else if code_width == inner / 2 {
+            PackedStreamFormat::Nf4V1
+        } else {
             return Err(ExecutorError::InvalidShape(
-                "packed codes and scales disagree on rows or groups",
+                "packed code width is neither inner/4 (ternary) nor inner/2 (nf4)",
+            ));
+        };
+        if scales_shape.dim(0)? != codes_shape.dim(0)? {
+            return Err(ExecutorError::InvalidShape(
+                "packed codes and scales disagree on row count",
             ));
         }
-        Ok((codes_shape.dim(0)?, inner))
+        Ok((codes_shape.dim(0)?, inner, format))
     }
 
-    /// Packed ternary linear: input [m, k] times the dequantized weight
-    /// [n, k] carried as `minifield.ternary.v1` codes and scales. One
-    /// workgroup reduces each output element.
+    /// Packed linear: input [m, k] times the dequantized weight [n, k]
+    /// carried as packed codes and per-128-group scales (`minifield.ternary.v1`
+    /// or `minifield.nf4.v1`, inferred from the codes width). One workgroup
+    /// reduces each output element.
     pub fn packed_linear(
         &self,
         output: &mut WgpuBuffer,
@@ -1004,7 +1029,7 @@ impl WgpuBackend {
     ) -> Result<()> {
         self.check_operation(OperationKind::PackedLinear)?;
         self.check_f32_buffer(input)?;
-        let (output_width, inner) = self.check_packed_operands(codes, scales)?;
+        let (output_width, inner, format) = self.check_packed_operands(codes, scales)?;
         let input_shape = input.descriptor.layout.shape();
         if input_shape.rank() != 2 {
             return Err(ExecutorError::InvalidShape(
@@ -1040,8 +1065,53 @@ impl WgpuBackend {
         // `x4` rebinds the activation as vec4 for 128-bit loads when the inner
         // dimension is 4-aligned; the kernel flag falls back to scalar reads.
         let vec_ok = u32::from(inner % 4 == 0);
+        // Multi-token tiles amortize each nibble decode across 8 input rows;
+        // m == 1 keeps the single-token kernel.
+        if format == PackedStreamFormat::Nf4V1 && rows >= 32 {
+            let columns = output_width.div_ceil(32);
+            let groups = rows
+                .div_ceil(32)
+                .checked_mul(columns)
+                .ok_or(ExecutorError::Overflow("NF4 prefill grid overflows u64"))?;
+            return self.device.dispatch(
+                Kernel::PackedGemmNf4,
+                &[&destination, &x, &c, &s, &x],
+                &params(&[
+                    param32(rows)?,
+                    param32(output_width)?,
+                    param32(inner)?,
+                    param32(columns)?,
+                ]),
+                flat_grid(groups)?,
+            );
+        }
+        if format == PackedStreamFormat::Nf4V1 && rows > 1 {
+            let m_tiles = rows.div_ceil(8);
+            let mt_workgroups = m_tiles.checked_mul(tiles).ok_or(ExecutorError::Overflow(
+                "packed linear workgroup count overflows u64",
+            ))?;
+            return self.device.dispatch(
+                Kernel::PackedGemvMtNf4,
+                &[&destination, &x, &c, &s, &x],
+                &params(&[
+                    param32(output_width)?,
+                    param32(inner)?,
+                    param32(lanes)?,
+                    param32(tiles)?,
+                    param32(rows)?,
+                    param32(m_tiles)?,
+                    vec_ok,
+                    0,
+                ]),
+                flat_grid(mt_workgroups)?,
+            );
+        }
+        let kernel = match format {
+            PackedStreamFormat::TernaryV1 => Kernel::PackedGemv,
+            PackedStreamFormat::Nf4V1 => Kernel::PackedGemvNf4,
+        };
         self.device.dispatch(
-            Kernel::PackedGemv,
+            kernel,
             &[&destination, &x, &c, &s, &x],
             &params(&[
                 param32(output_width)?,
@@ -1057,8 +1127,8 @@ impl WgpuBackend {
         )
     }
 
-    /// Packed ternary gather: dequantize the selected `minifield.ternary.v1`
-    /// weight rows into an f32 [ids, k] output.
+    /// Packed gather: dequantize the selected weight rows (ternary or NF4,
+    /// inferred from the codes width) into an f32 [ids, k] output.
     #[allow(clippy::needless_pass_by_value)]
     pub fn packed_gather_rows(
         &self,
@@ -1068,7 +1138,7 @@ impl WgpuBackend {
         ids: TokenIds<'_, Self>,
     ) -> Result<()> {
         self.check_operation(OperationKind::PackedGatherRows)?;
-        let (rows, inner) = self.check_packed_operands(codes, scales)?;
+        let (rows, inner, format) = self.check_packed_operands(codes, scales)?;
         let (id_buffer, id_count, staged) = self.stage_token_ids(&ids, rows)?;
         let output_shape = Shape::new(&[id_count, inner])?;
         self.check_output_shape(output, output_shape)?;
@@ -1081,8 +1151,12 @@ impl WgpuBackend {
         let c = codes.wgpu_buffer()?.clone();
         let s = scales.wgpu_buffer()?.clone();
         let destination = output.wgpu_buffer()?.clone();
+        let kernel = match format {
+            PackedStreamFormat::TernaryV1 => Kernel::PackedGather,
+            PackedStreamFormat::Nf4V1 => Kernel::PackedGatherNf4,
+        };
         let result = self.device.dispatch(
-            Kernel::PackedGather,
+            kernel,
             &[&destination, &id_buffer, &c, &s],
             &params(&[
                 param32(id_count)?,
@@ -1233,6 +1307,7 @@ impl WgpuBackend {
     /// computes both output elements, halving dispatches for projection pairs
     /// that share an activation (K/V, gate/up).
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_lines)]
     pub fn packed_linear_pair(
         &self,
         out_a: &mut WgpuBuffer,
@@ -1252,7 +1327,8 @@ impl WgpuBackend {
                 "packed linear pair requires equal weight shapes",
             ));
         }
-        let (output_width, inner) = self.check_packed_operands(codes_a, scales_a)?;
+        let (output_width, inner, format) = self.check_packed_operands(codes_a, scales_a)?;
+        // Equal code and scale widths imply the same packed stream format.
         self.check_packed_operands(codes_b, scales_b)?;
         let input_shape = input.descriptor.layout.shape();
         if input_shape.rank() != 2 {
@@ -1294,8 +1370,51 @@ impl WgpuBackend {
         // `x4` rebinds the activation as vec4 for 128-bit loads when the inner
         // dimension is 4-aligned; the kernel flag falls back to scalar reads.
         let vec_ok = u32::from(inner % 4 == 0);
+        if format == PackedStreamFormat::Nf4V1 && rows >= 32 {
+            let columns = output_width.div_ceil(32);
+            let groups = rows
+                .div_ceil(32)
+                .checked_mul(columns)
+                .ok_or(ExecutorError::Overflow("NF4 prefill grid overflows u64"))?;
+            return self.device.dispatch(
+                Kernel::PackedGemmPairNf4,
+                &[&da, &db, &x, &ca, &sa, &cb, &sb, &x],
+                &params(&[
+                    param32(rows)?,
+                    param32(output_width)?,
+                    param32(inner)?,
+                    param32(columns)?,
+                ]),
+                flat_grid(groups)?,
+            );
+        }
+        if format == PackedStreamFormat::Nf4V1 && rows > 1 {
+            let m_tiles = rows.div_ceil(8);
+            let mt_workgroups = m_tiles.checked_mul(tiles).ok_or(ExecutorError::Overflow(
+                "packed linear pair workgroup count overflows u64",
+            ))?;
+            return self.device.dispatch(
+                Kernel::PackedGemvPairMtNf4,
+                &[&da, &db, &x, &ca, &sa, &cb, &sb, &x],
+                &params(&[
+                    param32(output_width)?,
+                    param32(inner)?,
+                    param32(lanes)?,
+                    param32(tiles)?,
+                    param32(rows)?,
+                    param32(m_tiles)?,
+                    vec_ok,
+                    0,
+                ]),
+                flat_grid(mt_workgroups)?,
+            );
+        }
+        let kernel = match format {
+            PackedStreamFormat::TernaryV1 => Kernel::PackedGemvPair,
+            PackedStreamFormat::Nf4V1 => Kernel::PackedGemvPairNf4,
+        };
         self.device.dispatch(
-            Kernel::PackedGemvPair,
+            kernel,
             &[&da, &db, &x, &ca, &sa, &cb, &sb, &x],
             &params(&[
                 param32(output_width)?,
@@ -1311,9 +1430,9 @@ impl WgpuBackend {
         )
     }
 
-    /// Packed ternary linear over an on-the-fly `SiLU(gate) * up` activation:
-    /// the down projection consumes the activation without a materialized
-    /// intermediate tensor.
+    /// Packed linear over an on-the-fly `SiLU(gate) * up` activation (ternary
+    /// or NF4, inferred from the codes width): the down projection consumes
+    /// the activation without a materialized intermediate tensor.
     pub fn packed_swiglu_linear(
         &self,
         output: &mut WgpuBuffer,
@@ -1325,7 +1444,7 @@ impl WgpuBackend {
         self.check_operation(OperationKind::PackedSwigluLinear)?;
         self.check_f32_buffer(gate)?;
         self.check_f32_buffer(up)?;
-        let (output_width, inner) = self.check_packed_operands(codes, scales)?;
+        let (output_width, inner, format) = self.check_packed_operands(codes, scales)?;
         let gate_shape = gate.descriptor.layout.shape();
         if gate_shape.rank() != 2 || up.descriptor.layout.shape() != gate_shape {
             return Err(ExecutorError::InvalidShape(
@@ -1360,8 +1479,51 @@ impl WgpuBackend {
         // `gate4`/`up4` rebind the operands as vec4 when the inner dimension is
         // 4-aligned; the kernel flag falls back to scalar reads.
         let vec_ok = u32::from(inner % 4 == 0);
+        if format == PackedStreamFormat::Nf4V1 && rows >= 32 {
+            let columns = output_width.div_ceil(32);
+            let groups = rows
+                .div_ceil(32)
+                .checked_mul(columns)
+                .ok_or(ExecutorError::Overflow("NF4 prefill grid overflows u64"))?;
+            return self.device.dispatch(
+                Kernel::PackedSwigluGemmNf4,
+                &[&destination, &g, &u, &c, &s, &g, &u],
+                &params(&[
+                    param32(rows)?,
+                    param32(output_width)?,
+                    param32(inner)?,
+                    param32(columns)?,
+                ]),
+                flat_grid(groups)?,
+            );
+        }
+        if format == PackedStreamFormat::Nf4V1 && rows > 1 {
+            let m_tiles = rows.div_ceil(8);
+            let mt_workgroups = m_tiles.checked_mul(tiles).ok_or(ExecutorError::Overflow(
+                "packed SwiGLU workgroup count overflows u64",
+            ))?;
+            return self.device.dispatch(
+                Kernel::PackedSwigluGemvMtNf4,
+                &[&destination, &g, &u, &c, &s, &g, &u],
+                &params(&[
+                    param32(output_width)?,
+                    param32(inner)?,
+                    param32(lanes)?,
+                    param32(tiles)?,
+                    param32(rows)?,
+                    param32(m_tiles)?,
+                    vec_ok,
+                    0,
+                ]),
+                flat_grid(mt_workgroups)?,
+            );
+        }
+        let kernel = match format {
+            PackedStreamFormat::TernaryV1 => Kernel::PackedSwigluGemv,
+            PackedStreamFormat::Nf4V1 => Kernel::PackedSwigluGemvNf4,
+        };
         self.device.dispatch(
-            Kernel::PackedSwigluGemv,
+            kernel,
             &[&destination, &g, &u, &c, &s, &g, &u],
             &params(&[
                 param32(output_width)?,
@@ -1820,23 +1982,21 @@ impl WgpuBackend {
             return Err(ExecutorError::BackendFailure("GQA scale is non-finite"));
         }
 
-        // Score scratch: one row per query head, wide enough for the largest
-        // visible length this batch.
-        let scratch_elems = query_heads
-            .checked_mul(new_cache_len)
-            .ok_or(ExecutorError::Overflow("GQA scratch size overflows u64"))?;
-        let scores = self.device.alloc_storage(
-            scratch_elems
-                .checked_mul(4)
-                .ok_or(ExecutorError::Overflow("GQA scratch bytes overflow u64"))?,
-        )?;
         let q = query.wgpu_buffer()?.clone();
         let k = key.wgpu_buffer()?.clone();
         let v = value.wgpu_buffer()?.clone();
         let kc = key_cache.wgpu_buffer()?.clone();
         let vc = value_cache.wgpu_buffer()?.clone();
         let destination = output.wgpu_buffer()?.clone();
-        for token in 0..tokens {
+        if tokens == 1 {
+            // Score scratch: one row per query head, wide enough for the
+            // visible length this token sees.
+            let scores = self.device.alloc_storage(
+                query_heads
+                    .checked_mul(new_cache_len)
+                    .and_then(|e| e.checked_mul(4))
+                    .ok_or(ExecutorError::Overflow("GQA scratch bytes overflow u64"))?,
+            )?;
             self.device.dispatch(
                 Kernel::Gqa,
                 &[&q, &k, &v, &kc, &vc, &scores.buffer, &destination],
@@ -1846,7 +2006,7 @@ impl WgpuBackend {
                     param32(kv_width)?,
                     param32(query_width)?,
                     param32(*cache_len)?,
-                    param32(token)?,
+                    param32(0)?,
                     param32(new_cache_len)?,
                     scale.to_bits(),
                 ]),
@@ -1858,8 +2018,51 @@ impl WgpuBackend {
                     1,
                 ),
             )?;
+            self.device.defer_free(scores);
+        } else {
+            // Batched path: one dispatch covers a block of tokens, one score
+            // row per (head, token) pair. The block caps the scratch at
+            // ~64 MiB so very long prompts dispatch a few blocks instead of
+            // one huge temporary.
+            let budget = 16 * 1024 * 1024_u64; // score elements
+            let block = (budget / (query_heads * new_cache_len)).clamp(1, tokens);
+            let scores = self.device.alloc_storage(
+                block
+                    .checked_mul(query_heads)
+                    .and_then(|e| e.checked_mul(new_cache_len))
+                    .and_then(|e| e.checked_mul(4))
+                    .ok_or(ExecutorError::Overflow("GQA scratch bytes overflow u64"))?,
+            )?;
+            let mut base = 0_u64;
+            while base < tokens {
+                let block_tokens = (tokens - base).min(block);
+                self.device.dispatch(
+                    Kernel::GqaBatch,
+                    &[&q, &k, &v, &kc, &vc, &scores.buffer, &destination],
+                    &params(&[
+                        param32(group_size)?,
+                        param32(head_dim)?,
+                        param32(kv_width)?,
+                        param32(query_width)?,
+                        param32(*cache_len)?,
+                        0,
+                        param32(new_cache_len)?,
+                        scale.to_bits(),
+                        param32(query_heads)?,
+                        param32(block_tokens)?,
+                        param32(base)?,
+                        0,
+                    ]),
+                    flat_grid(
+                        block_tokens
+                            .checked_mul(query_heads)
+                            .ok_or(ExecutorError::Overflow("GQA batch grid overflows u64"))?,
+                    )?,
+                )?;
+                base += block_tokens;
+            }
+            self.device.defer_free(scores);
         }
-        self.device.defer_free(scores);
         // Append the new K/V rows to the caches inside the same batch. The GQA
         // kernel reads appended rows from k/v, not the cache tail, so ordering
         // of these copies is unobservable.

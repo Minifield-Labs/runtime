@@ -14,7 +14,7 @@
 
 use minifield_backend_wgpu::{WgpuBackend, WgpuBuffer};
 use minifield_engine_api::{
-    AllocationClass, CompletionPoll, InferenceCompletion, ResourceLimits, Shape,
+    AllocationClass, CompletionPoll, GqaSpec, InferenceCompletion, ResourceLimits, Shape,
 };
 
 fn gpu() -> Option<WgpuBackend> {
@@ -64,10 +64,15 @@ fn bench(backend: &WgpuBackend, label: &str, reps: u32, mut record: impl FnMut()
 }
 
 fn packed(backend: &mut WgpuBackend, k: u64, n: u64) -> (WgpuBuffer, WgpuBuffer) {
+    packed_fmt(backend, k, n, false)
+}
+
+fn packed_fmt(backend: &mut WgpuBackend, k: u64, n: u64, nf4: bool) -> (WgpuBuffer, WgpuBuffer) {
+    let w = if nf4 { k / 2 } else { k / 4 };
     let codes = backend
         .upload_u8_classified(
-            Shape::new(&[n, k / 4]).expect("codes shape"),
-            &vec![0xA5u8; (n * k / 4) as usize],
+            Shape::new(&[n, w]).expect("codes shape"),
+            &vec![0xA5u8; (n * w) as usize],
             AllocationClass::Scratch,
         )
         .expect("codes");
@@ -222,4 +227,152 @@ fn kernel_bench_lfm25_shapes() {
     }
 
     eprintln!("bench done");
+}
+
+/// Prefill probe: same packed matmul shapes the classifier runs at m=346.
+#[test]
+fn packed_prefill_bench() {
+    let Some(backend) = gpu() else {
+        eprintln!("no wgpu adapter; skipping");
+        return;
+    };
+    let mut backend = backend;
+
+    for (m, k, n, reps, nf4) in [
+        (346_u64, 1024_u64, 1024_u64, 30_u32, false),
+        (346, 1024, 3072, 30, false),
+        (346, 2560, 1024, 30, false),
+        (1, 1024, 1024, 200, false),
+        (346, 1024, 1024, 30, true),
+        (346, 1024, 3072, 30, true),
+        (346, 2560, 1024, 30, true),
+    ] {
+        let x = backend
+            .upload_f32(
+                Shape::new(&[m, k]).expect("x shape"),
+                &vec![0.25f32; (m * k) as usize],
+            )
+            .expect("x");
+        let (codes, scales) = packed_fmt(&mut backend, k, n, nf4);
+        let mut out = backend
+            .allocate_f32_classified(Shape::new(&[m, n]).expect("out"), AllocationClass::Scratch)
+            .expect("out");
+        bench(
+            &backend,
+            &format!("packed_linear m={m} k={k} n={n} nf4={nf4}"),
+            reps,
+            || {
+                backend
+                    .packed_linear(&mut out, &x, &codes, &scales)
+                    .expect("op");
+            },
+        );
+    }
+    eprintln!("prefill bench done");
+}
+
+/// Dense GEMM reference at prefill width for the same projection shape.
+#[test]
+fn dense_prefill_bench() {
+    let Some(backend) = gpu() else {
+        eprintln!("no wgpu adapter; skipping");
+        return;
+    };
+    let mut backend = backend;
+    for (m, k, n, reps) in [
+        (346_u64, 1024_u64, 1024_u64, 30_u32),
+        (346, 1024, 3072, 15),
+        (346, 2560, 1024, 15),
+    ] {
+        let x = backend
+            .upload_f32(
+                Shape::new(&[m, k]).expect("x shape"),
+                &vec![0.25f32; (m * k) as usize],
+            )
+            .expect("x");
+        let w = dense_w(&mut backend, k, n);
+        let mut out = backend
+            .allocate_f32_classified(Shape::new(&[m, n]).expect("out"), AllocationClass::Scratch)
+            .expect("out");
+        bench(
+            &backend,
+            &format!("dense linear m={m} k={k} n={n}"),
+            reps,
+            || {
+                backend.linear(&mut out, &x, &w).expect("op");
+            },
+        );
+    }
+    eprintln!("dense bench done");
+}
+
+/// Isolate attention and FFN costs at the polyomino classifier's prefill shape.
+#[test]
+fn classifier_prefill_components() {
+    let Some(mut backend) = gpu() else {
+        eprintln!("no wgpu adapter; skipping");
+        return;
+    };
+    let m = 346;
+    let query = backend
+        .upload_f32(
+            Shape::new(&[m, 1024]).expect("q"),
+            &vec![0.25; (m * 1024) as usize],
+        )
+        .expect("q upload");
+    let key = backend
+        .upload_f32(
+            Shape::new(&[m, 512]).expect("k"),
+            &vec![0.125; (m * 512) as usize],
+        )
+        .expect("k upload");
+    let value = backend
+        .upload_f32(
+            Shape::new(&[m, 512]).expect("v"),
+            &vec![0.5; (m * 512) as usize],
+        )
+        .expect("v upload");
+    let mut kc = backend
+        .allocate_f32(Shape::new(&[m, 512]).expect("kc"))
+        .expect("kc alloc");
+    let mut vc = backend
+        .allocate_f32(Shape::new(&[m, 512]).expect("vc"))
+        .expect("vc alloc");
+    let mut output = backend
+        .allocate_f32(Shape::new(&[m, 1024]).expect("output"))
+        .expect("output alloc");
+    let spec = GqaSpec::new(16, 8, 64).expect("heads");
+    bench(&backend, "GQA m=346 q=16 kv=8 dim=64", 6, || {
+        backend
+            .causal_gqa(
+                &mut output,
+                &query,
+                &key,
+                &value,
+                &mut kc,
+                &mut vc,
+                &mut 0,
+                spec,
+            )
+            .expect("gqa");
+    });
+    let (ca, sa) = packed_fmt(&mut backend, 1024, 2560, true);
+    let (cb, sb) = packed_fmt(&mut backend, 1024, 2560, true);
+    let mut gate = backend
+        .allocate_f32(Shape::new(&[m, 2560]).expect("gate"))
+        .expect("gate alloc");
+    let mut up = backend
+        .allocate_f32(Shape::new(&[m, 2560]).expect("up"))
+        .expect("up alloc");
+    bench(&backend, "NF4 FFN pair m=346 k=1024 n=2560", 6, || {
+        backend
+            .packed_linear_pair(&mut gate, &mut up, &query, &ca, &sa, &cb, &sb)
+            .expect("ffn pair");
+    });
+    let (cd, sd) = packed_fmt(&mut backend, 2560, 1024, true);
+    bench(&backend, "NF4 FFN down m=346 k=2560 n=1024", 6, || {
+        backend
+            .packed_swiglu_linear(&mut output, &gate, &up, &cd, &sd)
+            .expect("ffn down");
+    });
 }

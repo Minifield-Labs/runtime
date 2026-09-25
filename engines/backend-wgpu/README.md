@@ -1,8 +1,8 @@
 # backend-wgpu
 
 `InferenceOps` implementation over wgpu 30 for the portable executor. F32 plus
-the `minifield.ternary.v1` packed path; it runs the full LFM2.5 decode loop on
-device, including the greedy sample.
+the `minifield.ternary.v1` and `minifield.nf4.v1` packed paths; it runs the
+full LFM2.5 decode loop on device, including the greedy sample.
 
 ## What it does
 
@@ -32,8 +32,14 @@ loads and adaptive lanes-per-row, 16x16 tiled GEMM (m > 1), row/head RMS norm,
 host-table split-half RoPE, per-token causal GQA with recorded cache appends,
 gated short convolution (single-dispatch `conv_step` for decode; staged
 history assembly for multi-token prefill), SwiGLU, packed ternary GEMV /
-pair / SwiGLU / gather, fused add-RMS-norm, fused QK-norm+RoPE, and a
-two-stage argmax for wide rows. `argmax_masked` adds a read-only u32
+pair / SwiGLU / gather, the same four packed ops for `minifield.nf4.v1`
+plus small-batch variants that decode each codes word once per 8-row tile.
+NF4 prefill with at least 32 rows uses `nf4_prefill.wgsl`: a 32x32 output
+tile shares decoded weights and activations, with a 2x2 register fragment
+per invocation. Linear, paired linear, and fused SwiGLU share the tiled body.
+The attention path includes
+a batched causal GQA covering a block of prefill tokens in one dispatch,
+fused add-RMS-norm, fused QK-norm+RoPE, and a two-stage argmax for wide rows. `argmax_masked` adds a read-only u32
 candidate bitset binding (LSB-first over `ceil(width / 64)` u64 words on the
 host) gated by a params flag: masked-out elements are skipped before the
 finiteness check, so their NaN or infinity cannot poison the row, and a fully

@@ -1089,7 +1089,7 @@ impl CpuBackend {
         ids: TokenIds<'_, Self>,
     ) -> Result<()> {
         self.check_operation(OperationKind::PackedGatherRows)?;
-        let (rows, inner) = self.check_packed_operands(codes, scales)?;
+        let (rows, inner, format) = self.check_packed_operands(codes, scales)?;
         self.check_f32_buffer(output)?;
         let ids = self.resolve_token_ids(&ids)?;
         let output_shape = Shape::new(&[
@@ -1102,7 +1102,7 @@ impl CpuBackend {
                 "packed gather output layout differs from required shape",
             ));
         }
-        let code_width = inner / 4;
+        let code_width = inner / format.weights_per_byte();
         for (destination_row, id) in ids.iter().copied().enumerate() {
             let Some(id) = id else {
                 output.values[destination_row * inner..(destination_row + 1) * inner]
@@ -1136,10 +1136,25 @@ impl CpuBackend {
             for index in 0..inner {
                 let group = index / 128;
                 let within = index % 128;
-                let code =
-                    (codes.bytes[code_start + group * 32 + within / 4] >> (2 * (within % 4))) & 0x3;
+                let weight = match format {
+                    minifield_kernels_simd::PackedWeightFormat::TernaryV1 => {
+                        let code = (codes.bytes[code_start + group * 32 + within / 4]
+                            >> (2 * (within % 4)))
+                            & 0x3;
+                        f32::from(code) - 1.0
+                    }
+                    minifield_kernels_simd::PackedWeightFormat::Nf4V1 => {
+                        let byte = codes.bytes[code_start + group * 64 + within / 2];
+                        let nibble = if within % 2 == 0 {
+                            byte & 0x0F
+                        } else {
+                            byte >> 4
+                        };
+                        minifield_kernels_simd::NF4_LEVELS[usize::from(nibble)]
+                    }
+                };
                 output.values[destination_start + index] =
-                    (f32::from(code) - 1.0) * scales.values[scale_start + group];
+                    weight * scales.values[scale_start + group];
             }
         }
         Ok(())
@@ -1156,7 +1171,7 @@ impl CpuBackend {
     ) -> Result<()> {
         self.check_operation(OperationKind::PackedLinear)?;
         self.check_f32_buffer(input)?;
-        let (output_width, inner) = self.check_packed_operands(codes, scales)?;
+        let (output_width, inner, format) = self.check_packed_operands(codes, scales)?;
         let input_shape = input.descriptor.layout.shape();
         if input_shape.rank() != 2 {
             return Err(ExecutorError::InvalidShape(
@@ -1179,8 +1194,16 @@ impl CpuBackend {
                 .map_err(|_| ExecutorError::Overflow("packed linear width overflows u64"))?,
         ])?;
         self.check_output_shape(output, output_shape)?;
-        let code_width = inner / 4;
+        let code_width = inner / format.weights_per_byte();
         let groups = inner / 128;
+        let row_dot = match format {
+            minifield_kernels_simd::PackedWeightFormat::TernaryV1 => {
+                minifield_kernels_simd::ternary_row_dot
+            }
+            minifield_kernels_simd::PackedWeightFormat::Nf4V1 => {
+                minifield_kernels_simd::nf4_row_dot
+            }
+        };
         for row in 0..rows {
             for column in 0..output_width {
                 let code_start = column
@@ -1196,7 +1219,7 @@ impl CpuBackend {
                 ))?;
                 // SIMD group dot (NEON on aarch64, scalar elsewhere) computes
                 // the same products; only f32 accumulation order differs.
-                let accumulator = minifield_kernels_simd::ternary_row_dot(
+                let accumulator = row_dot(
                     &codes.bytes[code_start..code_start + code_width],
                     &scales.values[scale_start..scale_start + groups],
                     &input.values[input_start..input_start + inner],
@@ -1212,14 +1235,16 @@ impl CpuBackend {
         Ok(())
     }
 
-    /// Validate packed ternary operands and return (rows, inner weight width).
-    /// `codes` must be U8 [rows, k/4]; `scales` must be f32 [rows, k/128]; k is a
-    /// multiple of 128.
+    /// Validate packed weight operands and return (rows, inner weight width,
+    /// stream format). `scales` must be f32 [rows, k/128] for every packed
+    /// format, so `k` comes from the scales width; the codes width then picks
+    /// the decode unambiguously: `k/4` bytes is `minifield.ternary.v1`, `k/2`
+    /// bytes is `minifield.nf4.v1`.
     fn check_packed_operands(
         &self,
         codes: &CpuBuffer,
         scales: &CpuBuffer,
-    ) -> Result<(usize, usize)> {
+    ) -> Result<(usize, usize, minifield_kernels_simd::PackedWeightFormat)> {
         self.check_u8_buffer(codes)?;
         self.check_f32_buffer(scales)?;
         let codes_shape = codes.descriptor.layout.shape();
@@ -1233,22 +1258,26 @@ impl CpuBackend {
             .map_err(|_| ExecutorError::Overflow("packed row count exceeds usize"))?;
         let code_width = usize::try_from(codes_shape.dim(1)?)
             .map_err(|_| ExecutorError::Overflow("packed code width exceeds usize"))?;
-        if code_width % 32 != 0 {
-            return Err(ExecutorError::InvalidShape(
-                "packed code width is not a whole number of 128-weight groups",
-            ));
-        }
-        let inner = code_width.checked_mul(4).ok_or(ExecutorError::Overflow(
-            "packed inner width overflows usize",
-        ))?;
         let groups = usize::try_from(scales_shape.dim(1)?)
             .map_err(|_| ExecutorError::Overflow("packed scale width exceeds usize"))?;
-        if scales_shape.dim(0)? != codes_shape.dim(0)? || groups != inner / 128 {
+        let inner = groups.checked_mul(128).ok_or(ExecutorError::Overflow(
+            "packed inner width overflows usize",
+        ))?;
+        let format = if code_width == inner / 4 {
+            minifield_kernels_simd::PackedWeightFormat::TernaryV1
+        } else if code_width == inner / 2 {
+            minifield_kernels_simd::PackedWeightFormat::Nf4V1
+        } else {
             return Err(ExecutorError::InvalidShape(
-                "packed codes and scales disagree on rows or groups",
+                "packed code width is neither inner/4 (ternary) nor inner/2 (nf4)",
+            ));
+        };
+        if scales_shape.dim(0)? != codes_shape.dim(0)? {
+            return Err(ExecutorError::InvalidShape(
+                "packed codes and scales disagree on row count",
             ));
         }
-        Ok((rows, inner))
+        Ok((rows, inner, format))
     }
 
     /// Row RMS norm over a [rows, width] input and a [width] weight.
@@ -1953,7 +1982,7 @@ impl CpuBackend {
         self.check_operation(OperationKind::PackedSwigluLinear)?;
         self.check_f32_buffer(gate)?;
         self.check_f32_buffer(up)?;
-        let (output_width, inner) = self.check_packed_operands(codes, scales)?;
+        let (output_width, inner, format) = self.check_packed_operands(codes, scales)?;
         let gate_shape = gate.descriptor.layout.shape();
         if gate_shape.rank() != 2 || up.descriptor.layout.shape() != gate_shape {
             return Err(ExecutorError::InvalidShape(
@@ -1977,8 +2006,16 @@ impl CpuBackend {
                     .map_err(|_| ExecutorError::Overflow("packed SwiGLU width overflows u64"))?,
             ])?,
         )?;
-        let code_width = inner / 4;
+        let code_width = inner / format.weights_per_byte();
         let groups = inner / 128;
+        let row_dot = match format {
+            minifield_kernels_simd::PackedWeightFormat::TernaryV1 => {
+                minifield_kernels_simd::ternary_row_dot
+            }
+            minifield_kernels_simd::PackedWeightFormat::Nf4V1 => {
+                minifield_kernels_simd::nf4_row_dot
+            }
+        };
         let mut activated = self.stage_f32(inner)?;
         activated.resize(inner, 0.0);
         for row in 0..rows {
@@ -2005,7 +2042,7 @@ impl CpuBackend {
                 let scale_start = column.checked_mul(groups).ok_or(ExecutorError::Overflow(
                     "packed scale offset overflows usize",
                 ))?;
-                let accumulator = minifield_kernels_simd::ternary_row_dot(
+                let accumulator = row_dot(
                     &codes.bytes[code_start..code_start + code_width],
                     &scales.values[scale_start..scale_start + groups],
                     &activated,

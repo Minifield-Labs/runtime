@@ -80,6 +80,105 @@ fn scalar_group_dot(codes: &[u8; 32], input: &[f32; 128]) -> f32 {
     acc
 }
 
+/// Packed weight stream encoding inferred from the codes/scales stream
+/// widths: `scales` always carries one f32 per 128 weights, so the codes
+/// width picks the decode unambiguously.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PackedWeightFormat {
+    /// `minifield.ternary.v1`: four 2-bit codes per byte,
+    /// `w = (code - 1) * scale`.
+    TernaryV1,
+    /// `minifield.nf4.v1`: two 4-bit NF4 level indices per byte (low nibble
+    /// first), `w = NF4[code] * scale`.
+    Nf4V1,
+}
+
+impl PackedWeightFormat {
+    /// Weights decoded per codes byte: four 2-bit ternary codes or two 4-bit
+    /// NF4 codes.
+    #[must_use]
+    pub const fn weights_per_byte(self) -> usize {
+        match self {
+            Self::TernaryV1 => 4,
+            Self::Nf4V1 => 2,
+        }
+    }
+}
+
+/// NF4 codebook: decode `w = NF4_LEVELS[code] * group_scale`. Sorted 16-entry
+/// normal-float table for zero-mean data (bitsandbytes-compatible levels).
+pub const NF4_LEVELS: [f32; 16] = [
+    -1.0,
+    -0.696_192_8,
+    -0.525_073_05,
+    -0.394_917_5,
+    -0.284_441_38,
+    -0.184_773_43,
+    -0.091_050_036,
+    0.0,
+    0.079_580_3,
+    0.160_930_2,
+    0.246_112_3,
+    0.337_915_24,
+    0.440_709_83,
+    0.562_617,
+    0.722_956_84,
+    1.0,
+];
+
+/// Dot product of one packed NF4 weight row against an f32 activation row.
+///
+/// Computes `Σ_g scale_g · Σ_j∈g NF4[nib_j] · x_j` where `codes` is the row's
+/// `K/2` byte stream (128 weights per 64-byte group, weight `j` at byte
+/// `j/2`, low nibble for even `j`), `scales` is the row's `K/128` group
+/// scales, and `input` is the `K` f32 activations. `K` must be a multiple of
+/// 128.
+///
+/// # Panics
+///
+/// Panics if `input` isn't a multiple of 128 wide or `codes`/`scales` don't
+/// match the derived widths. Callers validate operand shapes first.
+#[must_use]
+pub fn nf4_row_dot(codes: &[u8], scales: &[f32], input: &[f32]) -> f32 {
+    assert!(
+        input.len().is_multiple_of(128),
+        "nf4 row input width must be a multiple of 128"
+    );
+    assert_eq!(
+        codes.len(),
+        input.len() / 2,
+        "nf4 row code bytes must be input width / 2"
+    );
+    assert_eq!(
+        scales.len(),
+        input.len() / 128,
+        "nf4 row scales must be input width / 128"
+    );
+    let mut row = 0.0_f32;
+    for (group, (codes, input)) in codes
+        .as_chunks::<64>()
+        .0
+        .iter()
+        .zip(input.as_chunks::<128>().0.iter())
+        .enumerate()
+    {
+        row += scales[group] * nf4_group_dot(codes, input);
+    }
+    row
+}
+
+/// Unscaled NF4 dot of one 128-weight group: `Σ_j NF4[nib_j] · x_j`.
+fn nf4_group_dot(codes: &[u8; 64], input: &[f32; 128]) -> f32 {
+    // Deinterleave byte pairs so the compiler can keep two running
+    // accumulators; identical products, reordered accumulation only.
+    let (mut lo, mut hi) = (0.0_f32, 0.0_f32);
+    for (index, byte) in codes.iter().enumerate() {
+        lo += NF4_LEVELS[usize::from(byte & 0x0F)] * input[2 * index];
+        hi += NF4_LEVELS[usize::from(byte >> 4)] * input[2 * index + 1];
+    }
+    lo + hi
+}
+
 #[cfg(test)]
 #[allow(clippy::cast_precision_loss, clippy::expect_used, clippy::float_cmp)]
 mod tests {

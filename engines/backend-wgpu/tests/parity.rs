@@ -397,14 +397,32 @@ fn split_half_rotary_matches_cpu() {
 fn causal_gqa_matches_cpu_and_appends_cache() {
     let Some(mut backend) = gpu() else { return };
     let mut reference = cpu();
-    let spec = GqaSpec::new(4, 2, 8).expect("gqa spec");
-    let capacity = 8_u64;
-    let cache_shape = Shape::new(&[capacity, 16]).expect("cache shape");
-    let q_shape = Shape::new(&[3, 32]).expect("q shape");
-    let kv_shape = Shape::new(&[3, 16]).expect("kv shape");
-    let query = values(71, 96);
-    let key = values(73, 48);
-    let value = values(79, 48);
+    check_gqa(&mut backend, &mut reference, 3, 4, 2, 8, 1);
+    // 600 * 64 * 600 scores exceed the 16M scratch budget, exercising
+    // multiple blocks, followed by a batched append over an existing cache.
+    check_gqa(&mut backend, &mut reference, 600, 64, 32, 2, 2);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_gqa(
+    backend: &mut WgpuBackend,
+    reference: &mut CpuBackend,
+    tokens: u64,
+    qheads: u32,
+    kvheads: u32,
+    dim: u32,
+    append: u64,
+) {
+    let qw = u64::from(qheads * dim);
+    let kw = u64::from(kvheads * dim);
+    let spec = GqaSpec::new(qheads, kvheads, dim).expect("gqa spec");
+    let capacity = tokens + append;
+    let cache_shape = Shape::new(&[capacity, kw]).expect("cache shape");
+    let q_shape = Shape::new(&[tokens, qw]).expect("q shape");
+    let kv_shape = Shape::new(&[tokens, kw]).expect("kv shape");
+    let query = values(71, (tokens * qw) as usize);
+    let key = values(73, (tokens * kw) as usize);
+    let value = values(79, (tokens * kw) as usize);
     let gpu_q = backend.upload_f32(q_shape, &query).expect("gpu q");
     let gpu_k = backend.upload_f32(kv_shape, &key).expect("gpu k");
     let gpu_v = backend.upload_f32(kv_shape, &value).expect("gpu v");
@@ -452,16 +470,16 @@ fn causal_gqa_matches_cpu_and_appends_cache() {
         )
         .expect("cpu gqa");
     assert_eq!(gpu_len, cpu_len);
-    assert_close(&read(&backend, &gpu_out), cpu_out.as_slice(), 1e-4, 1e-4);
-    assert_close(&read(&backend, &gpu_kc), cpu_kc.as_slice(), 1e-6, 1e-6);
-    assert_close(&read(&backend, &gpu_vc), cpu_vc.as_slice(), 1e-6, 1e-6);
+    assert_close(&read(backend, &gpu_out), cpu_out.as_slice(), 1e-4, 1e-4);
+    assert_close(&read(backend, &gpu_kc), cpu_kc.as_slice(), 1e-6, 1e-6);
+    assert_close(&read(backend, &gpu_vc), cpu_vc.as_slice(), 1e-6, 1e-6);
 
     // A second decode token attends over the appended cache.
-    let q1 = Shape::new(&[1, 32]).expect("q1");
-    let kv1 = Shape::new(&[1, 16]).expect("kv1");
-    let query2 = values(83, 32);
-    let key2 = values(89, 16);
-    let value2 = values(97, 16);
+    let q1 = Shape::new(&[append, qw]).expect("q1");
+    let kv1 = Shape::new(&[append, kw]).expect("kv1");
+    let query2 = values(83, (append * qw) as usize);
+    let key2 = values(89, (append * kw) as usize);
+    let value2 = values(97, (append * kw) as usize);
     let gpu_q2 = backend.upload_f32(q1, &query2).expect("gpu q2");
     let gpu_k2 = backend.upload_f32(kv1, &key2).expect("gpu k2");
     let gpu_v2 = backend.upload_f32(kv1, &value2).expect("gpu v2");
@@ -495,8 +513,8 @@ fn causal_gqa_matches_cpu_and_appends_cache() {
         )
         .expect("cpu gqa 2");
     assert_eq!(gpu_len, cpu_len);
-    assert_close(&read(&backend, &gpu_out2), cpu_out2.as_slice(), 1e-4, 1e-4);
-    assert_close(&read(&backend, &gpu_kc), cpu_kc.as_slice(), 1e-6, 1e-6);
+    assert_close(&read(backend, &gpu_out2), cpu_out2.as_slice(), 1e-4, 1e-4);
+    assert_close(&read(backend, &gpu_kc), cpu_kc.as_slice(), 1e-6, 1e-6);
 }
 
 #[test]
@@ -587,6 +605,58 @@ fn pack_weights(weights: &[f32], rows: usize, k: usize) -> (Vec<u8>, Vec<f32>) {
     let mut scales = Vec::with_capacity(rows * k / 128);
     for chunk in weights.as_chunks::<128>().0 {
         let (group_codes, scale) = pack_group(chunk);
+        codes.extend_from_slice(&group_codes);
+        scales.push(scale);
+    }
+    (codes, scales)
+}
+
+/// NF4 codebook shared with `minifield_kernels_simd::NF4_LEVELS`; kept inline
+/// so this crate needs no extra dev-dependency.
+const NF4: [f32; 16] = [
+    -1.0,
+    -0.696_192_8,
+    -0.525_073_05,
+    -0.394_917_5,
+    -0.284_441_38,
+    -0.184_773_43,
+    -0.091_050_036,
+    0.0,
+    0.079_580_3,
+    0.160_930_2,
+    0.246_112_3,
+    0.337_915_24,
+    0.440_709_83,
+    0.562_617,
+    0.722_956_84,
+    1.0,
+];
+
+/// Pack one 128-weight group per `minifield.nf4.v1`: absmax scale, nearest
+/// NF4 codebook entry, two 4-bit indices per byte with the low nibble first.
+fn pack_group_nf4(row: &[f32]) -> ([u8; 64], f32) {
+    let scale = row.iter().fold(0.0_f32, |m, v| m.max(v.abs()));
+    let mut codes = [0_u8; 64];
+    for (j, w) in row.iter().enumerate() {
+        let v = if scale == 0.0 { 0.0 } else { w / scale };
+        let code = NF4
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| (*a - v).abs().total_cmp(&(*b - v).abs()))
+            .map(|(i, _)| i as u8)
+            .expect("nonempty codebook");
+        codes[j / 2] |= code << (4 * (j % 2));
+    }
+    (codes, scale)
+}
+
+/// Build the (codes, scales) NF4 streams for `rows` x `k` weights,
+/// `k % 128 == 0`.
+fn pack_weights_nf4(weights: &[f32], rows: usize, k: usize) -> (Vec<u8>, Vec<f32>) {
+    let mut codes = Vec::with_capacity(rows * k / 2);
+    let mut scales = Vec::with_capacity(rows * k / 128);
+    for chunk in weights.as_chunks::<128>().0 {
+        let (group_codes, scale) = pack_group_nf4(chunk);
         codes.extend_from_slice(&group_codes);
         scales.push(scale);
     }
@@ -1083,6 +1153,143 @@ fn packed_swiglu_linear_matches_cpu() {
             .expect("gpu packed swiglu linear");
         reference
             .packed_swiglu_linear(&mut cpu_out, &cpu_g, &cpu_u, &cpu_c, &cpu_s)
+            .expect("cpu packed swiglu linear");
+        assert_close(&read(&backend, &gpu_out), cpu_out.as_slice(), 1e-4, 1e-4);
+    }
+}
+
+/// `minifield.nf4.v1` packed streams take the same operand shapes apart from
+/// the codes width (`k/2` bytes), so one test exercises every packed op
+/// against the CPU baseline.
+#[test]
+fn packed_nf4_ops_match_cpu() {
+    let Some(mut backend) = gpu() else { return };
+    let mut reference = cpu();
+    // m > 8 exercises the multi-token kernel across multiple m-tiles plus a
+    // partial tile tail; m = 5 covers the single-tile tail guard.
+    for (m, n, k) in [
+        (1_u64, 37_u64, 256_u64),
+        (5, 37, 384),
+        (12, 37, 256),
+        (32, 37, 256),
+        (65, 37, 384),
+        (346, 37, 1024),
+    ] {
+        let input_shape = Shape::new(&[m, k]).expect("input shape");
+        let codes_shape = Shape::new(&[n, k / 2]).expect("codes shape");
+        let scales_shape = Shape::new(&[n, k / 128]).expect("scales shape");
+        let out_shape = Shape::new(&[m, n]).expect("out shape");
+        let input = values(41, (m * k) as usize);
+        let (codes, scales) =
+            pack_weights_nf4(&values(43, (n * k) as usize), n as usize, k as usize);
+
+        let gpu_in = backend.upload_f32(input_shape, &input).expect("gpu in");
+        let gpu_codes = backend
+            .upload_u8_classified(codes_shape, &codes, AllocationClass::Weight)
+            .expect("gpu codes");
+        let gpu_scales = backend
+            .upload_f32_classified(scales_shape, &scales, AllocationClass::Weight)
+            .expect("gpu scales");
+        let cpu_in = reference.upload_f32(input_shape, &input).expect("cpu in");
+        let cpu_codes = reference
+            .upload_u8_classified(codes_shape, &codes, AllocationClass::Weight)
+            .expect("cpu codes");
+        let cpu_scales = reference
+            .upload_f32_classified(scales_shape, &scales, AllocationClass::Weight)
+            .expect("cpu scales");
+
+        // packed_linear
+        let mut gpu_out = backend.allocate_f32(out_shape).expect("gpu out");
+        let mut cpu_out = reference.allocate_f32(out_shape).expect("cpu out");
+        backend
+            .packed_linear(&mut gpu_out, &gpu_in, &gpu_codes, &gpu_scales)
+            .expect("gpu packed linear");
+        reference
+            .packed_linear(&mut cpu_out, &cpu_in, &cpu_codes, &cpu_scales)
+            .expect("cpu packed linear");
+        assert_close(&read(&backend, &gpu_out), cpu_out.as_slice(), 1e-4, 1e-4);
+
+        // packed_gather_rows: dequantized products are exact, parity is bitwise.
+        let gather_shape = Shape::new(&[3, k]).expect("gather shape");
+        let mut gpu_gather = backend.allocate_f32(gather_shape).expect("gpu gather");
+        let mut cpu_gather = reference.allocate_f32(gather_shape).expect("cpu gather");
+        let ids = [0_u32, 17, n as u32 - 1];
+        backend
+            .packed_gather_rows(
+                &mut gpu_gather,
+                &gpu_codes,
+                &gpu_scales,
+                TokenIds::Host(&ids),
+            )
+            .expect("gpu packed gather");
+        reference
+            .packed_gather_rows(
+                &mut cpu_gather,
+                &cpu_codes,
+                &cpu_scales,
+                TokenIds::Host(&ids),
+            )
+            .expect("cpu packed gather");
+        assert_exact(&read(&backend, &gpu_gather), cpu_gather.as_slice());
+
+        // packed_linear_pair over a second NF4 weight set
+        let (codes_b, scales_b) =
+            pack_weights_nf4(&values(47, (n * k) as usize), n as usize, k as usize);
+        let gpu_cb = backend
+            .upload_u8_classified(codes_shape, &codes_b, AllocationClass::Weight)
+            .expect("gpu codes b");
+        let gpu_sb = backend
+            .upload_f32_classified(scales_shape, &scales_b, AllocationClass::Weight)
+            .expect("gpu scales b");
+        let cpu_cb = reference
+            .upload_u8_classified(codes_shape, &codes_b, AllocationClass::Weight)
+            .expect("cpu codes b");
+        let cpu_sb = reference
+            .upload_f32_classified(scales_shape, &scales_b, AllocationClass::Weight)
+            .expect("cpu scales b");
+        let mut gpu_a = backend.allocate_f32(out_shape).expect("gpu a");
+        let mut gpu_b = backend.allocate_f32(out_shape).expect("gpu b");
+        let mut cpu_a = reference.allocate_f32(out_shape).expect("cpu a");
+        let mut cpu_b = reference.allocate_f32(out_shape).expect("cpu b");
+        backend
+            .packed_linear_pair(
+                &mut gpu_a,
+                &mut gpu_b,
+                &gpu_in,
+                &gpu_codes,
+                &gpu_scales,
+                &gpu_cb,
+                &gpu_sb,
+            )
+            .expect("gpu packed pair");
+        reference
+            .packed_linear_pair(
+                &mut cpu_a,
+                &mut cpu_b,
+                &cpu_in,
+                &cpu_codes,
+                &cpu_scales,
+                &cpu_cb,
+                &cpu_sb,
+            )
+            .expect("cpu packed pair");
+        assert_close(&read(&backend, &gpu_a), cpu_a.as_slice(), 1e-4, 1e-4);
+        assert_close(&read(&backend, &gpu_b), cpu_b.as_slice(), 1e-4, 1e-4);
+
+        // packed_swiglu_linear
+        let gate = values(51, (m * k) as usize);
+        let up = values(53, (m * k) as usize);
+        let gpu_g = backend.upload_f32(input_shape, &gate).expect("gpu gate");
+        let gpu_u = backend.upload_f32(input_shape, &up).expect("gpu up");
+        let cpu_g = reference.upload_f32(input_shape, &gate).expect("cpu gate");
+        let cpu_u = reference.upload_f32(input_shape, &up).expect("cpu up");
+        let mut gpu_out = backend.allocate_f32(out_shape).expect("gpu out");
+        let mut cpu_out = reference.allocate_f32(out_shape).expect("cpu out");
+        backend
+            .packed_swiglu_linear(&mut gpu_out, &gpu_g, &gpu_u, &gpu_codes, &gpu_scales)
+            .expect("gpu packed swiglu linear");
+        reference
+            .packed_swiglu_linear(&mut cpu_out, &cpu_g, &cpu_u, &cpu_codes, &cpu_scales)
             .expect("cpu packed swiglu linear");
         assert_close(&read(&backend, &gpu_out), cpu_out.as_slice(), 1e-4, 1e-4);
     }

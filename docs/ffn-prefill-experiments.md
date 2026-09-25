@@ -573,3 +573,121 @@ tile in `packed_linear_pair_matches_cpu` and
 `packed_swiglu_linear_matches_cpu` (both now include m>=96 ternary
 cases). Ternary below 96 still uses the existing per-element GEMV
 kernels by design.
+
+## Round 4: grouped lookup accumulation (E15-E20)
+
+Round 4 asks whether the inner loop's per-weight decode + MAC can be
+replaced by table lookups over activation groups. Experiments are
+selected per-dispatch by `WgpuBackend::set_lowbits_experiment` (or the
+`MINI_LOWBITS_EXPERIMENT` env for whole-process runs); each variant is a
+standalone shader, not the shared template, because the lookup
+encodings own their staging differently. All variants carry CPU encoding
+oracles plus GPU-vs-CPU parity at m in {95,96,97,299,320,346}
+(`tests/lowbits.rs`), and correctness was verified before timing.
+Benchmarks: 12 matched blocks of 30 complete dispatches each,
+A-B-B-A ordering, one submission + one fence per block, M1 Max,
+release build. Two independent sessions produced the same ordering and
+near-identical deltas.
+
+A = production tile (ternary or NF4), B = candidate; delta is
+median-paired percent change in per-dispatch time, +/- ~95% CI.
+
+### E15 controls: deferred 128-group scale + ternary sign/select
+
+`scale128_control` defers the per-128-group scale multiply to the group
+boundary (accumulate unscaled partials, flush every 8 K16 steps).
+`ternary_sign`/`ternary_sign_sel` replace `code - 1` decode with a pure
+sign/zero formulation: xor+and bitmask vs nested `select`.
+
+| shape | scale128 | sign (bitmask) | sign (select) |
+|---|---:|---:|---:|
+| ternary 1024x2560 m=346 | +3.0% | +5.5% | +14.0% |
+| ternary 2560x1024 m=346 | -1.3% | +0.8% | +7.7% |
+| ternary 2560x1024 m=299 | +6.3% | +6.7% | +11.8% |
+| nf4 1024x2560 m=346 | +3.0% | - | - |
+| nf4 2560x1024 m=346 | -2.2% | - | - |
+| nf4 2560x1024 m=299 | +6.2% | - | - |
+
+Reading: deferred scaling is noise at m=346 and a ~6% regression at
+m=299, so the scale multiply in the loop is not the cost. The sign
+reformulations lose to `code - 1`, and `select` chains are the most
+expensive decode tested. These controls matter mainly as attribution:
+the E16/E17 wins below come from fewer arithmetic ops, not from scale
+hoisting (E16's LUT shares the deferred-scale schedule).
+
+### E16 two-weight ternary LUT (5-entry)
+
+Each code byte still covers four ternary weights, but consecutive pairs
+share one nibble: index = 2*c0 + c1 (c in {0,1,2}), sign bit 3. The
+kernel builds a per-K-tile activation table `L = {0, x0, x1, x0+x1,
+x0-x1}` in workgroup memory once per tile, then each output column does
+8 table reads + adds per K16 instead of 16 decode+MACs. Table build
+costs 4 stores per thread-row slice.
+
+| shape (tile) | delta |
+|---|---:|
+| 1024x2560 m=346 (BM32xBN64) | **-31.7% / -32.3%** |
+| 2560x1024 m=346 (BM32xBN64) | **-33.6% / -34.0%** |
+| 2560x1024 m=299 (BM32xBN64) | **-29.1% / -28.8%** |
+| 1024x2560 m=346 (BM64xBN32 alt) | +154% |
+| 2560x1024 m=346 (BM64xBN32 alt) | +44% |
+
+The 32x64 orientation (32 rows, 64 columns, one table per K16 slice
+shared by 64 columns) is the largest single-kernel win in this series:
+~30-34% end-to-end on both projections. The 64x32 orientation flips the
+table to per-row-slice and loses catastrophically: each of 32 column
+groups pays its own table build while sharing only 32 columns of reuse.
+
+### E17 four-weight ternary P/N subset LUT (16-entry)
+
+Each byte carries a quartet as disjoint positive/negative masks; a
+16-entry workgroup table of subset sums computes
+`sum(x[P]) - sum(x[N])`. Table build is 16 stores + 4 loads per K16
+slice per thread; inner loop is 4 lookups + subtract per K16.
+
+| shape | delta |
+|---|---:|
+| 1024x2560 m=346 | -17.3% / -17.5% |
+| 2560x1024 m=346 | -17.1% / -18.0% |
+| 2560x1024 m=299 | -13.3% / -13.5% |
+
+Positive and reproducible, but strictly worse than E16 at the same
+32x64 geometry. The 16-entry table is quadruple the fill cost of the
+5-entry one, and two table reads per quartet are not cheaper than one
+per pair. Kept as a documented dead end; E16 dominates it.
+
+### E18-E20 NF4 variants
+
+`nf4_register` decodes NF4 codes straight into registers per thread,
+dropping the weight staging tile (activation tile stays shared).
+`nf4_product` builds a 256-entry workgroup table of `nf4[c0]*x0 +
+nf4[c1]*x1` products per 8-wide activation pair (BM16xBN64xBK8).
+
+| shape | register | product |
+|---|---:|---:|
+| 1024x2560 m=346 | -3.9% / -4.1% | +91% |
+| 2560x1024 m=346 | -6.4% / -6.3% | +85% |
+| 2560x1024 m=299 | +0.7% / +0.5% | +103% |
+
+Register decode gives a small, shape-dependent gain (consistent ~4-6%
+at m=346, nothing at m=299), below the production bar and not worth a
+new encoding path; it does confirm the weight staging tile is nearly
+free, which closes E18: no codebook or layout variant can beat "the
+codebook lookup is the load." The product LUT's per-tile table build
+dwarfs its arithmetic savings (roughly 2x slower everywhere), so the
+activation-product family is dead on this hardware.
+
+### Round-4 verdict
+
+`ternary_lut2` at BM32xBN64 is the only candidate that clears the gate:
+-29% to -34% at both classifier projections, both prompt lengths, tight
+paired intervals, two sessions, parity clean including the 95/96/97
+dispatch boundary. It is not productionized here: making it the default
+requires emitting the LUT encoding at pack time (or a load-time repack),
+which is a format decision. The dev path stays behind
+`MINI_LOWBITS_EXPERIMENT=ternary_lut2` for follow-up end-to-end
+measurement with repacked classifier weights.
+
+Absolute reference points (production tile, m=346): up-projection
+~2560us/dispatch, down-projection ~2740us/dispatch; lut2 brings them to
+~1740us and ~1815us.

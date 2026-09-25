@@ -167,6 +167,7 @@ pub struct WgpuBackend {
     device: Rc<DeviceInner>,
     retirement: Rc<WgpuFenceRetirement>,
     capabilities: BackendCapabilities,
+    lowbits_experiment: std::cell::RefCell<Option<String>>,
 }
 
 impl WgpuBackend {
@@ -247,6 +248,26 @@ impl WgpuBackend {
             device,
             retirement,
             capabilities,
+            lowbits_experiment: std::cell::RefCell::new(None),
+        }
+    }
+
+    /// Select a low-bit grouped-arithmetic experiment for `packed_linear` at
+    /// m >= 96, replacing the `MINI_LOWBITS_EXPERIMENT` env knob for this
+    /// backend. `None` clears the override; returns false for unknown names.
+    /// Lookup variants reinterpret the ternary code stream, so callers must
+    /// upload weights packed in the matching encoding.
+    pub fn set_lowbits_experiment(&self, name: Option<&str>) -> bool {
+        match name {
+            None => {
+                self.lowbits_experiment.replace(None);
+                true
+            }
+            Some(n) if kernels::LOWBITS_EXPERIMENTS.contains(&n) => {
+                self.lowbits_experiment.replace(Some(n.to_string()));
+                true
+            }
+            Some(_) => false,
         }
     }
 
@@ -1070,6 +1091,35 @@ impl WgpuBackend {
         // m == 1 keeps the single-token kernel. Ternary shares the same
         // 64x32 K16 GEMM template through its own decode header.
         if rows >= 96 {
+            // MINI_LOWBITS_EXPERIMENT or set_lowbits_experiment swaps the
+            // production tile for a grouped-arithmetic variant with its own
+            // tile geometry; the caller is responsible for matching weight
+            // encodings.
+            let mode = self
+                .lowbits_experiment
+                .borrow()
+                .clone()
+                .or_else(|| std::env::var("MINI_LOWBITS_EXPERIMENT").ok());
+            if let Some((kernel, tile_m, tile_n)) =
+                mode.and_then(|m| kernels::lowbits_gemm_kernel(format, &m))
+            {
+                let columns = output_width.div_ceil(tile_n);
+                let groups = rows
+                    .div_ceil(tile_m)
+                    .checked_mul(columns)
+                    .ok_or(ExecutorError::Overflow("lowbits grid overflows u64"))?;
+                return self.device.dispatch(
+                    kernel,
+                    &[&destination, &x, &c, &s, &x],
+                    &params(&[
+                        param32(rows)?,
+                        param32(output_width)?,
+                        param32(inner)?,
+                        param32(columns)?,
+                    ]),
+                    flat_grid(groups)?,
+                );
+            }
             let kernel = match format {
                 PackedStreamFormat::Nf4V1 => Kernel::PackedGemmNf4,
                 PackedStreamFormat::TernaryV1 => Kernel::PackedGemmTernary,

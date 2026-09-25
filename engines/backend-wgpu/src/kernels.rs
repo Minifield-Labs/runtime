@@ -2186,6 +2186,49 @@ fn weight_b(row: u32, col: u32, k: u32) -> f32 { return 0.0; }
 fn store_output(i: u32, a: f32, b: f32) { dst[i] = a; }
 ";
 
+/// Group-partial control headers: the weight accessor returns the UNSCALED
+/// decoded code value and `scale_*` exposes the per-128 group scale, so the
+/// `lowbit_scale128` template can defer scaling to group boundaries.
+const TERNARY_SCALE128_HEADER: &str = r"
+const PAIR: bool = false;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<storage, read> x: array<f32>;
+@group(0) @binding(3) var<storage, read> codes: array<u32>;
+@group(0) @binding(4) var<storage, read> scales: array<f32>;
+@group(0) @binding(5) var<storage, read> x4: array<vec4<f32>>;
+fn input_value(i: u32) -> f32 { return x[i]; }
+fn code_a(row: u32, col: u32, k: u32) -> f32 {
+    let word = codes[row * (k / 16u) + col / 16u];
+    return f32(i32((word >> ((col % 16u) * 2u)) & 3u) - 1);
+}
+fn code_b(row: u32, col: u32, k: u32) -> f32 { return 0.0; }
+fn scale_a(row: u32, g: u32, k: u32) -> f32 {
+    return scales[row * (k / 128u) + g];
+}
+fn scale_b(row: u32, g: u32, k: u32) -> f32 { return 0.0; }
+fn store_output(i: u32, a: f32, b: f32) { dst[i] = a; }
+";
+
+const NF4_SCALE128_HEADER: &str = r"
+const PAIR: bool = false;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<storage, read> x: array<f32>;
+@group(0) @binding(3) var<storage, read> codes: array<u32>;
+@group(0) @binding(4) var<storage, read> scales: array<f32>;
+@group(0) @binding(5) var<storage, read> x4: array<vec4<f32>>;
+fn input_value(i: u32) -> f32 { return x[i]; }
+fn code_a(row: u32, col: u32, k: u32) -> f32 {
+    let word = codes[row * (k / 8u) + col / 8u];
+    return NF4[(word >> ((col % 8u) * 4u)) & 15u];
+}
+fn code_b(row: u32, col: u32, k: u32) -> f32 { return 0.0; }
+fn scale_a(row: u32, g: u32, k: u32) -> f32 {
+    return scales[row * (k / 128u) + g];
+}
+fn scale_b(row: u32, g: u32, k: u32) -> f32 { return 0.0; }
+fn store_output(i: u32, a: f32, b: f32) { dst[i] = a; }
+";
+
 const NF4_SWIGLU_HEADER: &str = r"
 const PAIR: bool = false;
 @group(0) @binding(1) var<storage, read_write> dst: array<f32>;
@@ -2240,6 +2283,15 @@ pub enum Kernel {
     PackedSwigluGemmTernary,
     PackedGemmPairSwigluNf4,
     PackedGemmPairSwiglu,
+    PackedGemmTernaryScale128,
+    PackedGemmNf4Scale128,
+    PackedGemmTernarySign,
+    PackedGemmTernarySignSel,
+    PackedGemmTernaryLut2,
+    PackedGemmTernaryLut2Alt,
+    PackedGemmTernaryPn4,
+    PackedGemmNf4Register,
+    PackedGemmNf4Product,
     AddNorm,
     QkNormRope,
     Argmax,
@@ -2283,6 +2335,15 @@ impl Kernel {
         Self::PackedSwigluGemmTernary,
         Self::PackedGemmPairSwigluNf4,
         Self::PackedGemmPairSwiglu,
+        Self::PackedGemmTernaryScale128,
+        Self::PackedGemmNf4Scale128,
+        Self::PackedGemmTernarySign,
+        Self::PackedGemmTernarySignSel,
+        Self::PackedGemmTernaryLut2,
+        Self::PackedGemmTernaryLut2Alt,
+        Self::PackedGemmTernaryPn4,
+        Self::PackedGemmNf4Register,
+        Self::PackedGemmNf4Product,
         Self::AddNorm,
         Self::QkNormRope,
         Self::Argmax,
@@ -2302,7 +2363,16 @@ impl Kernel {
             | Self::PackedGemvNf4
             | Self::PackedGemvMtNf4
             | Self::PackedGemmNf4
-            | Self::PackedGemmTernary => 0b11_1100, // x, codes, scales, x4
+            | Self::PackedGemmTernary
+            | Self::PackedGemmTernaryScale128
+            | Self::PackedGemmNf4Scale128
+            | Self::PackedGemmTernarySign
+            | Self::PackedGemmTernarySignSel
+            | Self::PackedGemmTernaryLut2
+            | Self::PackedGemmTernaryLut2Alt
+            | Self::PackedGemmTernaryPn4
+            | Self::PackedGemmNf4Register
+            | Self::PackedGemmNf4Product => 0b11_1100, // x, codes, scales, x4
             Self::PackedGemvPair
             | Self::PackedGemvPairNf4
             | Self::PackedGemvPairMtNf4
@@ -2338,6 +2408,16 @@ impl Kernel {
             Self::PackedSwigluGemmTernary => TERNARY_SWIGLU_HEADER,
             Self::PackedGemmPairSwigluNf4 => NF4_PAIR_SWIGLU_HEADER,
             Self::PackedGemmPairSwiglu => TERNARY_PAIR_SWIGLU_HEADER,
+            Self::PackedGemmTernaryScale128 => TERNARY_SCALE128_HEADER,
+            Self::PackedGemmNf4Scale128 => NF4_SCALE128_HEADER,
+            // Standalone experiment shaders carry their own bindings.
+            Self::PackedGemmTernarySign
+            | Self::PackedGemmTernarySignSel
+            | Self::PackedGemmTernaryLut2
+            | Self::PackedGemmTernaryLut2Alt
+            | Self::PackedGemmTernaryPn4
+            | Self::PackedGemmNf4Register
+            | Self::PackedGemmNf4Product => "",
             Self::Fill => FILL,
             Self::Binary => BINARY,
             Self::Copy2d => COPY2D,
@@ -2406,6 +2486,46 @@ impl Kernel {
             let tile = include_str!("nf4_prefill.wgsl");
             return [WGSL_INDEX, lut, body, tile].concat();
         }
+        // Low-bit arithmetic experiments selected by MINI_LOWBITS_EXPERIMENT.
+        // Scale-control variants reuse the control template with an unscaled
+        // decode header; the rest are self-contained shaders.
+        match self {
+            Self::PackedGemmTernaryScale128 | Self::PackedGemmNf4Scale128 => {
+                let lut = if matches!(self, Self::PackedGemmNf4Scale128) {
+                    NF4_LUT
+                } else {
+                    ""
+                };
+                return [WGSL_INDEX, lut, body, include_str!("lowbit_scale128.wgsl")].concat();
+            }
+            Self::PackedGemmTernarySign | Self::PackedGemmTernarySignSel => {
+                let sel = matches!(self, Self::PackedGemmTernarySignSel);
+                let tile = include_str!("ternary_sign.wgsl")
+                    .replace("__SEL__", if sel { "true" } else { "false" });
+                return [WGSL_INDEX, &tile].concat();
+            }
+            Self::PackedGemmTernaryLut2 | Self::PackedGemmTernaryLut2Alt => {
+                let (bm, bn) = if matches!(self, Self::PackedGemmTernaryLut2) {
+                    ("32", "64")
+                } else {
+                    ("64", "32")
+                };
+                let tile = include_str!("ternary_lut2.wgsl")
+                    .replace("__BM__", bm)
+                    .replace("__BN__", bn);
+                return [WGSL_INDEX, &tile].concat();
+            }
+            Self::PackedGemmTernaryPn4 => {
+                return [WGSL_INDEX, include_str!("ternary_pn4.wgsl")].concat();
+            }
+            Self::PackedGemmNf4Register => {
+                return [WGSL_INDEX, NF4_LUT, include_str!("nf4_register.wgsl")].concat();
+            }
+            Self::PackedGemmNf4Product => {
+                return [WGSL_INDEX, NF4_LUT, include_str!("nf4_product.wgsl")].concat();
+            }
+            _ => {}
+        }
         let mut source = String::with_capacity(WGSL_INDEX.len() + body.len() + 1);
         source.push_str(WGSL_INDEX);
         if matches!(
@@ -2446,7 +2566,16 @@ impl Kernel {
             | Self::PackedGemvNf4
             | Self::PackedGemvMtNf4
             | Self::PackedGemmNf4
-            | Self::PackedGemmTernary => 5,
+            | Self::PackedGemmTernary
+            | Self::PackedGemmTernaryScale128
+            | Self::PackedGemmNf4Scale128
+            | Self::PackedGemmTernarySign
+            | Self::PackedGemmTernarySignSel
+            | Self::PackedGemmTernaryLut2
+            | Self::PackedGemmTernaryLut2Alt
+            | Self::PackedGemmTernaryPn4
+            | Self::PackedGemmNf4Register
+            | Self::PackedGemmNf4Product => 5,
             Self::Gqa
             | Self::GqaBatch
             | Self::PackedSwigluGemv
@@ -2499,6 +2628,15 @@ impl Kernel {
             Self::PackedSwigluGemvMtNf4 => "packed_swiglu_gemv_mt_nf4",
             Self::PackedGemmPairSwigluNf4 => "packed_gemm_pair_swiglu_nf4",
             Self::PackedGemmPairSwiglu => "packed_gemm_pair_swiglu",
+            Self::PackedGemmTernaryScale128 => "packed_gemm_ternary_scale128",
+            Self::PackedGemmNf4Scale128 => "packed_gemm_nf4_scale128",
+            Self::PackedGemmTernarySign => "packed_gemm_ternary_sign",
+            Self::PackedGemmTernarySignSel => "packed_gemm_ternary_sign_sel",
+            Self::PackedGemmTernaryLut2 => "packed_gemm_ternary_lut2",
+            Self::PackedGemmTernaryLut2Alt => "packed_gemm_ternary_lut2_alt",
+            Self::PackedGemmTernaryPn4 => "packed_gemm_ternary_pn4",
+            Self::PackedGemmNf4Register => "packed_gemm_nf4_register",
+            Self::PackedGemmNf4Product => "packed_gemm_nf4_product",
             Self::AddNorm => "add_norm",
             Self::QkNormRope => "qk_norm_rope",
             Self::Argmax => "argmax",
@@ -2516,4 +2654,42 @@ impl Kernel {
 pub fn nf4_f16_stage_mode() -> Option<String> {
     let mode = std::env::var("MINI_NF4_STAGE_F16").ok()?;
     (mode.chars().all(|c| matches!(c, 'w' | 'x')) && !mode.is_empty()).then_some(mode)
+}
+
+/// Experiment names accepted by `MINI_LOWBITS_EXPERIMENT` and
+/// `WgpuBackend::set_lowbits_experiment`.
+pub const LOWBITS_EXPERIMENTS: &[&str] = &[
+    "baseline",
+    "scale128_control",
+    "ternary_sign",
+    "ternary_sign_sel",
+    "ternary_lut2",
+    "ternary_lut2_64x32",
+    "ternary_pn4",
+    "nf4_register",
+    "nf4_product",
+];
+
+/// Low-bit grouped-arithmetic experiment selector for `packed_linear` at
+/// m >= 96. The lookup shaders (`ternary_lut2`, `ternary_pn4`) interpret the
+/// ternary code stream in their own encodings, so callers must pack weights
+/// with the matching repackers. Returns `(kernel, BM, BN)`; `None`
+/// (including `baseline` and format mismatches) keeps the production tile.
+pub fn lowbits_gemm_kernel(
+    format: crate::PackedStreamFormat,
+    mode: &str,
+) -> Option<(Kernel, u64, u64)> {
+    use crate::PackedStreamFormat::{Nf4V1, TernaryV1};
+    Some(match (format, mode) {
+        (TernaryV1, "scale128_control") => (Kernel::PackedGemmTernaryScale128, 64, 32),
+        (Nf4V1, "scale128_control") => (Kernel::PackedGemmNf4Scale128, 64, 32),
+        (TernaryV1, "ternary_sign") => (Kernel::PackedGemmTernarySign, 64, 32),
+        (TernaryV1, "ternary_sign_sel") => (Kernel::PackedGemmTernarySignSel, 64, 32),
+        (TernaryV1, "ternary_lut2") => (Kernel::PackedGemmTernaryLut2, 32, 64),
+        (TernaryV1, "ternary_lut2_64x32") => (Kernel::PackedGemmTernaryLut2Alt, 64, 32),
+        (TernaryV1, "ternary_pn4") => (Kernel::PackedGemmTernaryPn4, 32, 64),
+        (Nf4V1, "nf4_register") => (Kernel::PackedGemmNf4Register, 64, 32),
+        (Nf4V1, "nf4_product") => (Kernel::PackedGemmNf4Product, 16, 64),
+        _ => return None,
+    })
 }

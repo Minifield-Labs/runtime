@@ -65,6 +65,25 @@ fn assert_exact(left: &[f32], right: &[f32]) {
     }
 }
 
+/// NF4 GEMM compare: f32-staged kernels stay at the tight 1e-4 bound; the
+/// MINI_NF4_STAGE_F16 experiment rounds staged operands to f16, so it gets a
+/// dedicated tolerance plus a printed max-drift report per shape.
+fn assert_nf4_stage(got: &[f32], want: &[f32], m: u64, label: &str) {
+    if std::env::var_os("MINI_NF4_STAGE_F16").is_none() {
+        assert_close(got, want, 1e-4, 1e-4);
+        return;
+    }
+    let mut max_abs = 0.0_f32;
+    let mut max_rel = 0.0_f32;
+    for (a, b) in got.iter().zip(want) {
+        let d = (a - b).abs();
+        max_abs = max_abs.max(d);
+        max_rel = max_rel.max(d / b.abs().max(1e-6));
+    }
+    eprintln!("f16 stage {label} m={m}: max_abs={max_abs:.4e} max_rel={max_rel:.4e}");
+    assert_close(got, want, 0.1, 0.02);
+}
+
 /// Tolerant comparison for ops with reordered reductions (dot products,
 /// softmax, norms).
 fn assert_close(left: &[f32], right: &[f32], abs: f32, rel: f32) {
@@ -1264,7 +1283,7 @@ fn packed_nf4_ops_match_cpu() {
         reference
             .packed_linear(&mut cpu_out, &cpu_in, &cpu_codes, &cpu_scales)
             .expect("cpu packed linear");
-        assert_close(&read(&backend, &gpu_out), cpu_out.as_slice(), 1e-4, 1e-4);
+        assert_nf4_stage(&read(&backend, &gpu_out), cpu_out.as_slice(), m, "linear");
 
         // packed_gather_rows: dequantized products are exact, parity is bitwise.
         let gather_shape = Shape::new(&[3, k]).expect("gather shape");
@@ -1330,8 +1349,8 @@ fn packed_nf4_ops_match_cpu() {
                 &cpu_sb,
             )
             .expect("cpu packed pair");
-        assert_close(&read(&backend, &gpu_a), cpu_a.as_slice(), 1e-4, 1e-4);
-        assert_close(&read(&backend, &gpu_b), cpu_b.as_slice(), 1e-4, 1e-4);
+        assert_nf4_stage(&read(&backend, &gpu_a), cpu_a.as_slice(), m, "pair_a");
+        assert_nf4_stage(&read(&backend, &gpu_b), cpu_b.as_slice(), m, "pair_b");
 
         // packed_swiglu_pair: SwiGLU epilogue fused into the pair's store
         let mut gpu_hidden = backend.allocate_f32(out_shape).expect("gpu hidden");
@@ -1356,11 +1375,11 @@ fn packed_nf4_ops_match_cpu() {
                 &cpu_sb,
             )
             .expect("cpu packed swiglu pair");
-        assert_close(
+        assert_nf4_stage(
             &read(&backend, &gpu_hidden),
             cpu_hidden.as_slice(),
-            1e-4,
-            1e-4,
+            m,
+            "swiglu",
         );
 
         // packed_swiglu_linear
@@ -1378,7 +1397,7 @@ fn packed_nf4_ops_match_cpu() {
         reference
             .packed_swiglu_linear(&mut cpu_out, &cpu_g, &cpu_u, &cpu_codes, &cpu_scales)
             .expect("cpu packed swiglu linear");
-        assert_close(&read(&backend, &gpu_out), cpu_out.as_slice(), 1e-4, 1e-4);
+        assert_nf4_stage(&read(&backend, &gpu_out), cpu_out.as_slice(), m, "swilin");
     }
 }
 

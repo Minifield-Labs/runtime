@@ -377,3 +377,52 @@ existing `prefill_choice_base`/`append_choice_logits` executor API
 Worth wiring into the browser worker (one base prefill, then tail
 appends per decision), but the win is capped at ~14% of prefill
 unless the template is restructured to put varying fields last.
+
+## Profiling + FP16 staging follow-ups
+
+Occupancy math explains K16 vs K32 without counters: the adapter
+reports max_compute_workgroup_storage_size=32768 and M-series cores
+host at most 768 threads (3 x 256-thread workgroups).
+
+| tile | staging bytes | workgroups resident | occupancy |
+|---|---|---|---|
+| 64x32 K16 pair | 8 KB | min(4 by mem, 3 by threads) = 3 | 768/768 = 100% |
+| 64x32 K32 pair | 16 KB | min(2 by mem, 3 by threads) = 2 | 512/768 = 67% |
+| 64x32 K16 plain | 6 KB | 3 | 100% |
+| 64x32 K32 plain | 12 KB | 2 | 67% |
+
+K32 crosses the threadgroup-memory ceiling and drops a workgroup;
+K16 stays at the thread cap. That is why doubling barrier rounds
+still won. Consequence: f16 staging cannot add occupancy (already
+thread-bound), so any f16 gain is threadgroup-memory bandwidth only.
+
+Metal System Trace capture (xctrace, kernel_bench run): command
+buffers serialize back-to-back within the 30-rep submissions; no
+per-dispatch counter access headlessly (needs Xcode frame capture).
+
+FP16 staging experiment (MINI_NF4_STAGE_F16=w|x|wx selects weights /
+activations / both; nf4_prefill_f16.wgsl keeps f32 decode, f32
+accumulate, f32 output; SHADER_F16 requested only when the knob is
+set; adapter reports the feature present).
+
+Numerics (packed_nf4_ops_match_cpu under wx): full-matrix drift at
+m=346 is max_abs 1.1e-2 on GEMM outputs and 2.7e-1 after the SwiGLU
+product; rel spikes only on near-zero elements. Parity holds at a
+dedicated 0.1 abs / 0.02 rel bound under the knob; production stays
+at 1e-4.
+
+Timings at m=346 (interleaved runs, 30 reps):
+
+| variant | down k=2560 | pair k=1024 n=2560 | notes |
+|---|---|---|---|
+| f32 | 2729-2730 | 3508 | |
+| w-f16 | ~1-3% win | ~-1% | flat-to-small win |
+| x-f16 | ~1-2% win | +3% | slight regression fused |
+| wx-f16 | 2688-2684 (-1.5%) | 3326 (-5%) | consistent small win |
+
+But packed_swiglu_linear (silu(gate)*up staged input, single weight)
+regressed +11.6% under wx while the same-shape plain GEMM won -1.5%;
+fused ops pay the conversions without a traffic payoff. Net: ~1.5-2%
+on the plain GEMM only, inconsistent elsewhere, plus f16 rounding.
+Not worth production cost; the knob + parity tolerance stay dev-only
+for revisiting after the ternary QAT changes decode cost.

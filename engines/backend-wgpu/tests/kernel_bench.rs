@@ -34,6 +34,18 @@ fn cooperative_matrix_probe() {
             }
         };
     eprintln!("adapter: {:?}", adapter.get_info());
+    let limits = adapter.limits();
+    eprintln!(
+        "limits: workgroup_storage={} invocations_per_wg={} wg_size={:?}",
+        limits.max_compute_workgroup_storage_size,
+        limits.max_compute_invocations_per_workgroup,
+        limits.max_compute_workgroup_size_x,
+    );
+    let features = adapter.features();
+    eprintln!(
+        "SHADER_F16={}",
+        features.contains(wgpu::Features::SHADER_F16)
+    );
     let props = adapter.cooperative_matrix_properties();
     eprintln!("cooperative matrix configs: {props:#?}");
     eprintln!("empty = unsupported on this adapter/driver");

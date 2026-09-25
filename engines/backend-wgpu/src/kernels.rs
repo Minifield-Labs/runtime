@@ -2311,6 +2311,17 @@ impl Kernel {
             } else {
                 NF4_LUT
             };
+            // MINI_NF4_STAGE_F16 experiment: x|w|wx selects which workgroup
+            // staging arrays store f16 (decode and accumulation stay f32).
+            // Requires SHADER_F16, requested by the device under the same knob.
+            if let Some(mode) = nf4_f16_stage_mode() {
+                let stg_x = if mode.contains('x') { "f16" } else { "f32" };
+                let stg_w = if mode.contains('w') { "f16" } else { "f32" };
+                let tile = include_str!("nf4_prefill_f16.wgsl")
+                    .replace("__STGX__", stg_x)
+                    .replace("__STGW__", stg_w);
+                return ["enable f16;\n", WGSL_INDEX, lut, body, &tile].concat();
+            }
             let tile = include_str!("nf4_prefill.wgsl");
             return [WGSL_INDEX, lut, body, tile].concat();
         }
@@ -2409,4 +2420,13 @@ impl Kernel {
             Self::GatherColumns => "gather_columns",
         }
     }
+}
+
+/// Experimental f16 staging selector for the NF4 GEMM tile.
+/// `MINI_NF4_STAGE_F16=w|x|wx` marks weights / activations / both for f16
+/// workgroup storage; unset means the production f32 tile. Paired with the
+/// matching SHADER_F16 device request so both sides flip together.
+pub fn nf4_f16_stage_mode() -> Option<String> {
+    let mode = std::env::var("MINI_NF4_STAGE_F16").ok()?;
+    (mode.chars().all(|c| matches!(c, 'w' | 'x')) && !mode.is_empty()).then_some(mode)
 }

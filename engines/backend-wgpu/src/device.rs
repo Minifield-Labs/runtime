@@ -360,10 +360,19 @@ impl DeviceInner {
             ..wgpu::Limits::default()
         };
 
+        // The NF4 f16-staging experiment needs SHADER_F16; only request it
+        // when the staging knob is set so production devices stay feature-free.
+        let required_features = if crate::kernels::nf4_f16_stage_mode().is_some()
+            && adapter.features().contains(wgpu::Features::SHADER_F16)
+        {
+            wgpu::Features::SHADER_F16
+        } else {
+            wgpu::Features::empty()
+        };
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("minifield-wgpu"),
-                required_features: wgpu::Features::empty(),
+                required_features,
                 required_limits: device_limits.clone(),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: wgpu::MemoryHints::Performance,

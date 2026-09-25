@@ -333,7 +333,7 @@ invariant: bulk prefill (final-layer FFN sliced to m=1) followed by a
 continuation append matches serial appends for both formats. Passed
 post-E6; cache positions/sequence lengths describe the full prompt.
 
-## Review follow-ups: padding confound, boundary coverage, caching
+## E10 aligned-row tile resolution + boundary parity
 
 Aligned-row check on the wide-tile result (PackedGemmNf4, k=2560
 n=1024, K16). At m=346 the wide 32x64 tile schedules 176 workgroups
@@ -355,12 +355,14 @@ below 96 rows, 64x32 K16 GEMM at and above), not three-way. The 96
 boundary is measured for packed_linear; parity coverage added at
 m=95/96/97.
 
-Workgroup-order swizzle probe (swap row-tile/col-tile precedence in
-the flat workgroup index, dispatch adjusted to match): +/-2% across
-all shapes, within noise. Both operands fit in L2 at these sizes; no
-kernel-level locality win available. Reverted.
+## E11 workgroup-order swizzle (rejected)
 
-## Decision-level prefix reuse (executor, not kernel)
+Swap row-tile/col-tile precedence in the flat workgroup index,
+dispatch adjusted to match: +/-2% across all shapes, within noise.
+Both operands fit in L2 at these sizes; no kernel-level locality win
+available. Reverted.
+
+## E12 decision-level prefix reuse (executor, not kernel)
 
 `Lfm2Classifier` gained `prefill_base`/`classify_tail` wrapping the
 existing `prefill_choice_base`/`append_choice_logits` executor API
@@ -378,7 +380,7 @@ Worth wiring into the browser worker (one base prefill, then tail
 appends per decision), but the win is capped at ~14% of prefill
 unless the template is restructured to put varying fields last.
 
-## Profiling + FP16 staging follow-ups
+## E13 FP16 workgroup staging + occupancy analysis
 
 Occupancy math explains K16 vs K32 without counters: the adapter
 reports max_compute_workgroup_storage_size=32768 and M-series cores
@@ -455,3 +457,19 @@ to amortize them. Net: ~1.5-2% on the plain GEMM only, inconsistent
 elsewhere, plus f16 rounding. Not worth production cost; the knob +
 parity tolerance stay dev-only for revisiting after the ternary QAT
 changes decode cost.
+
+## Round-3 verdicts
+
+- E10: narrow 64x32 K16 is the production GEMM tile at m>=96; E8's
+  wide-tile result was a padding artifact. Dispatch stays two-way.
+- E11: no kernel-level L2 win available; reverted.
+- E12: prefix reuse is real (~15-18% per decision) but capped by the
+  prompt template; candidate for wasm/worker wiring.
+- E13: f16 staging yields ~1.5-2% on the plain GEMM via threadgroup
+  bandwidth, inconsistent on fused ops, plus drift. Dev knob kept,
+  not productionized.
+
+Remaining headroom is not in GEMM scheduling: occupancy is at the
+thread cap, tile geometry is resolved, and staged-memory traffic is
+nearly free to shrink further. The next lever is fewer bytes per
+weight (ternary QAT) and classifier-level reuse (E12 wiring).

@@ -292,7 +292,7 @@ WGSL/pipeline gotchas hit during bring-up, in case this is revisited:
 - `coopLoad` is column-major, `coopLoadT` row-major; staged tiles are
   row-major so T variants are required. Column-major loads produced
   wrong numerics that still happened to keep argmax on the 3 oracle
-  cases — always diff logits, not just argmax.
+  cases; always diff logits, not just argmax.
 - naga's uniform-builtin whitelist is only
   WorkGroupId|WorkGroupSize|NumWorkGroups; `num_subgroups` and helper-
   function call results read non-uniform and poison control flow for
@@ -359,8 +359,10 @@ m=95/96/97.
 
 Swap row-tile/col-tile precedence in the flat workgroup index,
 dispatch adjusted to match: +/-2% across all shapes, within noise.
-Both operands fit in L2 at these sizes; no kernel-level locality win
-available. Reverted.
+This specific ordering provides no measurable benefit. (Narrower
+claim than "no kernel-level locality win exists": working set fitting
+a cache does not eliminate the cost of moving data through it.)
+Reverted.
 
 ## E12 decision-level prefix reuse (executor, not kernel)
 
@@ -376,36 +378,54 @@ existing `prefill_choice_base`/`append_choice_logits` executor API
   ~15-18% faster, logits identical (append==direct is asserted
   bit-exact by append_choice_logits_branches_off_a_shared_unscored_base).
 
-Worth wiring into the browser worker (one base prefill, then tail
-appends per decision), but the win is capped at ~14% of prefill
-unless the template is restructured to put varying fields last.
+Baseline caveat, reconciled: the classify example measures wall
+time around a submit->poll->sleep(1ms) loop over ~30 sequential ops
+per decision; kernel_bench measures GPU wait inside a single
+30-rep submission. Under load average ~6 (measured during this
+run), scheduler jitter inflates the e2e number to ~0.61s while GPU
+kernel times are unchanged from earlier runs (m=346 down still
+~2730us). The 15-18% ratio holds within-harness; absolute e2e
+times are load-sensitive and not comparable across sessions.
+
+Why the win can exceed the token fraction: tile quantization. 299
+fresh tokens schedule ceil(299/64)=5 row tiles vs ceil(346/64)=6,
+16.7% less row-tile work from 13.6% fewer tokens. Not proof of the
+whole explanation, but consistent with the measured 15-18%.
+
+Worker semantics (agreed production direction): keep the existing
+template, and each decision branches from the SAME cached base,
+no appending successive board states into a growing history. The
+next template revision should add a second cache level: instructions
+cached across the model lifetime, settled board state cached while
+unchanged across a decision group, and only per-decision fields
+fresh. Reordering the prompt is not numerically equivalent, so
+evaluate task quality separately on that revision.
 
 ## E13 FP16 workgroup staging + occupancy analysis
 
-Occupancy math explains K16 vs K32 without counters: the adapter
-reports max_compute_workgroup_storage_size=32768 and M-series cores
-host at most 768 threads (3 x 256-thread workgroups).
+Occupancy accounting correction (review): an earlier draft of this
+section computed resident workgroups as
+max_compute_workgroup_storage_size / staging_bytes. That is wrong:
+the adapter field is a per-workgroup shader limit, not the per-core
+threadgroup-memory pool, so it cannot derive residency. The earlier
+768-threads-per-core figure was also asserted without an adapter
+source. K16's measured win stands; the mechanism does not.
 
-| tile | staging bytes | workgroups resident | occupancy |
-|---|---|---|---|
-| 64x32 K16 pair | 8 KB | min(4 by mem, 3 by threads) = 3 | 768/768 = 100% |
-| 64x32 K32 pair | 16 KB | min(2 by mem, 3 by threads) = 2 | 512/768 = 67% |
-| 64x32 K16 plain | 6 KB | 3 | 100% |
-| 64x32 K32 plain | 12 KB | 2 | 67% |
-
-K32 crosses the threadgroup-memory ceiling and drops a workgroup;
-K16 stays at the thread cap. That is why doubling barrier rounds
-still won. Consequence: f16 staging cannot add occupancy (already
-thread-bound), so any f16 gain is threadgroup-memory bandwidth only.
+Correct statement: K16 reduces staging allocation and consistently
+improves latency despite additional synchronization rounds. This is
+consistent with a resource-pressure or generated-code improvement,
+but the specific limiter and achieved occupancy remain unmeasured.
+It follows that f16 staging is NOT proven incapable of improving
+occupancy either; the measured effect size is what it is on this
+adapter, regardless of which resource bound it.
 
 Metal System Trace capture (xctrace on kernel_bench,
 /tmp/mst_nf4.trace): command-buffer granularity only, and each bench
 iteration encodes 30 reps inside one submission, so intra-submission
 dispatch gaps are invisible at that level. Per-dispatch counters
 (ALU/memory/occupancy) need an Xcode GPU frame capture with counter
-sampling, which is GUI-bound. The occupancy table above stands in
-for the counter-level check: K16 is already at the thread cap, so
-occupancy cannot explain any remaining gap; traffic does.
+sampling, which is GUI-bound; achieved occupancy and the dominant
+limiter remain unmeasured on this adapter.
 
 FP16 staging experiment (MINI_NF4_STAGE_F16=w|x|wx selects weights /
 activations / both; nf4_prefill_f16.wgsl keeps f32 decode, f32
@@ -450,11 +470,18 @@ fused ops at m=346 (6 reps, noisy):
 | E2 total | 6393 | 6083 | 6643 | 5952 |
 
 The swilin regression isolates to x-f16 (+6%) and compounds to +12%
-at wx while the same-shape plain GEMM wins -1.5%: its input_value
-computes silu(gate)*up per staged element, so activations-f16 pays
-conversions on a transcendental result with no weight-array partner
-to amortize them. Net: ~1.5-2% on the plain GEMM only, inconsistent
-elsewhere, plus f16 rounding. Not worth production cost; the knob +
+at wx while the same-shape plain GEMM wins -1.5%. Plausible account:
+its input_value computes silu(gate)*up per staged element, so
+activations-f16 pays conversions on a transcendental result with no
+weight-array partner to amortize them; hypothesis, not measured
+cause. Caveat for all f16 numbers: the variant also adds conversions
+and changes the compiled instruction stream, so deltas are the net
+effect of the precision change, not a clean measurement of staging
+bandwidth alone.
+
+Verdict: these variants did not earn production complexity (small
+trusted gains, inconsistent fused results, different numerical
+tolerance). That is not a demonstrated hardware ceiling. The knob +
 parity tolerance stay dev-only for revisiting after the ternary QAT
 changes decode cost.
 
@@ -462,14 +489,28 @@ changes decode cost.
 
 - E10: narrow 64x32 K16 is the production GEMM tile at m>=96; E8's
   wide-tile result was a padding artifact. Dispatch stays two-way.
-- E11: no kernel-level L2 win available; reverted.
-- E12: prefix reuse is real (~15-18% per decision) but capped by the
-  prompt template; candidate for wasm/worker wiring.
-- E13: f16 staging yields ~1.5-2% on the plain GEMM via threadgroup
-  bandwidth, inconsistent on fused ops, plus drift. Dev knob kept,
-  not productionized.
+- E11: this workgroup-order swap provides no measurable benefit;
+  reverted.
+- E12: prefix reuse is real (~15-18% per decision in this harness);
+  strongest immediate next step, wasm/worker wiring agreed.
+- E13: f16 staging variants did not earn production complexity
+  (~1.5-2% on the plain GEMM, inconsistent fused results, f16
+  drift). Dev knob kept, not productionized.
 
-Remaining headroom is not in GEMM scheduling: occupancy is at the
-thread cap, tile geometry is resolved, and staged-memory traffic is
-nearly free to shrink further. The next lever is fewer bytes per
-weight (ternary QAT) and classifier-level reuse (E12 wiring).
+Stopping rationale: the tested NF4 micro-optimizations are showing
+diminishing returns: the kernel survived several targeted
+alternatives and classifier-level reuse offers a clearer measured
+payoff. This is not evidence the GPU has no scheduling headroom;
+the dominant limiter is unmeasured.
+
+Caution on ternary (E4 warning): several existing ternary cases were
+substantially slower than NF4. Two-bit packing halves weight-code
+bytes only; decoded staging traffic, activation traffic, MACs, and
+barriers are unchanged under the current decode-to-f32-tile design,
+so smaller weights do not automatically mean faster kernels. Before
+counting QAT as a latency win, run the same-weight comparison:
+encode W = scale x {-1,0,+1} (all values present in the standard
+NF4 codebook) as both NF4 and packed ternary, and measure the same
+64x32 K16 template at the production shapes, including the
+cached-tail m~299 shape, not just m=346. That isolates the decoder
+cost from model quality and unrelated tiling differences.

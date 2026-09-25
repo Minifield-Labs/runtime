@@ -2311,11 +2311,7 @@ impl Kernel {
             } else {
                 NF4_LUT
             };
-            let tile = if matches!(self, Self::PackedGemmNf4) {
-                include_str!("nf4_prefill_n64.wgsl")
-            } else {
-                include_str!("nf4_prefill.wgsl")
-            };
+            let tile = include_str!("nf4_prefill.wgsl");
             return [WGSL_INDEX, lut, body, tile].concat();
         }
         let mut source = String::with_capacity(WGSL_INDEX.len() + body.len() + 1);

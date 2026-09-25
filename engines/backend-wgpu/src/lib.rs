@@ -1069,9 +1069,9 @@ impl WgpuBackend {
         // Multi-token tiles amortize each nibble decode across 8 input rows;
         // m == 1 keeps the single-token kernel.
         if format == PackedStreamFormat::Nf4V1 && rows >= 96 {
-            let columns = output_width.div_ceil(64);
+            let columns = output_width.div_ceil(32);
             let groups = rows
-                .div_ceil(32)
+                .div_ceil(64)
                 .checked_mul(columns)
                 .ok_or(ExecutorError::Overflow("NF4 prefill grid overflows u64"))?;
             return self.device.dispatch(

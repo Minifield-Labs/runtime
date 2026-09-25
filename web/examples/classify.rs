@@ -70,15 +70,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_logical_tokens: 512,
         },
     )?;
-    for prompt in prompts {
-        let ids = tokenizer.encode(
-            &prompt,
-            EncodeOptions {
-                add_special_tokens: false,
-            },
-        )?;
+    let encoded: Vec<Vec<u32>> = prompts
+        .iter()
+        .map(|prompt| {
+            tokenizer.encode(
+                prompt,
+                EncodeOptions {
+                    add_special_tokens: false,
+                },
+            )
+        })
+        .collect::<Result<_, _>>()?;
+    let shared_prefix = env::var_os("CLASSIFY_PREFIX").is_some() && encoded.len() > 1;
+    if shared_prefix {
+        let mut common = encoded[0].len();
+        for ids in &encoded[1..] {
+            common = common.min(ids.len());
+            while common > 0 && ids[..common] != encoded[0][..common] {
+                common -= 1;
+            }
+        }
+        let base_ids = &encoded[0][..common];
+        eprintln!("shared prefix: {common} tokens");
+        let mut base_task = classifier.prefill_base(TokenChunk::all(base_ids))?;
+        let base = loop {
+            match base_task.poll_step() {
+                CompletionPoll::Pending => std::thread::sleep(Duration::from_millis(1)),
+                CompletionPoll::Ready(result) => break result?,
+            }
+        };
+        for ids in &encoded {
+            let started = Instant::now();
+            let mut task = classifier.classify_tail(&base, TokenChunk::all(&ids[common..]))?;
+            let logits = loop {
+                match task.poll_step() {
+                    CompletionPoll::Pending => std::thread::sleep(Duration::from_millis(1)),
+                    CompletionPoll::Ready(result) => break result?,
+                }
+            };
+            println!(
+                "{}",
+                serde_json::json!({"ids":ids,"logits":logits,"seconds":started.elapsed().as_secs_f64()})
+            );
+        }
+        return Ok(());
+    }
+    for ids in &encoded {
         let started = Instant::now();
-        let mut task = classifier.classify(TokenChunk::all(&ids))?;
+        let mut task = classifier.classify(TokenChunk::all(ids))?;
         let logits = loop {
             match task.poll_step() {
                 CompletionPoll::Pending => std::thread::sleep(Duration::from_millis(1)),

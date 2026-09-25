@@ -312,10 +312,12 @@ Result at m=346 (same session, alternated runs):
 | k=2560 n=1024 | 2867us | 3424us |
 
 19-28% slower at every shape. K=32 staging variant was worse still
-(3.3-3.4ms on the down shape). Interpretation: coop MMA replaces the
-inner multiply loop, which E1/E2 showed is already near-free; staging,
-decode, and barrier costs are unchanged. This kernel is memory-staging
-bound, not MAC bound.
+(3.3-3.4ms on the down shape). Interpretation: this FP32 cooperative
+implementation is consistently slower than the scalar implementation
+at the tested shapes; its matrix execution does not compensate for
+the implementation's other costs (staging, decode, barriers, masked
+fallbacks). E1/E2 measured SwiGLU placement, not MAC cost, so they
+cannot establish that the multiply loop is free.
 
 Verdict: rejected, code path removed. Workspace `unsafe_code` lint
 restored to forbid; no experimental features requested on device init.
@@ -330,3 +332,48 @@ fp16 staging to cut per-fragment bytes.
 invariant: bulk prefill (final-layer FFN sliced to m=1) followed by a
 continuation append matches serial appends for both formats. Passed
 post-E6; cache positions/sequence lengths describe the full prompt.
+
+## Review follow-ups: padding confound, boundary coverage, caching
+
+Aligned-row check on the wide-tile result (PackedGemmNf4, k=2560
+n=1024, K16). At m=346 the wide 32x64 tile schedules 176 workgroups
+vs the narrow 64x32 tile's 192 (352 vs 384 covered rows), an ~8%
+padded-work gap. At aligned rows both cover exactly m:
+
+| m | wide 32x64 | narrow 64x32 |
+|---|---|---|
+| 96  | 1184us | 1144us |
+| 192 | 1663us | 1632us |
+| 320 | 2676us | 2413us |
+| 346 | 2961us | 2747us |
+| 384 | 2929us | 2884us |
+
+Narrow wins or ties everywhere at m>=96; E8's wide-tile advantage at
+m=346 was mostly the padding gap plus noise. PackedGemmNf4 reverted
+to the shared 64x32 template; dispatch is a two-way choice (GEMV-MT
+below 96 rows, 64x32 K16 GEMM at and above), not three-way. The 96
+boundary is measured for packed_linear; parity coverage added at
+m=95/96/97.
+
+Workgroup-order swizzle probe (swap row-tile/col-tile precedence in
+the flat workgroup index, dispatch adjusted to match): +/-2% across
+all shapes, within noise. Both operands fit in L2 at these sizes; no
+kernel-level locality win available. Reverted.
+
+## Decision-level prefix reuse (executor, not kernel)
+
+`Lfm2Classifier` gained `prefill_base`/`classify_tail` wrapping the
+existing `prefill_choice_base`/`append_choice_logits` executor API
+(commit 98d8498 machinery). Measured via the classify example with
+`CLASSIFY_PREFIX=1` on the 3 oracle prompts:
+
+- common prefix across decisions: 47 of ~346 tokens (~14%). Board
+  state diverges early in the template, so causal reuse of the rest
+  is impossible without a prompt-template change.
+- per-decision: 0.61-0.68s full prefill -> 0.53-0.56s tail append.
+  ~15-18% faster, logits identical (append==direct is asserted
+  bit-exact by append_choice_logits_branches_off_a_shared_unscored_base).
+
+Worth wiring into the browser worker (one base prefill, then tail
+appends per decision), but the win is capped at ~14% of prefill
+unless the template is restructured to put varying fields last.

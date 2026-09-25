@@ -1227,6 +1227,9 @@ fn packed_nf4_ops_match_cpu() {
         (12, 37, 256),
         (32, 37, 256),
         (65, 37, 384),
+        (95, 37, 256),
+        (96, 37, 256),
+        (97, 37, 256),
         (346, 37, 1024),
     ] {
         let input_shape = Shape::new(&[m, k]).expect("input shape");

@@ -452,6 +452,24 @@ impl<B: InferenceOps> Lfm2Classifier<B> {
     pub fn classify(&mut self, input: TokenChunk<'_>) -> Result<PrefillChoiceTask<B>> {
         self.executor.prefill_selected(input, &self.selectors)
     }
+
+    /// Prefill the shared prompt head once; the returned prefix is a reusable
+    /// source for [`Self::classify_tail`] calls that append each decision's
+    /// varying suffix instead of re-prefilling the whole prompt.
+    pub fn prefill_base(&mut self, input: TokenChunk<'_>) -> Result<PrefixTask<B>> {
+        self.executor.prefill_choice_base(input)
+    }
+
+    /// Classify a prompt that continues from `prefix`, returning the class
+    /// logits gathered from the appended tail's final position.
+    pub fn classify_tail(
+        &mut self,
+        prefix: &Lfm2Prefix<B>,
+        tail: TokenChunk<'_>,
+    ) -> Result<AppendChoiceTask<B>> {
+        self.executor
+            .append_choice_logits(prefix, tail, &self.selectors)
+    }
 }
 
 fn validate_roles<B: InferenceOps>(weights: &Lfm2TypedWeights<B::Buffer>) -> Result<()> {

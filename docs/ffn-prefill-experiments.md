@@ -691,3 +691,85 @@ measurement with repacked classifier weights.
 Absolute reference points (production tile, m=346): up-projection
 ~2560us/dispatch, down-projection ~2740us/dispatch; lut2 brings them to
 ~1740us and ~1815us.
+
+## Round 5: LUT2 production integration (load-time repack)
+
+E16's winner is integrated behind an explicit layout boundary. The
+serialized format is unchanged (`minifield.ternary.v1`, raw two-bit
+codes + f16 per-128 scales); a backend that opts in repacks each FFN
+code stream once at load into the backend-private LUT2 nibble layout.
+
+### LUT2 encoding (canonical mapping)
+
+Each output u32 covers 16 consecutive K positions as eight four-bit
+pair codes. Raw pair index is `c0 | (c1 << 2)` over the original
+two-bit codes (0=-1, 1=0, 2=+1); the nibble is bits 0..2 = index into
+`L = [0, x0, x1, x0+x1, x0-x1]`, bit 3 = negate:
+
+| idx (c0,c1) | nibble | value |
+|---|---|---|
+| 0 (0,0) | 0xB | -(x0+x1) |
+| 1 (0,1) | 0x9 | -x0 |
+| 2 (0,2) | 0xC | x1-x0 |
+| 4 (1,0) | 0xA | -x1 |
+| 5 (1,1) | 0x0 | 0 |
+| 6 (1,2) | 0x2 | +x1 |
+| 8 (2,0) | 0x4 | x0-x1 |
+| 9 (2,1) | 0x1 | +x0 |
+| 10 (2,2) | 0x3 | +(x0+x1) |
+
+Indices containing raw code 3 are invalid in a well-formed ternary
+stream; the GPU repack kernel maps them to nibble 0 (zero) rather than
+a sentinel, so malformed input degrades to zeros instead of panicking.
+Raw and repacked buffers have identical byte counts but are NOT
+interchangeable: dispatch selects between `packed_linear` /
+`packed_swiglu_pair` (raw) and `packed_linear_lut2` /
+`packed_swiglu_pair_lut2` (repacked) explicitly, and the executor keeps
+both streams resident so the m<96 short-row kernels keep decoding raw.
+
+### Paired producer
+
+`ternary_pair_swiglu_lut2.wgsl` builds one five-entry activation table
+per K16 tile and consumes it for both the gate (w1) and up (w3) code
+streams, applies each stream's per-128 scales into separate
+accumulators, then writes `silu(gate) * up` directly. The fused
+producer is preserved: no second dispatch, no intermediate gate/up
+buffers. `set_lut2_mode` / `MINI_FFN_LUT2` select {off, down-only,
+auto} so the three integration configs share one binary.
+
+### Measurements
+
+FFN component level (pair+SwiGLU+down, medians over 12 rotated blocks x
+30 dispatches):
+
+| config | m=346 | m=299 (tail) |
+|---|---:|---:|
+| raw pair + raw down | 6180us | 5358us |
+| raw pair + lut2 down | 5237us (-15.3%) | 4708us (-12.1%) |
+| lut2 pair + lut2 down | 5064us (-18.1%) | 4633us (-13.5%) |
+
+Real classifier (`tmp/polyomino-ternary`, ternary-v1 repack of the
+135k bf16 checkpoint, pruned vocab 8307, 45.6 MB), 12 decisions on the
+oracle prompts, WgpuBackend native:
+
+| config | full 346-tok classify (median ms) | 47-tok base + 299-tok tail (median ms) |
+|---|---:|---:|
+| off | 164.7 | 146.4 |
+| down-only | 157.9 | 141.4 |
+| auto (pair+down) | 151.1 | 141.9 |
+
+Full-prompt: ~8% end-to-end under auto. Cached tail: ~3%; the tail is
+already the cheaper path and non-FFN ops dominate. Class logits agree
+with the raw-kernel run to <=2.5e-5 max delta and argmax is identical
+on every decision in every mode. The m=47 shared base stays on raw
+codes (below the fused-path cutoff), as does every m<96 consumer.
+
+Resident cost of dual storage on this model: +27.5 MB for the 42
+repacked FFN streams (embedding/attention/conv codes stay raw-only).
+Paired-LUT2's incremental win over down-only is ~3pp at m=346 and ~1pp
+at m=299 — real but much smaller than the isolated projection delta,
+because the existing fused producer already amortizes the activation
+traffic; keep it, since it also halves pair dispatch stream count.
+Follow-up candidates: the conv/attention packed linears could take the
+same repack (another ~15 MB of duplicated streams for the same ~30%
+on their share of FFN-adjacent work).

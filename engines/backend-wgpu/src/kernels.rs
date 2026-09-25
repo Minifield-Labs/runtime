@@ -33,6 +33,39 @@ fn main(
 }
 ";
 
+/// Word-wise repack of a `minifield.ternary.v1` code stream into the LUT2
+/// pair-nibble layout. Each raw u32 carries sixteen two-bit codes, read as
+/// eight consecutive pairs `c0 | (c1 << 2)`; each pair becomes one nibble
+/// indexing [0, x0, x1, x0+x1, x0-x1] with bit 3 as the negate flag. Raw
+/// code 3 has no LUT2 representation; it maps to the zero nibble because
+/// valid streams never carry it. Same byte count in and out.
+const REPACK_LUT2: &str = r"
+struct Params { p: vec4<u32> };
+@group(0) @binding(0) var<uniform> pc: Params;
+@group(0) @binding(1) var<storage, read> src: array<u32>;
+@group(0) @binding(2) var<storage, read_write> dst: array<u32>;
+
+const REMAP: array<u32, 16> = array<u32, 16>(
+    11u, 10u, 4u, 0u, 9u, 0u, 1u, 0u, 12u, 2u, 3u, 0u, 0u, 0u, 0u, 0u
+);
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) numw: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    let i = flat_wg(wid, numw) * 256u + lid.x;
+    if i >= pc.p.x { return; }
+    let w = src[i];
+    var o = 0u;
+    for (var j = 0u; j < 8u; j += 1u) {
+        o |= REMAP[(w >> (j * 4u)) & 15u] << (j * 4u);
+    }
+    dst[i] = o;
+}
+";
+
 /// Elementwise binary op over equal contiguous layouts. `op`: 0 = add, 1 = multiply.
 const BINARY: &str = r"
 struct Params { p: vec4<u32> };
@@ -2292,6 +2325,8 @@ pub enum Kernel {
     PackedGemmTernaryPn4,
     PackedGemmNf4Register,
     PackedGemmNf4Product,
+    PackedGemmPairSwigluLut2,
+    RepackTernaryLut2,
     AddNorm,
     QkNormRope,
     Argmax,
@@ -2344,6 +2379,8 @@ impl Kernel {
         Self::PackedGemmTernaryPn4,
         Self::PackedGemmNf4Register,
         Self::PackedGemmNf4Product,
+        Self::PackedGemmPairSwigluLut2,
+        Self::RepackTernaryLut2,
         Self::AddNorm,
         Self::QkNormRope,
         Self::Argmax,
@@ -2387,9 +2424,12 @@ impl Kernel {
             | Self::PackedSwigluGemmTernary => {
                 0b1111_1100 // gate..up4
             }
-            Self::PackedGemmPairSwigluNf4 | Self::PackedGemmPairSwiglu => {
+            Self::PackedGemmPairSwigluNf4
+            | Self::PackedGemmPairSwiglu
+            | Self::PackedGemmPairSwigluLut2 => {
                 0b1111_1100 // x, a+b streams, x4
             }
+            Self::RepackTernaryLut2 => 0b10,             // src
             Self::Argmax | Self::ArgmaxBlocks => 0b1100, // src, allow
             Self::ArgmaxFinal => 0b100,                  // partials
             Self::GatherColumns => 0b110,                // src, cols
@@ -2417,7 +2457,9 @@ impl Kernel {
             | Self::PackedGemmTernaryLut2Alt
             | Self::PackedGemmTernaryPn4
             | Self::PackedGemmNf4Register
-            | Self::PackedGemmNf4Product => "",
+            | Self::PackedGemmNf4Product
+            | Self::PackedGemmPairSwigluLut2 => "",
+            Self::RepackTernaryLut2 => REPACK_LUT2,
             Self::Fill => FILL,
             Self::Binary => BINARY,
             Self::Copy2d => COPY2D,
@@ -2524,6 +2566,9 @@ impl Kernel {
             Self::PackedGemmNf4Product => {
                 return [WGSL_INDEX, NF4_LUT, include_str!("nf4_product.wgsl")].concat();
             }
+            Self::PackedGemmPairSwigluLut2 => {
+                return [WGSL_INDEX, include_str!("ternary_pair_swiglu_lut2.wgsl")].concat();
+            }
             _ => {}
         }
         let mut source = String::with_capacity(WGSL_INDEX.len() + body.len() + 1);
@@ -2589,7 +2634,10 @@ impl Kernel {
             | Self::PackedGemvPairMtNf4
             | Self::PackedGemmPairNf4
             | Self::PackedGemmPairTernary => 8,
-            Self::PackedGemmPairSwigluNf4 | Self::PackedGemmPairSwiglu => 7,
+            Self::PackedGemmPairSwigluNf4
+            | Self::PackedGemmPairSwiglu
+            | Self::PackedGemmPairSwigluLut2 => 7,
+            Self::RepackTernaryLut2 => 2,
         }
     }
 
@@ -2637,6 +2685,8 @@ impl Kernel {
             Self::PackedGemmTernaryPn4 => "packed_gemm_ternary_pn4",
             Self::PackedGemmNf4Register => "packed_gemm_nf4_register",
             Self::PackedGemmNf4Product => "packed_gemm_nf4_product",
+            Self::PackedGemmPairSwigluLut2 => "packed_gemm_pair_swiglu_lut2",
+            Self::RepackTernaryLut2 => "repack_ternary_lut2",
             Self::AddNorm => "add_norm",
             Self::QkNormRope => "qk_norm_rope",
             Self::Argmax => "argmax",

@@ -83,7 +83,7 @@ pub fn detect_lfm2_weight_format(asset: &[u8]) -> Result<Lfm2WeightFormat> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Lfm2WeightRole {
     TokenEmbedding,
     TiedLmHead,
@@ -95,7 +95,7 @@ pub enum Lfm2WeightRole {
     },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Lfm2LayerWeightRole {
     ConvKernel,
     ConvInProjection,

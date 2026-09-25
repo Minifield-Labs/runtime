@@ -5,6 +5,7 @@
 
 use std::{
     cell::{Cell, RefCell},
+    collections::HashMap,
     rc::Rc,
 };
 
@@ -16,8 +17,23 @@ use minifield_engine_api::{
 
 use super::{
     LayerKind, Lfm2Config, Lfm2LayerWeightRole, Lfm2ResolvedWeight, Lfm2TypedWeights,
-    Lfm2WeightRole, NumericalMode,
+    Lfm2WeightFormat, Lfm2WeightRole, NumericalMode,
 };
+
+/// Which packed FFN ops consume LUT2-repacked ternary code streams when the
+/// backend produced them at load. The raw streams always stay resident, so
+/// every mode is semantically identical; this only picks the kernel path.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Lfm2Lut2Mode {
+    /// Pair+SwiGLU and the down projection both take LUT2 streams.
+    #[default]
+    Auto,
+    /// Only the down projection takes a LUT2 stream; the pair+SwiGLU
+    /// producer keeps the raw fused kernel.
+    DownOnly,
+    /// Raw ternary kernels everywhere even when LUT2 buffers were loaded.
+    Off,
+}
 
 /// Caller-selected logical cache capacity for one loaded model.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -59,6 +75,10 @@ struct ModelContext<B: InferenceOps> {
     // Source cache snapshots retained after an abandoned fenced task. They are released only
     // after the backend retirement queue reports no unresolved fence.
     abandoned_prefixes: RefCell<Vec<Lfm2Prefix<B>>>,
+    // LUT2-repacked ternary code buffers for the FFN roles, present only on
+    // backends that opted in at load. Raw codes remain the source of truth.
+    lut2_codes: HashMap<Lfm2WeightRole, B::Buffer>,
+    lut2_mode: Cell<Lfm2Lut2Mode>,
 }
 
 impl<B: InferenceOps> ModelContext<B> {
@@ -235,7 +255,7 @@ impl<B: InferenceOps> Lfm2Executor<B> {
     }
 
     fn new_inner(
-        backend: B,
+        mut backend: B,
         weights: Lfm2TypedWeights<B::Buffer>,
         limits: Lfm2ExecutionLimits,
     ) -> Result<Self> {
@@ -244,6 +264,32 @@ impl<B: InferenceOps> Lfm2Executor<B> {
         if !weights.config().tie_embedding {
             return Err(ExecutorError::InvalidTie);
         }
+        // One load-time repack per FFN packed stream when the backend
+        // consumes the LUT2 layout; the raw streams stay resident for every
+        // short-row and unfused path that decodes them directly.
+        let mut lut2_codes = HashMap::new();
+        if weights.format() == Lfm2WeightFormat::TernaryV1 && backend.supports_ternary_lut2() {
+            for index in 0..weights.config().layers.len() {
+                for role in [
+                    Lfm2LayerWeightRole::FfnW1,
+                    Lfm2LayerWeightRole::FfnW3,
+                    Lfm2LayerWeightRole::FfnW2,
+                ] {
+                    let weight_role = layer_role(index, role);
+                    if let Ok(Lfm2ResolvedWeight::Packed { codes, .. }) =
+                        weights.resolve(weight_role)
+                    {
+                        let repacked = backend.repack_ternary_lut2(codes)?;
+                        lut2_codes.insert(weight_role, repacked);
+                    }
+                }
+            }
+        }
+        let lut2_mode = match std::env::var("MINI_FFN_LUT2").ok().as_deref() {
+            Some("off") => Lfm2Lut2Mode::Off,
+            Some("down") => Lfm2Lut2Mode::DownOnly,
+            _ => Lfm2Lut2Mode::Auto,
+        };
         let backend = Rc::new(RefCell::new(backend));
         let (lease, retirement) = {
             let observed = backend.borrow().lease();
@@ -292,6 +338,8 @@ impl<B: InferenceOps> Lfm2Executor<B> {
                 unfenced_buffers: RefCell::new(Vec::new()),
                 unfenced_prefixes: RefCell::new(Vec::new()),
                 abandoned_prefixes: RefCell::new(Vec::new()),
+                lut2_codes,
+                lut2_mode: Cell::new(lut2_mode),
             }),
         })
     }
@@ -318,6 +366,19 @@ impl<B: InferenceOps> Lfm2Executor<B> {
     /// construct a new executor from a freshly loaded model before submitting more work.
     pub fn advance_backend_generation(&mut self) -> Result<()> {
         self.context.borrow_backend()?.advance_generation()
+    }
+
+    /// Select which FFN ops consume LUT2-repacked codes (see [`Lfm2Lut2Mode`]).
+    /// Defaults to [`Lfm2Lut2Mode::Auto`], or `MINI_FFN_LUT2=off|down` at load.
+    /// No-op beyond selecting kernels when the backend never repacked.
+    pub fn set_lut2_mode(&self, mode: Lfm2Lut2Mode) {
+        self.context.lut2_mode.set(mode);
+    }
+
+    /// The active LUT2 dispatch mode.
+    #[must_use]
+    pub fn lut2_mode(&self) -> Lfm2Lut2Mode {
+        self.context.lut2_mode.get()
     }
 
     fn prefill_selected(
@@ -451,6 +512,12 @@ impl<B: InferenceOps> Lfm2Classifier<B> {
     /// Return raw class logits. The caller owns any action mask and sampling policy.
     pub fn classify(&mut self, input: TokenChunk<'_>) -> Result<PrefillChoiceTask<B>> {
         self.executor.prefill_selected(input, &self.selectors)
+    }
+
+    /// Select which FFN ops consume LUT2-repacked codes; forwards to the
+    /// inner executor (see [`Lfm2Executor::set_lut2_mode`]).
+    pub fn set_lut2_mode(&self, mode: Lfm2Lut2Mode) {
+        self.executor.set_lut2_mode(mode);
     }
 
     /// Prefill the shared prompt head once; the returned prefix is a reusable
@@ -1138,15 +1205,63 @@ fn append_tokens<B: InferenceOps>(
                     shape(ffn_rows, intermediate)?,
                     AllocationClass::Scratch,
                 )?;
-                backend.packed_swiglu_pair(
-                    &mut hidden.buffer,
-                    &ffn_input.buffer,
-                    gate_codes,
-                    gate_scales,
-                    up_codes,
-                    up_scales,
-                )?;
-                backend.packed_linear(&mut down.buffer, &hidden.buffer, down_codes, down_scales)?;
+                // LUT2 paths run only when the backend repacked this role at
+                // load; raw streams cover every other consumer unchanged.
+                let mode = context.lut2_mode.get();
+                let pair_lut2 = if mode == Lfm2Lut2Mode::Auto {
+                    match (
+                        context
+                            .lut2_codes
+                            .get(&layer_role(index, Lfm2LayerWeightRole::FfnW1)),
+                        context
+                            .lut2_codes
+                            .get(&layer_role(index, Lfm2LayerWeightRole::FfnW3)),
+                    ) {
+                        (Some(gate_lut2), Some(up_lut2)) => Some((gate_lut2, up_lut2)),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                match pair_lut2 {
+                    Some((gate_lut2, up_lut2)) => backend.packed_swiglu_pair_lut2(
+                        &mut hidden.buffer,
+                        &ffn_input.buffer,
+                        gate_lut2,
+                        gate_scales,
+                        up_lut2,
+                        up_scales,
+                    )?,
+                    None => backend.packed_swiglu_pair(
+                        &mut hidden.buffer,
+                        &ffn_input.buffer,
+                        gate_codes,
+                        gate_scales,
+                        up_codes,
+                        up_scales,
+                    )?,
+                }
+                let down_lut2 = if mode == Lfm2Lut2Mode::Auto || mode == Lfm2Lut2Mode::DownOnly {
+                    context
+                        .lut2_codes
+                        .get(&layer_role(index, Lfm2LayerWeightRole::FfnW2))
+                } else {
+                    None
+                };
+                match down_lut2 {
+                    Some(down_lut2) => backend.packed_linear_lut2(
+                        &mut down.buffer,
+                        &hidden.buffer,
+                        down_lut2,
+                        down_scales,
+                    )?,
+                    None => backend.packed_linear(
+                        &mut down.buffer,
+                        &hidden.buffer,
+                        down_codes,
+                        down_scales,
+                    )?,
+                }
                 push_scratch::<B>(scratch, [hidden.buffer]);
                 true
             } else {

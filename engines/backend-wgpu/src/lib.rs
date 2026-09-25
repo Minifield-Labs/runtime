@@ -1681,6 +1681,178 @@ impl WgpuBackend {
         )
     }
 
+    /// Whether this backend consumes LUT2-repacked ternary code streams via
+    /// `packed_linear_lut2` and `packed_swiglu_pair_lut2`.
+    pub fn supports_ternary_lut2(&self) -> bool {
+        true
+    }
+
+    /// Rearrange a `minifield.ternary.v1` code stream into the LUT2 pair
+    /// nibble layout, once at load. The returned buffer is only meaningful
+    /// to the `*_lut2` ops; the raw stream stays resident for the short-row
+    /// fallbacks that decode it directly.
+    pub fn repack_ternary_lut2(&mut self, codes: &WgpuBuffer) -> Result<WgpuBuffer> {
+        self.check_u8_buffer(codes)?;
+        let shape = codes.descriptor.layout.shape();
+        if shape.rank() != 2 || shape.dim(1)? % 4 != 0 {
+            return Err(ExecutorError::InvalidShape(
+                "lut2 repack expects rank-two u8 codes with a word-aligned width",
+            ));
+        }
+        let out = self.allocate_inner(shape, DType::U8, codes.class, false)?;
+        let source = codes.wgpu_buffer()?.clone();
+        let destination = out.wgpu_buffer()?.clone();
+        let words = shape
+            .element_count()?
+            .checked_div(4)
+            .ok_or(ExecutorError::Overflow("lut2 repack word count overflows"))?;
+        self.device.dispatch(
+            Kernel::RepackTernaryLut2,
+            &[&source, &destination],
+            &params(&[param32(words)?, 0, 0, 0]),
+            flat_grid(element_groups(words))?,
+        )?;
+        Ok(out)
+    }
+
+    /// Packed linear over LUT2-repacked ternary codes through the 32x64
+    /// grouped-lookup tile. Same operand contract as `packed_linear`; the
+    /// codes buffer must be the `repack_ternary_lut2` image of a ternary
+    /// stream, not the raw stream.
+    pub fn packed_linear_lut2(
+        &self,
+        output: &mut WgpuBuffer,
+        input: &WgpuBuffer,
+        codes: &WgpuBuffer,
+        scales: &WgpuBuffer,
+    ) -> Result<()> {
+        self.check_operation(OperationKind::PackedLinear)?;
+        self.check_f32_buffer(input)?;
+        let (output_width, inner, format) = self.check_packed_operands(codes, scales)?;
+        if format != PackedStreamFormat::TernaryV1 {
+            return Err(ExecutorError::InvalidShape(
+                "lut2 linear requires a ternary-width code stream",
+            ));
+        }
+        let input_shape = input.descriptor.layout.shape();
+        if input_shape.rank() != 2 {
+            return Err(ExecutorError::InvalidShape(
+                "packed lut2 linear input must be rank two",
+            ));
+        }
+        let rows = input_shape.dim(0)?;
+        if input_shape.dim(1)? != inner {
+            return Err(ExecutorError::InvalidShape(
+                "packed lut2 linear input width differs from weight width",
+            ));
+        }
+        self.check_output_shape(output, Shape::new(&[rows, output_width])?)?;
+        if rows == 0 || output_width == 0 {
+            return Ok(());
+        }
+        if inner == 0 {
+            self.device
+                .record_clear(output.wgpu_buffer()?, output.byte_len());
+            return Ok(());
+        }
+        let x = input.wgpu_buffer()?.clone();
+        let c = codes.wgpu_buffer()?.clone();
+        let s = scales.wgpu_buffer()?.clone();
+        let destination = output.wgpu_buffer()?.clone();
+        let columns = output_width.div_ceil(64);
+        let groups = rows
+            .div_ceil(32)
+            .checked_mul(columns)
+            .ok_or(ExecutorError::Overflow("lut2 grid overflows u64"))?;
+        self.device.dispatch(
+            Kernel::PackedGemmTernaryLut2,
+            &[&destination, &x, &c, &s, &x],
+            &params(&[
+                param32(rows)?,
+                param32(output_width)?,
+                param32(inner)?,
+                param32(columns)?,
+            ]),
+            flat_grid(groups)?,
+        )
+    }
+
+    /// Paired LUT2 projection with the SwiGLU epilogue: one activation table
+    /// per K16 tile feeds both the gate and up streams. Codes carry LUT2
+    /// pair nibbles; scales remain per-128-group f32.
+    #[allow(clippy::too_many_arguments)]
+    pub fn packed_swiglu_pair_lut2(
+        &self,
+        output: &mut WgpuBuffer,
+        input: &WgpuBuffer,
+        codes_a: &WgpuBuffer,
+        scales_a: &WgpuBuffer,
+        codes_b: &WgpuBuffer,
+        scales_b: &WgpuBuffer,
+    ) -> Result<()> {
+        self.check_operation(OperationKind::PackedSwigluPair)?;
+        self.check_f32_buffer(input)?;
+        if codes_a.descriptor.layout.shape() != codes_b.descriptor.layout.shape()
+            || scales_a.descriptor.layout.shape() != scales_b.descriptor.layout.shape()
+        {
+            return Err(ExecutorError::InvalidShape(
+                "packed lut2 SwiGLU pair requires equal weight shapes",
+            ));
+        }
+        let (output_width, inner, format) = self.check_packed_operands(codes_a, scales_a)?;
+        self.check_packed_operands(codes_b, scales_b)?;
+        if format != PackedStreamFormat::TernaryV1 {
+            return Err(ExecutorError::InvalidShape(
+                "lut2 swiglu pair requires ternary-width code streams",
+            ));
+        }
+        let input_shape = input.descriptor.layout.shape();
+        if input_shape.rank() != 2 {
+            return Err(ExecutorError::InvalidShape(
+                "packed lut2 SwiGLU pair input must be rank two",
+            ));
+        }
+        if input_shape.dim(1)? != inner {
+            return Err(ExecutorError::InvalidShape(
+                "packed lut2 SwiGLU pair input width differs from weight width",
+            ));
+        }
+        let rows = input_shape.dim(0)?;
+        self.check_output_shape(output, Shape::new(&[rows, output_width])?)?;
+        if rows == 0 || output_width == 0 {
+            return Ok(());
+        }
+        if inner == 0 {
+            self.device
+                .record_clear(output.wgpu_buffer()?, output.byte_len());
+            return Ok(());
+        }
+        let destination = output.wgpu_buffer()?.clone();
+        let x = input.wgpu_buffer()?.clone();
+        let ca = codes_a.wgpu_buffer()?.clone();
+        let sa = scales_a.wgpu_buffer()?.clone();
+        let cb = codes_b.wgpu_buffer()?.clone();
+        let sb = scales_b.wgpu_buffer()?.clone();
+        let columns = output_width.div_ceil(64);
+        let groups = rows
+            .div_ceil(32)
+            .checked_mul(columns)
+            .ok_or(ExecutorError::Overflow(
+                "lut2 SwiGLU pair grid overflows u64",
+            ))?;
+        self.device.dispatch(
+            Kernel::PackedGemmPairSwigluLut2,
+            &[&destination, &x, &ca, &sa, &cb, &sb, &x],
+            &params(&[
+                param32(rows)?,
+                param32(output_width)?,
+                param32(inner)?,
+                param32(columns)?,
+            ]),
+            flat_grid(groups)?,
+        )
+    }
+
     /// Fused residual add plus row RMS norm: `sum = left + right` written
     /// beside `normed = rmsnorm(sum) * weight` in one workgroup per row.
     pub fn add_row_rms_norm(
@@ -2732,6 +2904,38 @@ impl InferenceOps for WgpuBackend {
         scales_b: &Self::Buffer,
     ) -> Result<()> {
         WgpuBackend::packed_swiglu_pair(self, output, input, codes_a, scales_a, codes_b, scales_b)
+    }
+
+    fn supports_ternary_lut2(&self) -> bool {
+        WgpuBackend::supports_ternary_lut2(self)
+    }
+
+    fn repack_ternary_lut2(&mut self, codes: &Self::Buffer) -> Result<Self::Buffer> {
+        WgpuBackend::repack_ternary_lut2(self, codes)
+    }
+
+    fn packed_linear_lut2(
+        &self,
+        output: &mut Self::Buffer,
+        input: &Self::Buffer,
+        codes: &Self::Buffer,
+        scales: &Self::Buffer,
+    ) -> Result<()> {
+        WgpuBackend::packed_linear_lut2(self, output, input, codes, scales)
+    }
+
+    fn packed_swiglu_pair_lut2(
+        &self,
+        output: &mut Self::Buffer,
+        input: &Self::Buffer,
+        codes_a: &Self::Buffer,
+        scales_a: &Self::Buffer,
+        codes_b: &Self::Buffer,
+        scales_b: &Self::Buffer,
+    ) -> Result<()> {
+        WgpuBackend::packed_swiglu_pair_lut2(
+            self, output, input, codes_a, scales_a, codes_b, scales_b,
+        )
     }
 
     fn add_row_rms_norm(

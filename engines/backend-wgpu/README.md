@@ -34,6 +34,11 @@ gated short convolution (single-dispatch `conv_step` for decode; staged
 history assembly for multi-token prefill), SwiGLU, packed ternary GEMV /
 pair / SwiGLU / gather, the same four packed ops for `minifield.nf4.v1`
 plus small-batch variants that decode each codes word once per 8-row tile.
+A load-time repack kernel can rewrite ternary FFN code streams into the
+backend-private LUT2 pair-nibble layout (see docs/ffn-prefill-experiments.md
+round 5 for the encoding); `packed_linear_lut2` and the paired
+`packed_swiglu_pair_lut2` consume those streams through the 32x64
+grouped-lookup tile while raw codes stay resident for short-row paths.
 NF4 prefill with at least 32 rows uses `nf4_prefill.wgsl`: a 32x32 output
 tile shares decoded weights and activations, with a 2x2 register fragment
 per invocation. Linear, paired linear, and fused SwiGLU share the tiled body.

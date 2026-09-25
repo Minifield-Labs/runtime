@@ -537,6 +537,187 @@ fn ternary_pn4_matches_cpu() {
     );
 }
 
+/// Production path parity: the load-time repack kernel is the only producer
+/// of LUT2 streams, so this consumes `repack_ternary_lut2` output through
+/// `packed_linear_lut2` and compares against the CPU decode of the raw
+/// stream the repack read.
+#[test]
+fn lut2_repack_kernel_matches_cpu() {
+    let _serial = GPU_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(mut backend) = gpu() else { return };
+    let mut reference = cpu();
+    for &(m, k, n) in LUT_SHAPES {
+        let w = ternary_grid(n, k);
+        let (raw_codes, scales) = pack_ternary_direct(&w, n as usize, k as usize);
+        let input = values(41, (m * k) as usize);
+        let x = backend
+            .upload_f32(Shape::new(&[m, k]).expect("in"), &input)
+            .expect("gpu in");
+        let raw = backend
+            .upload_u8_classified(
+                Shape::new(&[n, k / 4]).expect("codes"),
+                &raw_codes,
+                AllocationClass::Weight,
+            )
+            .expect("raw codes");
+        let lut2 = backend.repack_ternary_lut2(&raw).expect("repack");
+        let gs = backend
+            .upload_f32_classified(
+                Shape::new(&[n, k / 128]).expect("scales"),
+                &scales,
+                AllocationClass::Weight,
+            )
+            .expect("gpu scales");
+        let mut out = backend
+            .allocate_f32(Shape::new(&[m, n]).expect("out"))
+            .expect("gpu out");
+        backend
+            .packed_linear_lut2(&mut out, &x, &lut2, &gs)
+            .expect("gpu lut2 linear");
+
+        let cx = reference
+            .upload_f32(Shape::new(&[m, k]).expect("in"), &input)
+            .expect("cpu in");
+        let cc = reference
+            .upload_u8_classified(
+                Shape::new(&[n, k / 4]).expect("codes"),
+                &raw_codes,
+                AllocationClass::Weight,
+            )
+            .expect("cpu codes");
+        let cs = reference
+            .upload_f32_classified(
+                Shape::new(&[n, k / 128]).expect("scales"),
+                &scales,
+                AllocationClass::Weight,
+            )
+            .expect("cpu scales");
+        let mut cout = reference
+            .allocate_f32(Shape::new(&[m, n]).expect("out"))
+            .expect("cpu out");
+        reference
+            .packed_linear(&mut cout, &cx, &cc, &cs)
+            .expect("cpu packed linear");
+        assert_close_ctx(
+            &read(&backend, &out),
+            cout.as_slice(),
+            1e-4,
+            1e-4,
+            &format!("m={m} k={k} n={n}"),
+        );
+    }
+}
+
+/// Paired gate/up LUT2 + fused `SwiGLU` against the CPU pair decode of the
+/// same raw streams. n=1024/k=2560 is the classifier's FFN shape rotated
+/// (the producer reads k=1024 inputs to n=2560 outputs); both orientations
+/// are covered so the shared-table path is checked at production scale.
+const PAIR_SHAPES: &[(u64, u64, u64)] = &[
+    (96, 256, 64),
+    (97, 384, 64),
+    (299, 512, 256),
+    (346, 1024, 2560),
+];
+
+#[test]
+fn pair_swiglu_lut2_matches_cpu() {
+    let _serial = GPU_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(mut backend) = gpu() else { return };
+    let mut reference = cpu();
+    for &(m, k, n) in PAIR_SHAPES {
+        let (gate_codes, gate_scales) =
+            pack_ternary_direct(&ternary_grid(n, k), n as usize, k as usize);
+        let (up_codes, up_scales) =
+            pack_ternary(&values(43, (n * k) as usize), n as usize, k as usize);
+        let input = values(41, (m * k) as usize);
+
+        let x = backend
+            .upload_f32(Shape::new(&[m, k]).expect("in"), &input)
+            .expect("gpu in");
+        let upload_codes = |backend: &mut WgpuBackend, codes: &[u8]| {
+            let raw = backend
+                .upload_u8_classified(
+                    Shape::new(&[n, k / 4]).expect("codes"),
+                    codes,
+                    AllocationClass::Weight,
+                )
+                .expect("raw codes");
+            backend.repack_ternary_lut2(&raw).expect("repack")
+        };
+        let gate_lut2 = upload_codes(&mut backend, &gate_codes);
+        let up_lut2 = upload_codes(&mut backend, &up_codes);
+        let gsa = backend
+            .upload_f32_classified(
+                Shape::new(&[n, k / 128]).expect("scales"),
+                &gate_scales,
+                AllocationClass::Weight,
+            )
+            .expect("gate scales");
+        let usa = backend
+            .upload_f32_classified(
+                Shape::new(&[n, k / 128]).expect("scales"),
+                &up_scales,
+                AllocationClass::Weight,
+            )
+            .expect("up scales");
+        let mut out = backend
+            .allocate_f32(Shape::new(&[m, n]).expect("out"))
+            .expect("gpu out");
+        backend
+            .packed_swiglu_pair_lut2(&mut out, &x, &gate_lut2, &gsa, &up_lut2, &usa)
+            .expect("gpu lut2 pair swiglu");
+
+        let cx = reference
+            .upload_f32(Shape::new(&[m, k]).expect("in"), &input)
+            .expect("cpu in");
+        let cg = reference
+            .upload_u8_classified(
+                Shape::new(&[n, k / 4]).expect("codes"),
+                &gate_codes,
+                AllocationClass::Weight,
+            )
+            .expect("cpu gate codes");
+        let cu = reference
+            .upload_u8_classified(
+                Shape::new(&[n, k / 4]).expect("codes"),
+                &up_codes,
+                AllocationClass::Weight,
+            )
+            .expect("cpu up codes");
+        let cgs = reference
+            .upload_f32_classified(
+                Shape::new(&[n, k / 128]).expect("scales"),
+                &gate_scales,
+                AllocationClass::Weight,
+            )
+            .expect("cpu gate scales");
+        let cus = reference
+            .upload_f32_classified(
+                Shape::new(&[n, k / 128]).expect("scales"),
+                &up_scales,
+                AllocationClass::Weight,
+            )
+            .expect("cpu up scales");
+        let mut cout = reference
+            .allocate_f32(Shape::new(&[m, n]).expect("out"))
+            .expect("cpu out");
+        reference
+            .packed_swiglu_pair(&mut cout, &cx, &cg, &cgs, &cu, &cus)
+            .expect("cpu pair swiglu");
+        assert_close_ctx(
+            &read(&backend, &out),
+            cout.as_slice(),
+            1e-4,
+            1e-4,
+            &format!("pair swiglu m={m} k={k} n={n}"),
+        );
+    }
+}
+
 #[test]
 fn nf4_register_matches_cpu() {
     run_variant(
@@ -746,6 +927,184 @@ fn ab_bench() {
                 nf4,
                 pack_b,
                 name,
+            );
+        }
+    }
+    backend.set_lowbits_experiment(None);
+}
+
+/// One full FFN step (gate/up projection + `SwiGLU` + down projection) under
+/// each integration config. The pair producer keeps its fused form in every
+/// arm; only which kernels consume which code streams changes.
+struct FfnBuffers {
+    x: WgpuBuffer,
+    gate_raw: WgpuBuffer,
+    up_raw: WgpuBuffer,
+    down_raw: WgpuBuffer,
+    gate_lut2: WgpuBuffer,
+    up_lut2: WgpuBuffer,
+    down_lut2: WgpuBuffer,
+    gate_scales: WgpuBuffer,
+    up_scales: WgpuBuffer,
+    down_scales: WgpuBuffer,
+}
+
+fn ffn_dispatch(
+    backend: &WgpuBackend,
+    config: u8,
+    b: &FfnBuffers,
+    hidden: &mut WgpuBuffer,
+    out: &mut WgpuBuffer,
+) {
+    match config {
+        0 => {
+            backend
+                .packed_swiglu_pair(
+                    hidden,
+                    &b.x,
+                    &b.gate_raw,
+                    &b.gate_scales,
+                    &b.up_raw,
+                    &b.up_scales,
+                )
+                .expect("raw pair");
+            backend
+                .packed_linear(out, hidden, &b.down_raw, &b.down_scales)
+                .expect("raw down");
+        }
+        1 => {
+            backend
+                .packed_swiglu_pair(
+                    hidden,
+                    &b.x,
+                    &b.gate_raw,
+                    &b.gate_scales,
+                    &b.up_raw,
+                    &b.up_scales,
+                )
+                .expect("raw pair");
+            backend
+                .packed_linear_lut2(out, hidden, &b.down_lut2, &b.down_scales)
+                .expect("lut2 down");
+        }
+        _ => {
+            backend
+                .packed_swiglu_pair_lut2(
+                    hidden,
+                    &b.x,
+                    &b.gate_lut2,
+                    &b.gate_scales,
+                    &b.up_lut2,
+                    &b.up_scales,
+                )
+                .expect("lut2 pair");
+            backend
+                .packed_linear_lut2(out, hidden, &b.down_lut2, &b.down_scales)
+                .expect("lut2 down");
+        }
+    }
+}
+
+/// Whole-FFN comparison of the three integration configs:
+///   0 baseline = fused raw pair+`SwiGLU`, raw ternary down
+///   1 integration A = fused raw pair+`SwiGLU`, LUT2 down
+///   2 integration B = paired LUT2+`SwiGLU` (one shared activation table),
+///     LUT2 down
+/// Order rotates per block so position effects cancel across configs.
+const FFN_K_IN: u64 = 1024;
+const FFN_N_MID: u64 = 2560;
+
+#[test]
+#[ignore = "dev benchmark; run explicitly with --ignored --nocapture"]
+fn ffn_lut2_bench() {
+    let _serial = GPU_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(mut backend) = gpu() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    backend.set_lowbits_experiment(None);
+    let up_gate_w = ternary_grid(FFN_N_MID, FFN_K_IN);
+    let up_up_w = values(43, (FFN_N_MID * FFN_K_IN) as usize);
+    let down_w = ternary_grid(FFN_K_IN, FFN_N_MID);
+    for m in [346u64, 299] {
+        let (gate_c, gate_s) =
+            pack_ternary_direct(&up_gate_w, FFN_N_MID as usize, FFN_K_IN as usize);
+        let (up_c, up_s) = pack_ternary(&up_up_w, FFN_N_MID as usize, FFN_K_IN as usize);
+        let (down_c, down_s) = pack_ternary_direct(&down_w, FFN_K_IN as usize, FFN_N_MID as usize);
+        let input = values(41, (m * FFN_K_IN) as usize);
+        let upload_codes = |backend: &mut WgpuBackend, codes: &[u8], rows: u64, k: u64| {
+            backend
+                .upload_u8_classified(
+                    Shape::new(&[rows, k / 4]).expect("codes"),
+                    codes,
+                    AllocationClass::Scratch,
+                )
+                .expect("codes")
+        };
+        let upload_scales = |backend: &mut WgpuBackend, scales: &[f32], rows: u64, k: u64| {
+            backend
+                .upload_f32_classified(
+                    Shape::new(&[rows, k / 128]).expect("scales"),
+                    scales,
+                    AllocationClass::Scratch,
+                )
+                .expect("scales")
+        };
+        let b = FfnBuffers {
+            x: backend
+                .upload_f32(Shape::new(&[m, FFN_K_IN]).expect("x"), &input)
+                .expect("x"),
+            gate_raw: upload_codes(&mut backend, &gate_c, FFN_N_MID, FFN_K_IN),
+            up_raw: upload_codes(&mut backend, &up_c, FFN_N_MID, FFN_K_IN),
+            down_raw: upload_codes(&mut backend, &down_c, FFN_K_IN, FFN_N_MID),
+            gate_lut2: upload_codes(&mut backend, &repack_lut2(&gate_c), FFN_N_MID, FFN_K_IN),
+            up_lut2: upload_codes(&mut backend, &repack_lut2(&up_c), FFN_N_MID, FFN_K_IN),
+            down_lut2: upload_codes(&mut backend, &repack_lut2(&down_c), FFN_K_IN, FFN_N_MID),
+            gate_scales: upload_scales(&mut backend, &gate_s, FFN_N_MID, FFN_K_IN),
+            up_scales: upload_scales(&mut backend, &up_s, FFN_N_MID, FFN_K_IN),
+            down_scales: upload_scales(&mut backend, &down_s, FFN_K_IN, FFN_N_MID),
+        };
+        let mut hidden = backend
+            .allocate_f32(Shape::new(&[m, FFN_N_MID]).expect("hidden"))
+            .expect("hidden");
+        let mut out = backend
+            .allocate_f32(Shape::new(&[m, FFN_K_IN]).expect("out"))
+            .expect("out");
+        // Warm all pipelines before timing.
+        for config in 0..3u8 {
+            for _ in 0..4 {
+                ffn_dispatch(&backend, config, &b, &mut hidden, &mut out);
+            }
+            fence_wait(&backend);
+        }
+        let mut times: [Vec<f64>; 3] = [
+            Vec::with_capacity(BLOCKS),
+            Vec::with_capacity(BLOCKS),
+            Vec::with_capacity(BLOCKS),
+        ];
+        for block in 0..BLOCKS {
+            // Rotate starting config per block so ordering effects cancel.
+            for step in 0..3usize {
+                let config = ((block + step) % 3) as u8;
+                let start = std::time::Instant::now();
+                for _ in 0..DISPATCHES {
+                    ffn_dispatch(&backend, config, &b, &mut hidden, &mut out);
+                }
+                fence_wait(&backend);
+                times[usize::from(config)]
+                    .push(start.elapsed().as_secs_f64() * 1e6 / f64::from(DISPATCHES));
+            }
+        }
+        let names = ["base pair+down", "raw pair, lut2 down", "lut2 pair+down"];
+        let base = median(&times[0]);
+        eprintln!("ffn m={m}:");
+        for (i, name) in names.iter().enumerate() {
+            let med = median(&times[i]);
+            eprintln!(
+                "  {name:<22} {med:>9.1}us  {:>+6.2}% vs base",
+                (med / base - 1.0) * 100.0
             );
         }
     }

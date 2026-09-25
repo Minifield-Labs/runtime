@@ -1213,6 +1213,63 @@ pub trait InferenceOps {
         scales_b: &Self::Buffer,
     ) -> Result<()>;
 
+    /// Whether this backend consumes ternary code streams repacked into the
+    /// two-weight LUT2 layout. When true, loaders may call
+    /// `repack_ternary_lut2` once per packed stream at load and route the
+    /// resulting buffers to the `*_lut2` ops. False keeps everything on the
+    /// raw `minifield.ternary.v1` decode.
+    fn supports_ternary_lut2(&self) -> bool {
+        false
+    }
+
+    /// Rearrange one `minifield.ternary.v1` code stream into the backend's
+    /// two-weight LUT2 layout: each pair of two-bit codes becomes a nibble
+    /// indexing an activation pair table. Lossless, same byte count, done
+    /// once per tensor at load. The result is only meaningful to the
+    /// `*_lut2` ops; it is not interchangeable with raw ternary codes.
+    fn repack_ternary_lut2(&mut self, codes: &Self::Buffer) -> Result<Self::Buffer> {
+        let _ = codes;
+        Err(ExecutorError::Unsupported(
+            "ternary lut2 repack is unsupported by backend",
+        ))
+    }
+
+    /// `packed_linear` over a LUT2-repacked ternary code stream. Callers must
+    /// keep the raw `codes` stream for paths that decode it directly. The
+    /// default rejects the layout; supporting backends override.
+    fn packed_linear_lut2(
+        &self,
+        output: &mut Self::Buffer,
+        input: &Self::Buffer,
+        codes: &Self::Buffer,
+        scales: &Self::Buffer,
+    ) -> Result<()> {
+        let _ = (output, input, codes, scales);
+        Err(ExecutorError::Unsupported(
+            "packed lut2 linear is unsupported by backend",
+        ))
+    }
+
+    /// `packed_swiglu_pair` over LUT2-repacked ternary code streams: the
+    /// shared activation table is built once and consumed by both streams.
+    /// Same call contract as `packed_swiglu_pair` with LUT2 codes in place of
+    /// raw ternary codes.
+    #[allow(clippy::too_many_arguments)]
+    fn packed_swiglu_pair_lut2(
+        &self,
+        output: &mut Self::Buffer,
+        input: &Self::Buffer,
+        codes_a: &Self::Buffer,
+        scales_a: &Self::Buffer,
+        codes_b: &Self::Buffer,
+        scales_b: &Self::Buffer,
+    ) -> Result<()> {
+        let _ = (output, input, codes_a, scales_a, codes_b, scales_b);
+        Err(ExecutorError::Unsupported(
+            "packed lut2 swiglu pair is unsupported by backend",
+        ))
+    }
+
     /// Fused residual add plus row RMS norm: `sum = left + right` and
     /// `normed` is the row RMS norm of `sum` scaled by `weight`, with `sum`
     /// and `normed` as distinct `[T, C]` outputs. `left`, `right` are

@@ -2057,6 +2057,24 @@ fn weight_b(row: u32, col: u32, k: u32) -> f32 { return 0.0; }
 fn store_output(i: u32, a: f32, b: f32) { dst[i] = a; }
 ";
 
+/// `NF4_LINEAR_HEADER` with the `minifield.ternary.v1` two-bit decode:
+/// sixteen codes per word, values -1/0/+1 times the per-128 scale.
+const TERNARY_LINEAR_HEADER: &str = r"
+const PAIR: bool = false;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<storage, read> x: array<f32>;
+@group(0) @binding(3) var<storage, read> codes: array<u32>;
+@group(0) @binding(4) var<storage, read> scales: array<f32>;
+@group(0) @binding(5) var<storage, read> x4: array<vec4<f32>>;
+fn input_value(i: u32) -> f32 { return x[i]; }
+fn weight_a(row: u32, col: u32, k: u32) -> f32 {
+    let word = codes[row * (k / 16u) + col / 16u];
+    return f32(i32((word >> ((col % 16u) * 2u)) & 3u) - 1) * scales[row * (k / 128u) + col / 128u];
+}
+fn weight_b(row: u32, col: u32, k: u32) -> f32 { return 0.0; }
+fn store_output(i: u32, a: f32, b: f32) { dst[i] = a; }
+";
+
 const NF4_PAIR_HEADER: &str = r"
 const PAIR: bool = true;
 @group(0) @binding(1) var<storage, read_write> dst_a: array<f32>;
@@ -2126,6 +2144,48 @@ fn weight_b(row: u32, col: u32, k: u32) -> f32 {
 fn store_output(i: u32, a: f32, b: f32) { dst[i] = (a / (1.0 + exp(-a))) * b; }
 ";
 
+/// `NF4_PAIR_HEADER` with the `minifield.ternary.v1` two-bit decode.
+const TERNARY_PAIR_HEADER: &str = r"
+const PAIR: bool = true;
+@group(0) @binding(1) var<storage, read_write> dst_a: array<f32>;
+@group(0) @binding(2) var<storage, read_write> dst_b: array<f32>;
+@group(0) @binding(3) var<storage, read> x: array<f32>;
+@group(0) @binding(4) var<storage, read> codes_a: array<u32>;
+@group(0) @binding(5) var<storage, read> scales_a: array<f32>;
+@group(0) @binding(6) var<storage, read> codes_b: array<u32>;
+@group(0) @binding(7) var<storage, read> scales_b: array<f32>;
+@group(0) @binding(8) var<storage, read> x4: array<vec4<f32>>;
+fn input_value(i: u32) -> f32 { return x[i]; }
+fn weight_a(row: u32, col: u32, k: u32) -> f32 {
+    let word = codes_a[row * (k / 16u) + col / 16u];
+    return f32(i32((word >> ((col % 16u) * 2u)) & 3u) - 1) * scales_a[row * (k / 128u) + col / 128u];
+}
+fn weight_b(row: u32, col: u32, k: u32) -> f32 {
+    let word = codes_b[row * (k / 16u) + col / 16u];
+    return f32(i32((word >> ((col % 16u) * 2u)) & 3u) - 1) * scales_b[row * (k / 128u) + col / 128u];
+}
+fn store_output(i: u32, a: f32, b: f32) { dst_a[i] = a; dst_b[i] = b; }
+";
+
+/// `NF4_SWIGLU_HEADER` with the `minifield.ternary.v1` two-bit decode.
+const TERNARY_SWIGLU_HEADER: &str = r"
+const PAIR: bool = false;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<storage, read> gate: array<f32>;
+@group(0) @binding(3) var<storage, read> up: array<f32>;
+@group(0) @binding(4) var<storage, read> codes: array<u32>;
+@group(0) @binding(5) var<storage, read> scales: array<f32>;
+@group(0) @binding(6) var<storage, read> gate4: array<vec4<f32>>;
+@group(0) @binding(7) var<storage, read> up4: array<vec4<f32>>;
+fn input_value(i: u32) -> f32 { let g = gate[i]; return (g / (1.0 + exp(-g))) * up[i]; }
+fn weight_a(row: u32, col: u32, k: u32) -> f32 {
+    let word = codes[row * (k / 16u) + col / 16u];
+    return f32(i32((word >> ((col % 16u) * 2u)) & 3u) - 1) * scales[row * (k / 128u) + col / 128u];
+}
+fn weight_b(row: u32, col: u32, k: u32) -> f32 { return 0.0; }
+fn store_output(i: u32, a: f32, b: f32) { dst[i] = a; }
+";
+
 const NF4_SWIGLU_HEADER: &str = r"
 const PAIR: bool = false;
 @group(0) @binding(1) var<storage, read_write> dst: array<f32>;
@@ -2171,10 +2231,13 @@ pub enum Kernel {
     PackedSwigluGemvNf4,
     PackedGemvMtNf4,
     PackedGemmNf4,
+    PackedGemmTernary,
     PackedGemvPairMtNf4,
     PackedGemmPairNf4,
+    PackedGemmPairTernary,
     PackedSwigluGemvMtNf4,
     PackedSwigluGemmNf4,
+    PackedSwigluGemmTernary,
     PackedGemmPairSwigluNf4,
     PackedGemmPairSwiglu,
     AddNorm,
@@ -2211,10 +2274,13 @@ impl Kernel {
         Self::PackedSwigluGemvNf4,
         Self::PackedGemvMtNf4,
         Self::PackedGemmNf4,
+        Self::PackedGemmTernary,
         Self::PackedGemvPairMtNf4,
         Self::PackedGemmPairNf4,
+        Self::PackedGemmPairTernary,
         Self::PackedSwigluGemvMtNf4,
         Self::PackedSwigluGemmNf4,
+        Self::PackedSwigluGemmTernary,
         Self::PackedGemmPairSwigluNf4,
         Self::PackedGemmPairSwiglu,
         Self::AddNorm,
@@ -2235,17 +2301,20 @@ impl Kernel {
             Self::PackedGemv
             | Self::PackedGemvNf4
             | Self::PackedGemvMtNf4
-            | Self::PackedGemmNf4 => 0b11_1100, // x, codes, scales, x4
+            | Self::PackedGemmNf4
+            | Self::PackedGemmTernary => 0b11_1100, // x, codes, scales, x4
             Self::PackedGemvPair
             | Self::PackedGemvPairNf4
             | Self::PackedGemvPairMtNf4
-            | Self::PackedGemmPairNf4 => {
+            | Self::PackedGemmPairNf4
+            | Self::PackedGemmPairTernary => {
                 0b1_1111_1000 // x, a+b, x4
             }
             Self::PackedSwigluGemv
             | Self::PackedSwigluGemvNf4
             | Self::PackedSwigluGemvMtNf4
-            | Self::PackedSwigluGemmNf4 => {
+            | Self::PackedSwigluGemmNf4
+            | Self::PackedSwigluGemmTernary => {
                 0b1111_1100 // gate..up4
             }
             Self::PackedGemmPairSwigluNf4 | Self::PackedGemmPairSwiglu => {
@@ -2262,8 +2331,11 @@ impl Kernel {
     pub fn source(self) -> String {
         let body = match self {
             Self::PackedGemmNf4 => NF4_LINEAR_HEADER,
+            Self::PackedGemmTernary => TERNARY_LINEAR_HEADER,
             Self::PackedGemmPairNf4 => NF4_PAIR_HEADER,
+            Self::PackedGemmPairTernary => TERNARY_PAIR_HEADER,
             Self::PackedSwigluGemmNf4 => NF4_SWIGLU_HEADER,
+            Self::PackedSwigluGemmTernary => TERNARY_SWIGLU_HEADER,
             Self::PackedGemmPairSwigluNf4 => NF4_PAIR_SWIGLU_HEADER,
             Self::PackedGemmPairSwiglu => TERNARY_PAIR_SWIGLU_HEADER,
             Self::Fill => FILL,
@@ -2301,12 +2373,21 @@ impl Kernel {
         if matches!(
             self,
             Self::PackedGemmNf4
+                | Self::PackedGemmTernary
                 | Self::PackedGemmPairNf4
+                | Self::PackedGemmPairTernary
                 | Self::PackedSwigluGemmNf4
+                | Self::PackedSwigluGemmTernary
                 | Self::PackedGemmPairSwigluNf4
                 | Self::PackedGemmPairSwiglu
         ) {
-            let lut = if matches!(self, Self::PackedGemmPairSwiglu) {
+            let lut = if matches!(
+                self,
+                Self::PackedGemmPairSwiglu
+                    | Self::PackedGemmTernary
+                    | Self::PackedGemmPairTernary
+                    | Self::PackedSwigluGemmTernary
+            ) {
                 ""
             } else {
                 NF4_LUT
@@ -2364,18 +2445,21 @@ impl Kernel {
             | Self::PackedGemv
             | Self::PackedGemvNf4
             | Self::PackedGemvMtNf4
-            | Self::PackedGemmNf4 => 5,
+            | Self::PackedGemmNf4
+            | Self::PackedGemmTernary => 5,
             Self::Gqa
             | Self::GqaBatch
             | Self::PackedSwigluGemv
             | Self::PackedSwigluGemvNf4
             | Self::PackedSwigluGemvMtNf4
             | Self::PackedSwigluGemmNf4
+            | Self::PackedSwigluGemmTernary
             | Self::QkNormRope => 7,
             Self::PackedGemvPair
             | Self::PackedGemvPairNf4
             | Self::PackedGemvPairMtNf4
-            | Self::PackedGemmPairNf4 => 8,
+            | Self::PackedGemmPairNf4
+            | Self::PackedGemmPairTernary => 8,
             Self::PackedGemmPairSwigluNf4 | Self::PackedGemmPairSwiglu => 7,
         }
     }
@@ -2405,10 +2489,13 @@ impl Kernel {
             Self::PackedGemvPairNf4 => "packed_gemv_pair_nf4",
             Self::PackedSwigluGemvNf4 => "packed_swiglu_gemv_nf4",
             Self::PackedGemmNf4 => "packed_gemm_nf4",
+            Self::PackedGemmTernary => "packed_gemm_ternary",
             Self::PackedGemvMtNf4 => "packed_gemv_mt_nf4",
             Self::PackedGemmPairNf4 => "packed_gemm_pair_nf4",
+            Self::PackedGemmPairTernary => "packed_gemm_pair_ternary",
             Self::PackedGemvPairMtNf4 => "packed_gemv_pair_mt_nf4",
             Self::PackedSwigluGemmNf4 => "packed_swiglu_gemm_nf4",
+            Self::PackedSwigluGemmTernary => "packed_swiglu_gemm_ternary",
             Self::PackedSwigluGemvMtNf4 => "packed_swiglu_gemv_mt_nf4",
             Self::PackedGemmPairSwigluNf4 => "packed_gemm_pair_swiglu_nf4",
             Self::PackedGemmPairSwiglu => "packed_gemm_pair_swiglu",

@@ -514,3 +514,62 @@ NF4 codebook) as both NF4 and packed ternary, and measure the same
 64x32 K16 template at the production shapes, including the
 cached-tail m~299 shape, not just m=346. That isolates the decoder
 cost from model quality and unrelated tiling differences.
+
+## E14: ternary on the shared 64x32 K16 tile (same-weight A/B)
+
+Setup: ternary `packed_linear` at m>=96 previously fell through to the
+per-element `PackedGemv` kernel, so earlier ternary-vs-NF4 numbers mixed
+decoder cost with a completely different execution strategy. This round
+adds `PackedGemmTernary`, a ternary decode header on the same 64x32 K16
+template (16 two-bit codes per u32 word, `code - 1` in {-1,0,+1}, per-128
+scale), and dispatches both formats through the tile at rows>=96. The
+same treatment extends to `packed_linear_pair` (`PackedGemmPairTernary`,
+covers K/V projections and the unfused FFN w1/w3) and
+`packed_swiglu_linear` (`PackedSwigluGemmTernary`, unfused w2 fallback).
+`packed_swiglu_pair` already dispatched ternary to its fused tile at all
+row counts, so the fused FFN path was already covered.
+
+Same-weight fixture (`parity.rs::ternary_gemm_matches_nf4_on_shared_weights`):
+W built on the shared {-1,0,+1} grid with an absmax element in every
+128-group reproduces exactly in both packers, so the two formats must
+agree bitwise on the shared tile. Verified at m in {96,97,299,346}
+including k=2560/n=1024. Below 96 the formats legitimately differ
+(ternary keeps the per-element GEMV, NF4 the 8-row MT kernel) and agree
+within 1e-4.
+
+Bench (`packed_m_scaling_bench`, 30 reps, M1 Max):
+
+| shape (k x n) | m | NF4 tile | ternary tile | ternary GEMV (old) |
+|---|---:|---:|---:|---:|
+| 2560x1024 (down) | 346 | 2734 | 2706 | 4233 |
+| 1024x2560 (up) | 346 | 2533 | 2525 | 4686 |
+| 2560x1024 (down) | 299 | 2332 | 2296 | 3670 |
+| 1024x2560 (up) | 299 | 2267 | 2275 | 4063 |
+| 2560x1024 (down) | 192 | 1606 | 1601 | - |
+| 2560x1024 (down) | 96 | 1104 | 1090 | - |
+
+Times are per-dispatch wait in microseconds; GEMV column measured by
+temporarily confining the tile dispatch to NF4 (one-off probe, reverted).
+
+Reading: on the same tile, ternary is ~1% faster than NF4 at m=346,
+within noise of parity. Halving weight-code bytes is worth almost
+nothing on this kernel, consistent with the staging/MAC-bound picture;
+the ternary decode (shift + mask + i2f) costs about the same as the NF4
+table lookup. The real dispatch fix is the ~1.6x-1.8x recovery over the
+old ternary GEMV path, which is what any packed ternary weight would
+have hit at classifier sizes before this change.
+
+Production impact for ternary QAT: latency is now format-parity, not a
+win. Ternary's payoff stays size (2-bit codes vs 4-bit, roughly half the
+weight stream before scales) and whatever accuracy QAT delivers. If the
+quantized model keeps w1/w3/w2 packed it rides the fused
+`packed_swiglu_pair` + `packed_linear` tiles end to end; packed K/V
+projections ride `PackedGemmPairTernary`. Mixed-format checkpoints that
+leave w1/w3 dense while w2 stays packed fall back to
+`packed_swiglu_linear`, now also tiled for ternary.
+
+Coverage: boundary rows 95/96/97 and m=299 run through the new ternary
+tile in `packed_linear_pair_matches_cpu` and
+`packed_swiglu_linear_matches_cpu` (both now include m>=96 ternary
+cases). Ternary below 96 still uses the existing per-element GEMV
+kernels by design.

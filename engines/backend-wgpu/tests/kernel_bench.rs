@@ -314,41 +314,49 @@ fn packed_m_scaling_bench() {
         return;
     };
     let mut backend = backend;
-    for (m, k, n) in [
-        (80_u64, 2560_u64, 1024_u64),
-        (96, 2560, 1024),
-        (112, 2560, 1024),
-        (192, 2560, 1024),
-        (256, 2560, 1024),
-        (320, 2560, 1024),
-        (384, 2560, 1024),
-        (346, 2560, 1024),
-        (80, 1024, 2560),
-        (112, 1024, 2560),
-        (320, 1024, 2560),
-        (384, 1024, 2560),
-        (346, 1024, 2560),
-    ] {
-        let x = backend
-            .upload_f32(
-                Shape::new(&[m, k]).expect("x shape"),
-                &vec![0.25f32; (m * k) as usize],
-            )
-            .expect("x");
-        let (codes, scales) = packed_fmt(&mut backend, k, n, true);
-        let mut out = backend
-            .allocate_f32_classified(Shape::new(&[m, n]).expect("out"), AllocationClass::Scratch)
-            .expect("out");
-        bench(
-            &backend,
-            &format!("packed_linear nf4 m={m} k={k} n={n}"),
-            30,
-            || {
-                backend
-                    .packed_linear(&mut out, &x, &codes, &scales)
-                    .expect("op");
-            },
-        );
+    for nf4 in [true, false] {
+        let label = if nf4 { "nf4" } else { "ternary" };
+        for (m, k, n) in [
+            (80_u64, 2560_u64, 1024_u64),
+            (96, 2560, 1024),
+            (112, 2560, 1024),
+            (192, 2560, 1024),
+            (256, 2560, 1024),
+            (299, 2560, 1024),
+            (320, 2560, 1024),
+            (384, 2560, 1024),
+            (346, 2560, 1024),
+            (80, 1024, 2560),
+            (112, 1024, 2560),
+            (299, 1024, 2560),
+            (320, 1024, 2560),
+            (384, 1024, 2560),
+            (346, 1024, 2560),
+        ] {
+            let x = backend
+                .upload_f32(
+                    Shape::new(&[m, k]).expect("x shape"),
+                    &vec![0.25f32; (m * k) as usize],
+                )
+                .expect("x");
+            let (codes, scales) = packed_fmt(&mut backend, k, n, nf4);
+            let mut out = backend
+                .allocate_f32_classified(
+                    Shape::new(&[m, n]).expect("out"),
+                    AllocationClass::Scratch,
+                )
+                .expect("out");
+            bench(
+                &backend,
+                &format!("packed_linear {label} m={m} k={k} n={n}"),
+                30,
+                || {
+                    backend
+                        .packed_linear(&mut out, &x, &codes, &scales)
+                        .expect("op");
+                },
+            );
+        }
     }
 }
 

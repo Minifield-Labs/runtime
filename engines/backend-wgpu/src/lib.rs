@@ -1066,16 +1066,21 @@ impl WgpuBackend {
         // `x4` rebinds the activation as vec4 for 128-bit loads when the inner
         // dimension is 4-aligned; the kernel flag falls back to scalar reads.
         let vec_ok = u32::from(inner % 4 == 0);
-        // Multi-token tiles amortize each nibble decode across 8 input rows;
-        // m == 1 keeps the single-token kernel.
-        if format == PackedStreamFormat::Nf4V1 && rows >= 96 {
+        // Multi-token tiles amortize each decode across the input tile;
+        // m == 1 keeps the single-token kernel. Ternary shares the same
+        // 64x32 K16 GEMM template through its own decode header.
+        if rows >= 96 {
+            let kernel = match format {
+                PackedStreamFormat::Nf4V1 => Kernel::PackedGemmNf4,
+                PackedStreamFormat::TernaryV1 => Kernel::PackedGemmTernary,
+            };
             let columns = output_width.div_ceil(32);
             let groups = rows
                 .div_ceil(64)
                 .checked_mul(columns)
-                .ok_or(ExecutorError::Overflow("NF4 prefill grid overflows u64"))?;
+                .ok_or(ExecutorError::Overflow("packed prefill grid overflows u64"))?;
             return self.device.dispatch(
-                Kernel::PackedGemmNf4,
+                kernel,
                 &[&destination, &x, &c, &s, &x],
                 &params(&[
                     param32(rows)?,
@@ -1371,14 +1376,20 @@ impl WgpuBackend {
         // `x4` rebinds the activation as vec4 for 128-bit loads when the inner
         // dimension is 4-aligned; the kernel flag falls back to scalar reads.
         let vec_ok = u32::from(inner % 4 == 0);
-        if format == PackedStreamFormat::Nf4V1 && rows >= 96 {
+        if rows >= 96 {
+            let kernel = match format {
+                PackedStreamFormat::Nf4V1 => Kernel::PackedGemmPairNf4,
+                PackedStreamFormat::TernaryV1 => Kernel::PackedGemmPairTernary,
+            };
             let columns = output_width.div_ceil(32);
             let groups = rows
                 .div_ceil(64)
                 .checked_mul(columns)
-                .ok_or(ExecutorError::Overflow("NF4 prefill grid overflows u64"))?;
+                .ok_or(ExecutorError::Overflow(
+                    "packed pair prefill grid overflows u64",
+                ))?;
             return self.device.dispatch(
-                Kernel::PackedGemmPairNf4,
+                kernel,
                 &[&da, &db, &x, &ca, &sa, &cb, &sb, &x],
                 &params(&[
                     param32(rows)?,
@@ -1480,14 +1491,20 @@ impl WgpuBackend {
         // `gate4`/`up4` rebind the operands as vec4 when the inner dimension is
         // 4-aligned; the kernel flag falls back to scalar reads.
         let vec_ok = u32::from(inner % 4 == 0);
-        if format == PackedStreamFormat::Nf4V1 && rows >= 96 {
+        if rows >= 96 {
+            let kernel = match format {
+                PackedStreamFormat::Nf4V1 => Kernel::PackedSwigluGemmNf4,
+                PackedStreamFormat::TernaryV1 => Kernel::PackedSwigluGemmTernary,
+            };
             let columns = output_width.div_ceil(32);
             let groups = rows
                 .div_ceil(64)
                 .checked_mul(columns)
-                .ok_or(ExecutorError::Overflow("NF4 prefill grid overflows u64"))?;
+                .ok_or(ExecutorError::Overflow(
+                    "packed SwiGLU prefill grid overflows u64",
+                ))?;
             return self.device.dispatch(
-                Kernel::PackedSwigluGemmNf4,
+                kernel,
                 &[&destination, &g, &u, &c, &s, &g, &u],
                 &params(&[
                     param32(rows)?,

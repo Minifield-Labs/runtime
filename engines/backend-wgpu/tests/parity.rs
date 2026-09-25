@@ -1080,7 +1080,15 @@ fn argmax_rejects_invalid_operands() {
 fn packed_linear_pair_matches_cpu() {
     let Some(mut backend) = gpu() else { return };
     let mut reference = cpu();
-    for (m, n, k) in [(1_u64, 37_u64, 256_u64), (5, 37, 384)] {
+    // m>=96 exercises the ternary 64x32 tile; m<96 stays on the GEMV path.
+    for (m, n, k) in [
+        (1_u64, 37_u64, 256_u64),
+        (5, 37, 384),
+        (95, 64, 256),
+        (96, 64, 256),
+        (97, 64, 384),
+        (299, 256, 512),
+    ] {
         let input_shape = Shape::new(&[m, k]).expect("input shape");
         let codes_shape = Shape::new(&[n, k / 4]).expect("codes shape");
         let scales_shape = Shape::new(&[n, k / 128]).expect("scales shape");
@@ -1140,7 +1148,15 @@ fn packed_linear_pair_matches_cpu() {
 fn packed_swiglu_linear_matches_cpu() {
     let Some(mut backend) = gpu() else { return };
     let mut reference = cpu();
-    for (m, n, k) in [(1_u64, 37_u64, 256_u64), (5, 37, 384)] {
+    // m>=96 exercises the ternary 64x32 tile; m<96 stays on the GEMV path.
+    for (m, n, k) in [
+        (1_u64, 37_u64, 256_u64),
+        (5, 37, 384),
+        (95, 64, 256),
+        (96, 64, 256),
+        (97, 64, 384),
+        (299, 256, 512),
+    ] {
         let input_shape = Shape::new(&[m, k]).expect("input shape");
         let codes_shape = Shape::new(&[n, k / 4]).expect("codes shape");
         let scales_shape = Shape::new(&[n, k / 128]).expect("scales shape");
@@ -1398,6 +1414,111 @@ fn packed_nf4_ops_match_cpu() {
             .packed_swiglu_linear(&mut cpu_out, &cpu_g, &cpu_u, &cpu_codes, &cpu_scales)
             .expect("cpu packed swiglu linear");
         assert_nf4_stage(&read(&backend, &gpu_out), cpu_out.as_slice(), m, "swilin");
+    }
+}
+
+/// Same-weight ternary-vs-NF4 check: W built on the shared {-1,0,+1} grid
+/// with an absmax element in every 128-group is reproduced exactly by both
+/// packers, so the ternary GEMM tile must agree with NF4 bitwise; both
+/// must agree with the f32 CPU reference at the dispatch boundary.
+#[test]
+fn ternary_gemm_matches_nf4_on_shared_weights() {
+    let Some(mut backend) = gpu() else { return };
+    let mut reference = cpu();
+    for (m, k, n) in [
+        (95_u64, 256_u64, 64_u64),
+        (96, 256, 64),
+        (97, 384, 64),
+        (299, 512, 256),
+        (346, 2560, 1024),
+    ] {
+        let mut w = vec![0.0_f32; (n * k) as usize];
+        for r in 0..n as usize {
+            for g in 0..(k / 128) as usize {
+                let s = 0.5 + ((r + g) % 3) as f32 * 0.25;
+                for i in 0..128_usize {
+                    let c = ((r * 7 + g + i) % 3) as i32 - 1;
+                    w[r * k as usize + g * 128 + i] = c as f32 * s;
+                }
+            }
+        }
+        let input = values(41, (m * k) as usize);
+        let input_shape = Shape::new(&[m, k]).expect("input");
+        let out_shape = Shape::new(&[m, n]).expect("out");
+        let (t_codes, t_scales) = pack_weights(&w, n as usize, k as usize);
+        let (f_codes, f_scales) = pack_weights_nf4(&w, n as usize, k as usize);
+        let gpu_in = backend.upload_f32(input_shape, &input).expect("gpu in");
+        let cpu_in = reference.upload_f32(input_shape, &input).expect("cpu in");
+
+        let mut gpu_t = backend.allocate_f32(out_shape).expect("gpu t");
+        let mut cpu_t = reference.allocate_f32(out_shape).expect("cpu t");
+        let gpu_tc = backend
+            .upload_u8_classified(
+                Shape::new(&[n, k / 4]).expect("t codes"),
+                &t_codes,
+                AllocationClass::Weight,
+            )
+            .expect("gpu t codes");
+        let gpu_ts = backend
+            .upload_f32_classified(
+                Shape::new(&[n, k / 128]).expect("t scales"),
+                &t_scales,
+                AllocationClass::Weight,
+            )
+            .expect("gpu t scales");
+        let cpu_tc = reference
+            .upload_u8_classified(
+                Shape::new(&[n, k / 4]).expect("t codes"),
+                &t_codes,
+                AllocationClass::Weight,
+            )
+            .expect("cpu t codes");
+        let cpu_ts = reference
+            .upload_f32_classified(
+                Shape::new(&[n, k / 128]).expect("t scales"),
+                &t_scales,
+                AllocationClass::Weight,
+            )
+            .expect("cpu t scales");
+        backend
+            .packed_linear(&mut gpu_t, &gpu_in, &gpu_tc, &gpu_ts)
+            .expect("gpu ternary linear");
+        reference
+            .packed_linear(&mut cpu_t, &cpu_in, &cpu_tc, &cpu_ts)
+            .expect("cpu ternary linear");
+        let gpu_ternary = read(&backend, &gpu_t);
+        // Tiled accumulation order differs from the CPU GEMV; same bound as
+        // the NF4 tile case.
+        assert_close(&gpu_ternary, cpu_t.as_slice(), 1e-4, 1e-4);
+
+        let mut gpu_f = backend.allocate_f32(out_shape).expect("gpu f");
+        let gpu_fc = backend
+            .upload_u8_classified(
+                Shape::new(&[n, k / 2]).expect("f codes"),
+                &f_codes,
+                AllocationClass::Weight,
+            )
+            .expect("gpu f codes");
+        let gpu_fs = backend
+            .upload_f32_classified(
+                Shape::new(&[n, k / 128]).expect("f scales"),
+                &f_scales,
+                AllocationClass::Weight,
+            )
+            .expect("gpu f scales");
+        backend
+            .packed_linear(&mut gpu_f, &gpu_in, &gpu_fc, &gpu_fs)
+            .expect("gpu nf4 linear");
+        let gpu_nf4 = read(&backend, &gpu_f);
+        if m >= 96 {
+            // Both formats run the shared 64x32 tile: identical decode values
+            // and identical accumulation order must agree bitwise.
+            assert_exact(&gpu_ternary, &gpu_nf4);
+        } else {
+            // Below the cutoff, ternary runs the per-element GEMV while NF4
+            // runs the 8-row MT kernel; different accumulation order.
+            assert_close(&gpu_ternary, &gpu_nf4, 1e-4, 1e-4);
+        }
     }
 }
 

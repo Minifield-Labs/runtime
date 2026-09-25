@@ -535,6 +535,7 @@ dependencies = [
  "minifield-json-grammar",
  "minifield-text-generation",
  "minifield-text-tokenizer",
+ "serde_json",
  "sha2",
  "wasm-bindgen",
  "wasm-bindgen-futures",

@@ -10,10 +10,11 @@
 pub mod lfm2;
 pub mod loader;
 pub use lfm2::{
-    AppendChoiceTask, ChoiceLogitsTask, LayerKind, Lfm2Config, Lfm2ExecutionLimits, Lfm2Executor,
-    Lfm2LayerWeightRole, Lfm2LoadRequest, Lfm2Prefix, Lfm2ResolvedWeight, Lfm2StorageDType,
-    Lfm2TypedWeights, Lfm2WeightFormat, Lfm2WeightLoadTask, Lfm2WeightPlan, Lfm2WeightRole,
-    LogitsTask, NumericalMode, PrefillChoiceTask, PrefixTask, ScoreTask, parse_lfm2_config,
+    AppendChoiceTask, ChoiceLogitsTask, LayerKind, Lfm2Classifier, Lfm2Config, Lfm2ExecutionLimits,
+    Lfm2Executor, Lfm2LayerWeightRole, Lfm2LoadRequest, Lfm2Prefix, Lfm2ResolvedWeight,
+    Lfm2StorageDType, Lfm2TypedWeights, Lfm2WeightFormat, Lfm2WeightLoadTask, Lfm2WeightPlan,
+    Lfm2WeightRole, LogitsTask, NumericalMode, PrefillChoiceTask, PrefixTask, ScoreTask,
+    parse_lfm2_config,
 };
 pub use loader::{
     LoadRequest, LoaderError, LoaderLimits, LoaderPoll, LoaderResourceReport, LoaderStage,

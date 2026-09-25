@@ -16,8 +16,8 @@ use minifield_engine_api::{
     TokenChoiceExecutor, TokenChunk, TokenExecutor, TokenId,
 };
 use minifield_executor_core::{
-    Lfm2ExecutionLimits, Lfm2Executor, Lfm2LoadRequest, Lfm2Prefix, Lfm2WeightFormat,
-    Lfm2WeightLoadTask, LoaderLimits, LoaderPoll,
+    Lfm2Classifier, Lfm2ExecutionLimits, Lfm2Executor, Lfm2LoadRequest, Lfm2Prefix,
+    Lfm2TypedWeights, Lfm2WeightFormat, Lfm2WeightLoadTask, LoaderLimits, LoaderPoll,
 };
 use minifield_json_grammar::AssistantCallEnforcer;
 use minifield_text_generation::{ChoiceCriterion, ChoiceRequest, finish_choice, prepare_choice};
@@ -111,41 +111,7 @@ pub async fn load(
     weights: Vec<u8>,
     tokenizer: Vec<u8>,
 ) -> Result<WebDemo, JsValue> {
-    let limits = ResourceLimits {
-        max_allocation_bytes: 1 << 30,
-        max_total_bytes: 2 << 30,
-        max_pending_operations: 512,
-    };
-    let mut backend = WgpuBackend::new_async(0xE0_3C, limits)
-        .await
-        .map_err(js_error)?;
-
-    let weights_len = weights.len() as u64;
-    let request = Lfm2LoadRequest::new_with_format(
-        config.clone(),
-        Sha256::digest(&config).into(),
-        weights_len,
-        Sha256::digest(&weights).into(),
-        LoaderLimits {
-            max_asset_bytes: weights_len,
-            max_header_bytes: 1 << 20,
-            max_source_tensor_bytes: weights_len,
-            max_retained_host_bytes: weights_len * 6,
-            max_tensor_name_bytes: 1024,
-            max_tensors: 4096,
-            max_rank: 4,
-        },
-        Lfm2WeightFormat::TernaryV1,
-    )
-    .map_err(js_debug)?;
-    let mut provider = MemoryAssetProvider::new(weights, weights_len);
-    let mut task = Lfm2WeightLoadTask::begin(request).map_err(js_debug)?;
-    let typed = loop {
-        match task.poll_step(&mut provider, &mut backend) {
-            LoaderPoll::Pending => browser_yield().await,
-            LoaderPoll::Ready(result) => break result.map_err(js_debug)?,
-        }
-    };
+    let (backend, typed) = load_weights(config, weights, None).await?;
     let executor = Lfm2Executor::new(
         backend,
         typed,
@@ -161,6 +127,118 @@ pub async fn load(
         tokenizer,
         tool_prefix: None,
     })
+}
+
+async fn load_weights(
+    config: Vec<u8>,
+    weights: Vec<u8>,
+    classes: Option<u32>,
+) -> Result<
+    (
+        WgpuBackend,
+        Lfm2TypedWeights<minifield_backend_wgpu::WgpuBuffer>,
+    ),
+    JsValue,
+> {
+    let limits = ResourceLimits {
+        max_allocation_bytes: 1 << 30,
+        max_total_bytes: 2 << 30,
+        max_pending_operations: 512,
+    };
+    let mut backend = WgpuBackend::new_async(0xE0_3C, limits)
+        .await
+        .map_err(js_error)?;
+
+    let weights_len = weights.len() as u64;
+    let loader_limits = LoaderLimits {
+        max_asset_bytes: weights_len,
+        max_header_bytes: 1 << 20,
+        max_source_tensor_bytes: weights_len,
+        max_retained_host_bytes: weights_len * 6,
+        max_tensor_name_bytes: 1024,
+        max_tensors: 4096,
+        max_rank: 4,
+    };
+    let request = match classes {
+        Some(classes) => Lfm2LoadRequest::new_classifier(
+            config.clone(),
+            Sha256::digest(&config).into(),
+            weights_len,
+            Sha256::digest(&weights).into(),
+            loader_limits,
+            classes,
+        ),
+        None => Lfm2LoadRequest::new_with_format(
+            config.clone(),
+            Sha256::digest(&config).into(),
+            weights_len,
+            Sha256::digest(&weights).into(),
+            loader_limits,
+            Lfm2WeightFormat::TernaryV1,
+        ),
+    }
+    .map_err(js_debug)?;
+    let mut provider = MemoryAssetProvider::new(weights, weights_len);
+    let mut task = Lfm2WeightLoadTask::begin(request).map_err(js_debug)?;
+    let typed = loop {
+        match task.poll_step(&mut provider, &mut backend) {
+            LoaderPoll::Pending => browser_yield().await,
+            LoaderPoll::Ready(result) => break result.map_err(js_debug)?,
+        }
+    };
+    Ok((backend, typed))
+}
+
+/// Independent classifier; prompts already contain their exact chat template.
+#[wasm_bindgen]
+pub struct WebClassifier {
+    classifier: Lfm2Classifier<WgpuBackend>,
+    tokenizer: Tokenizer,
+}
+
+#[wasm_bindgen]
+pub async fn load_classifier(
+    config: Vec<u8>,
+    weights: Vec<u8>,
+    tokenizer: Vec<u8>,
+    classes: u32,
+) -> Result<WebClassifier, JsValue> {
+    let tokenizer =
+        Tokenizer::from_json_bytes(&tokenizer, TokenizerLimits::default()).map_err(js_error)?;
+    let (backend, typed) = load_weights(config, weights, Some(classes)).await?;
+    let classifier = Lfm2Classifier::new(
+        backend,
+        typed,
+        Lfm2ExecutionLimits {
+            max_logical_tokens: MAX_LOGICAL_TOKENS,
+        },
+    )
+    .map_err(js_error)?;
+    Ok(WebClassifier {
+        classifier,
+        tokenizer,
+    })
+}
+
+#[wasm_bindgen]
+impl WebClassifier {
+    /// Fresh prompt state each call. The caller masks any reserved class.
+    pub async fn classify(&mut self, prompt: String) -> Result<Vec<f32>, JsValue> {
+        let ids = self
+            .tokenizer
+            .encode(
+                &prompt,
+                EncodeOptions {
+                    add_special_tokens: false,
+                },
+            )
+            .map_err(js_error)?;
+        let mut task = self
+            .classifier
+            .classify(TokenChunk::all(&ids))
+            .map_err(js_error)?;
+        pump(&mut task).await
+    }
 }
 
 #[wasm_bindgen]

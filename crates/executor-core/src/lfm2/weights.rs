@@ -34,6 +34,7 @@ pub enum Lfm2WeightFormat {
 pub enum Lfm2WeightRole {
     TokenEmbedding,
     TiedLmHead,
+    ClassificationHead,
     EmbeddingNorm,
     Layer {
         index: usize,
@@ -64,6 +65,7 @@ pub enum Lfm2LayerWeightRole {
 pub struct Lfm2WeightPlan {
     config: Lfm2Config,
     format: Lfm2WeightFormat,
+    classes: Option<u32>,
     plan: WeightPlan,
 }
 
@@ -289,8 +291,38 @@ impl Lfm2WeightPlan {
         Ok(Self {
             config,
             format,
+            classes: None,
             plan,
         })
+    }
+
+    /// Dense backbone with an independent last-token classification projection.
+    pub fn from_config_classifier(config: Lfm2Config, classes: u32) -> Result<Self> {
+        if classes == 0 || classes > 65_536 {
+            return Err(ExecutorError::InvalidArgument(
+                "classifier needs 1..=65536 classes",
+            ));
+        }
+        let mut result = Self::from_config(config)?;
+        result
+            .plan
+            .requirements
+            .retain(|item| item.role != "tied_lm_head");
+        let dtype = match result.config.weight_storage_dtype {
+            Lfm2StorageDType::F32 => StorageDType::F32,
+            Lfm2StorageDType::BF16 => StorageDType::BF16,
+        };
+        push(
+            &mut result.plan.requirements,
+            "classification_head",
+            "classification_head.weight",
+            dtype,
+            &[u64::from(classes), u64::from(result.config.hidden_size)],
+            WeightLayout::Identity,
+            None,
+        )?;
+        result.classes = Some(classes);
+        Ok(result)
     }
 
     #[must_use]
@@ -354,6 +386,7 @@ impl Lfm2WeightPlan {
         let name = match role {
             Lfm2WeightRole::TokenEmbedding => "token_embedding".to_owned(),
             Lfm2WeightRole::TiedLmHead => "tied_lm_head".to_owned(),
+            Lfm2WeightRole::ClassificationHead => "classification_head".to_owned(),
             Lfm2WeightRole::EmbeddingNorm => "embedding_norm".to_owned(),
             Lfm2WeightRole::Layer { index, role } => {
                 let kind = self
@@ -556,6 +589,31 @@ impl Lfm2LoadRequest {
         })
     }
 
+    /// Load classifier weights without changing the input vocabulary.
+    pub fn new_classifier(
+        config_bytes: Vec<u8>,
+        expected_config_sha256: [u8; 32],
+        declared_asset_bytes: u64,
+        expected_asset_sha256: [u8; 32],
+        limits: LoaderLimits,
+        classes: u32,
+    ) -> Result<Self> {
+        let config = parse_lfm2_config(&config_bytes)?;
+        let plan = Lfm2WeightPlan::from_config_classifier(config, classes)?;
+        Ok(Self {
+            request: LoadRequest {
+                config_name: LFM2_CONFIG_NAME.to_owned(),
+                config_bytes,
+                expected_config_sha256,
+                declared_asset_bytes,
+                expected_asset_sha256,
+                plan: plan.plan.clone(),
+                limits,
+            },
+            plan,
+        })
+    }
+
     #[must_use]
     pub fn plan(&self) -> &Lfm2WeightPlan {
         &self.plan
@@ -616,6 +674,23 @@ pub struct Lfm2TypedWeights<Buffer> {
 }
 
 impl<Buffer> Lfm2TypedWeights<Buffer> {
+    #[must_use]
+    pub const fn classes(&self) -> Option<u32> {
+        self.plan.classes
+    }
+
+    pub(crate) fn output_width(&self) -> u32 {
+        self.classes().unwrap_or(self.config().vocab_size)
+    }
+
+    pub(crate) fn output_role(&self) -> Lfm2WeightRole {
+        if self.classes().is_some() {
+            Lfm2WeightRole::ClassificationHead
+        } else {
+            Lfm2WeightRole::TiedLmHead
+        }
+    }
+
     #[must_use]
     pub fn config(&self) -> &Lfm2Config {
         self.plan.config()

@@ -226,6 +226,19 @@ impl<B: InferenceOps> Lfm2Executor<B> {
         weights: Lfm2TypedWeights<B::Buffer>,
         limits: Lfm2ExecutionLimits,
     ) -> Result<Self> {
+        if weights.classes().is_some() {
+            return Err(ExecutorError::InvalidArgument(
+                "use Lfm2Classifier for classification weights",
+            ));
+        }
+        Self::new_inner(backend, weights, limits)
+    }
+
+    fn new_inner(
+        backend: B,
+        weights: Lfm2TypedWeights<B::Buffer>,
+        limits: Lfm2ExecutionLimits,
+    ) -> Result<Self> {
         weights.config().validate()?;
         limits.validate(weights.config())?;
         if !weights.config().tie_embedding {
@@ -297,6 +310,78 @@ impl<B: InferenceOps> Lfm2Executor<B> {
         self.context.borrow_backend()?.advance_generation()
     }
 
+    fn prefill_selected(
+        &mut self,
+        input: TokenChunk<'_>,
+        token_ids: &[TokenId],
+    ) -> Result<PrefillChoiceTask<B>> {
+        let tokens = self.accepted_tokens(input, 0)?;
+        if tokens.is_empty() {
+            return Err(ExecutorError::InvalidArgument(
+                "choice prefill requires a nonempty prompt",
+            ));
+        }
+        if token_ids.is_empty() {
+            return Err(ExecutorError::InvalidArgument(
+                "choice selector list is empty",
+            ));
+        }
+        for token in token_ids {
+            if *token >= self.context.weights.output_width() {
+                return Err(ExecutorError::OutOfBounds(
+                    "choice token ID exceeds loaded model vocabulary",
+                ));
+            }
+        }
+        self.context.validate_backend()?;
+        let count = u64::try_from(token_ids.len())
+            .map_err(|_| ExecutorError::Overflow("choice token count exceeds u64"))?;
+        let mut backend = self.context.borrow_backend()?;
+        let mut staged = allocate_empty(&self.context, &mut *backend)?;
+        let mut scratch = Vec::new();
+        let mut gathered = allocate(&mut *backend, shape(1, count)?, AllocationClass::Scratch)?;
+        let recorded = (|| -> Result<B::Readback> {
+            append_tokens(
+                &self.context,
+                &mut *backend,
+                &mut staged,
+                &tokens,
+                TokenIds::Host(&tokens),
+                true,
+                &mut scratch,
+            )?;
+            let Some(logits) = staged.next_logits.as_ref() else {
+                return Err(ExecutorError::BackendFailure(
+                    "choice prefill produced no logits boundary",
+                ));
+            };
+            backend.gather_columns(&mut gathered.buffer, &logits.buffer, token_ids)?;
+            backend.read_f32_async(&gathered.buffer)
+        })();
+        let readback = match recorded {
+            Ok(readback) => readback,
+            Err(error) => {
+                // Recorded work may be live in a pending device queue without a
+                // completion boundary; retain every owned buffer rather than
+                // dropping it into an unknown device state.
+                scratch.push(gathered.buffer);
+                scratch.extend(staged.into_buffers());
+                drop(backend);
+                self.context.quarantine_unfenced(scratch, Vec::new());
+                return Err(error);
+            }
+        };
+        drop(backend);
+        Ok(PrefillChoiceTask::new(
+            Rc::clone(&self.context),
+            staged,
+            gathered,
+            scratch,
+            readback,
+            token_ids.len(),
+        ))
+    }
+
     fn accepted_tokens(&self, input: TokenChunk<'_>, base: u64) -> Result<Vec<TokenId>> {
         input.validate()?;
         let mut tokens = Vec::new();
@@ -331,9 +416,37 @@ impl<B: InferenceOps> Lfm2Executor<B> {
     }
 }
 
+/// Last-valid-token classifier sharing the LFM2 backbone and finite backend ops.
+/// Every call starts with empty attention and convolution state.
+pub struct Lfm2Classifier<B: InferenceOps> {
+    executor: Lfm2Executor<B>,
+    selectors: Vec<TokenId>,
+}
+
+impl<B: InferenceOps> Lfm2Classifier<B> {
+    pub fn new(
+        backend: B,
+        weights: Lfm2TypedWeights<B::Buffer>,
+        limits: Lfm2ExecutionLimits,
+    ) -> Result<Self> {
+        let classes = weights.classes().ok_or(ExecutorError::InvalidArgument(
+            "classification head required",
+        ))?;
+        Ok(Self {
+            executor: Lfm2Executor::new_inner(backend, weights, limits)?,
+            selectors: (0..classes).collect(),
+        })
+    }
+
+    /// Return raw class logits. The caller owns any action mask and sampling policy.
+    pub fn classify(&mut self, input: TokenChunk<'_>) -> Result<PrefillChoiceTask<B>> {
+        self.executor.prefill_selected(input, &self.selectors)
+    }
+}
+
 fn validate_roles<B: InferenceOps>(weights: &Lfm2TypedWeights<B::Buffer>) -> Result<()> {
     let _ = weights.resolve(Lfm2WeightRole::TokenEmbedding)?;
-    let _ = weights.resolve(Lfm2WeightRole::TiedLmHead)?;
+    let _ = weights.resolve(weights.output_role())?;
     let _ = weights.resolve(Lfm2WeightRole::EmbeddingNorm)?;
     for (index, kind) in weights.config().layers.iter().copied().enumerate() {
         match kind {
@@ -1067,7 +1180,7 @@ fn append_tokens<B: InferenceOps>(
     if produce_logits {
         let mut logits = allocate(
             backend,
-            shape(1, u64::from(config.vocab_size))?,
+            shape(1, u64::from(context.weights.output_width()))?,
             AllocationClass::Cache,
         )?;
         if rows == 1 {
@@ -1076,7 +1189,7 @@ fn append_tokens<B: InferenceOps>(
                 &mut logits.buffer,
                 &u.buffer,
                 &context.weights,
-                Lfm2WeightRole::TiedLmHead,
+                context.weights.output_role(),
             )?;
         } else {
             let mut last = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
@@ -1090,7 +1203,7 @@ fn append_tokens<B: InferenceOps>(
                 &mut logits.buffer,
                 &last.buffer,
                 &context.weights,
-                Lfm2WeightRole::TiedLmHead,
+                context.weights.output_role(),
             )?;
             push_scratch::<B>(scratch, [last.buffer]);
         }
@@ -2546,71 +2659,7 @@ impl<B: InferenceOps> TokenChoiceExecutor for Lfm2Executor<B> {
         input: TokenChunk<'_>,
         token_ids: &[TokenId],
     ) -> Result<Self::ChoicePrefill> {
-        let tokens = self.accepted_tokens(input, 0)?;
-        if tokens.is_empty() {
-            return Err(ExecutorError::InvalidArgument(
-                "choice prefill requires a nonempty prompt",
-            ));
-        }
-        if token_ids.is_empty() {
-            return Err(ExecutorError::InvalidArgument(
-                "choice selector list is empty",
-            ));
-        }
-        for token in token_ids {
-            if *token >= self.context.config().vocab_size {
-                return Err(ExecutorError::OutOfBounds(
-                    "choice token ID exceeds loaded model vocabulary",
-                ));
-            }
-        }
-        self.context.validate_backend()?;
-        let count = u64::try_from(token_ids.len())
-            .map_err(|_| ExecutorError::Overflow("choice token count exceeds u64"))?;
-        let mut backend = self.context.borrow_backend()?;
-        let mut staged = allocate_empty(&self.context, &mut *backend)?;
-        let mut scratch = Vec::new();
-        let mut gathered = allocate(&mut *backend, shape(1, count)?, AllocationClass::Scratch)?;
-        let recorded = (|| -> Result<B::Readback> {
-            append_tokens(
-                &self.context,
-                &mut *backend,
-                &mut staged,
-                &tokens,
-                TokenIds::Host(&tokens),
-                true,
-                &mut scratch,
-            )?;
-            let Some(logits) = staged.next_logits.as_ref() else {
-                return Err(ExecutorError::BackendFailure(
-                    "choice prefill produced no logits boundary",
-                ));
-            };
-            backend.gather_columns(&mut gathered.buffer, &logits.buffer, token_ids)?;
-            backend.read_f32_async(&gathered.buffer)
-        })();
-        let readback = match recorded {
-            Ok(readback) => readback,
-            Err(error) => {
-                // Recorded work may be live in a pending device queue without a
-                // completion boundary; retain every owned buffer rather than
-                // dropping it into an unknown device state.
-                scratch.push(gathered.buffer);
-                scratch.extend(staged.into_buffers());
-                drop(backend);
-                self.context.quarantine_unfenced(scratch, Vec::new());
-                return Err(error);
-            }
-        };
-        drop(backend);
-        Ok(PrefillChoiceTask::new(
-            Rc::clone(&self.context),
-            staged,
-            gathered,
-            scratch,
-            readback,
-            token_ids.len(),
-        ))
+        self.prefill_selected(input, token_ids)
     }
 
     fn prefill_choice_base(&mut self, input: TokenChunk<'_>) -> Result<Self::Prefill> {

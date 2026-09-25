@@ -73,3 +73,30 @@ required). The page fetches `config.json`, the packed safetensors, and
   and `generate_json` appends only the short user/assistant tail onto the
   cached KV prefix; the tail's pending sample is verified against the
   grammar mask, with a full masked prefill as the fallback.
+
+## Dense classifiers
+
+`load_classifier(config, weights, tokenizer, classes)` loads a dense F32 or
+BF16 backbone with `classification_head.weight` shaped `[classes, hidden]`.
+BF16 expands to FP32 at load time. `classify(prompt)` returns raw class
+scores from the final valid token. It adds no template or special tokens,
+and starts with empty attention and convolution state on every call.
+Callers own action masks, sampling, prompts, and game state.
+
+The core `Lfm2Classifier` uses the same backbone and backend operations as
+`Lfm2Executor`. Input vocabulary size remains independent of class count.
+A classifier cannot be constructed as a language-model executor, and a
+tied language-model head cannot be used as a classifier.
+
+For native GPU verification of a bundle containing `config.json`,
+`tokenizer.json`, and `model.safetensors`:
+
+```sh
+cargo run --release -p minifield-web-demo --example classify -- \
+  /path/to/bundle /path/to/prompts.json
+```
+
+The prompt file is a JSON array of strings. Output is one JSON record per
+prompt with exact token IDs, raw logits, and elapsed inference seconds.
+This exercises the same classifier and wgpu kernels as the WASM build;
+it doesn't replace browser validation.

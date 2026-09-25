@@ -396,9 +396,14 @@ K16 stays at the thread cap. That is why doubling barrier rounds
 still won. Consequence: f16 staging cannot add occupancy (already
 thread-bound), so any f16 gain is threadgroup-memory bandwidth only.
 
-Metal System Trace capture (xctrace, kernel_bench run): command
-buffers serialize back-to-back within the 30-rep submissions; no
-per-dispatch counter access headlessly (needs Xcode frame capture).
+Metal System Trace capture (xctrace on kernel_bench,
+/tmp/mst_nf4.trace): command-buffer granularity only, and each bench
+iteration encodes 30 reps inside one submission, so intra-submission
+dispatch gaps are invisible at that level. Per-dispatch counters
+(ALU/memory/occupancy) need an Xcode GPU frame capture with counter
+sampling, which is GUI-bound. The occupancy table above stands in
+for the counter-level check: K16 is already at the thread cap, so
+occupancy cannot explain any remaining gap; traffic does.
 
 FP16 staging experiment (MINI_NF4_STAGE_F16=w|x|wx selects weights /
 activations / both; nf4_prefill_f16.wgsl keeps f32 decode, f32
@@ -411,18 +416,42 @@ product; rel spikes only on near-zero elements. Parity holds at a
 dedicated 0.1 abs / 0.02 rel bound under the knob; production stays
 at 1e-4.
 
-Timings at m=346 (interleaved runs, 30 reps):
+Timings at m=346. packed_linear runs were 30-rep interleaved (tight);
+the fused rows below came from classifier_prefill_components at 6
+reps with ~5% ambient swing, so treat single-run deltas under ~4% as
+noise.
 
-| variant | down k=2560 | pair k=1024 n=2560 | notes |
-|---|---|---|---|
-| f32 | 2729-2730 | 3508 | |
-| w-f16 | ~1-3% win | ~-1% | flat-to-small win |
-| x-f16 | ~1-2% win | +3% | slight regression fused |
-| wx-f16 | 2688-2684 (-1.5%) | 3326 (-5%) | consistent small win |
+plain GEMM (packed_linear, interleaved, trusted):
 
-But packed_swiglu_linear (silu(gate)*up staged input, single weight)
-regressed +11.6% under wx while the same-shape plain GEMM won -1.5%;
-fused ops pay the conversions without a traffic payoff. Net: ~1.5-2%
-on the plain GEMM only, inconsistent elsewhere, plus f16 rounding.
-Not worth production cost; the knob + parity tolerance stay dev-only
-for revisiting after the ternary QAT changes decode cost.
+| variant | k=2560 n=1024 | k=1024 n=2560 |
+|---|---|---|
+| f32 | 2729-2730 | 2536-2542 |
+| w-f16 | 2708 | 2485 |
+| x-f16 | 2714 | 2481 |
+| wx-f16 | 2684-2688 (-1.5%) | 2460-2477 (-2.7%) |
+
+m=320 aligned check (k=2560 n=1024 / k=1024 n=2560): f32 2316/2289,
+w 2298/2231, x 2256/2235, wx 2251/2220. Same ~2-3% shape: the win is
+not an m=346 padding artifact.
+
+packed_prefill_bench corroboration under wx: nf4 k=1024 n=1024
+1114.8->1076.4 (-3.4%), k=1024 n=3072 3030.6->2948.0 (-2.7%),
+k=2560 n=1024 2731.2->2689.6 (-1.5%); nf4=false rows unchanged.
+
+fused ops at m=346 (6 reps, noisy):
+
+| op | f32 | w-f16 | x-f16 | wx-f16 |
+|---|---|---|---|---|
+| pair k=1024 n=2560 | 3508 | 3460 | 3624 | 3326 |
+| packed_swiglu_linear k=2560 | 2887 | 2886 | 3048 | 3222 |
+| pair+swiglu fused | 3436 | 3380 | 3767 | 3321 |
+| E2 total | 6393 | 6083 | 6643 | 5952 |
+
+The swilin regression isolates to x-f16 (+6%) and compounds to +12%
+at wx while the same-shape plain GEMM wins -1.5%: its input_value
+computes silu(gate)*up per staged element, so activations-f16 pays
+conversions on a transcendental result with no weight-array partner
+to amortize them. Net: ~1.5-2% on the plain GEMM only, inconsistent
+elsewhere, plus f16 rounding. Not worth production cost; the knob +
+parity tolerance stay dev-only for revisiting after the ternary QAT
+changes decode cost.

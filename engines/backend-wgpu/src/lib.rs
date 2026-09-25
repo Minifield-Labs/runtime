@@ -219,6 +219,7 @@ impl WgpuBackend {
             .with(OperationKind::PackedLinear)
             .with(OperationKind::PackedLinearPair)
             .with(OperationKind::PackedSwigluLinear)
+            .with(OperationKind::PackedSwigluPair)
             .with(OperationKind::AddRowRmsNorm)
             .with(OperationKind::QkNormRope)
             .with(OperationKind::Argmax);
@@ -1067,8 +1068,8 @@ impl WgpuBackend {
         let vec_ok = u32::from(inner % 4 == 0);
         // Multi-token tiles amortize each nibble decode across 8 input rows;
         // m == 1 keeps the single-token kernel.
-        if format == PackedStreamFormat::Nf4V1 && rows >= 32 {
-            let columns = output_width.div_ceil(32);
+        if format == PackedStreamFormat::Nf4V1 && rows >= 96 {
+            let columns = output_width.div_ceil(64);
             let groups = rows
                 .div_ceil(32)
                 .checked_mul(columns)
@@ -1370,10 +1371,10 @@ impl WgpuBackend {
         // `x4` rebinds the activation as vec4 for 128-bit loads when the inner
         // dimension is 4-aligned; the kernel flag falls back to scalar reads.
         let vec_ok = u32::from(inner % 4 == 0);
-        if format == PackedStreamFormat::Nf4V1 && rows >= 32 {
+        if format == PackedStreamFormat::Nf4V1 && rows >= 96 {
             let columns = output_width.div_ceil(32);
             let groups = rows
-                .div_ceil(32)
+                .div_ceil(64)
                 .checked_mul(columns)
                 .ok_or(ExecutorError::Overflow("NF4 prefill grid overflows u64"))?;
             return self.device.dispatch(
@@ -1479,10 +1480,10 @@ impl WgpuBackend {
         // `gate4`/`up4` rebind the operands as vec4 when the inner dimension is
         // 4-aligned; the kernel flag falls back to scalar reads.
         let vec_ok = u32::from(inner % 4 == 0);
-        if format == PackedStreamFormat::Nf4V1 && rows >= 32 {
+        if format == PackedStreamFormat::Nf4V1 && rows >= 96 {
             let columns = output_width.div_ceil(32);
             let groups = rows
-                .div_ceil(32)
+                .div_ceil(64)
                 .checked_mul(columns)
                 .ok_or(ExecutorError::Overflow("NF4 prefill grid overflows u64"))?;
             return self.device.dispatch(
@@ -1536,6 +1537,80 @@ impl WgpuBackend {
                 0,
             ]),
             flat_grid(workgroups)?,
+        )
+    }
+
+    /// Paired packed projection with the SwiGLU epilogue inside the GEMM:
+    /// `output[t, r] = silu(a[t, r]) * b[t, r]`. Each invocation already owns
+    /// the finished gate and up fragments, so one hidden buffer replaces the
+    /// separate gate/up materialization.
+    #[allow(clippy::too_many_arguments)]
+    pub fn packed_swiglu_pair(
+        &self,
+        output: &mut WgpuBuffer,
+        input: &WgpuBuffer,
+        codes_a: &WgpuBuffer,
+        scales_a: &WgpuBuffer,
+        codes_b: &WgpuBuffer,
+        scales_b: &WgpuBuffer,
+    ) -> Result<()> {
+        self.check_operation(OperationKind::PackedSwigluPair)?;
+        self.check_f32_buffer(input)?;
+        if codes_a.descriptor.layout.shape() != codes_b.descriptor.layout.shape()
+            || scales_a.descriptor.layout.shape() != scales_b.descriptor.layout.shape()
+        {
+            return Err(ExecutorError::InvalidShape(
+                "packed SwiGLU pair requires equal weight shapes",
+            ));
+        }
+        let (output_width, inner, format) = self.check_packed_operands(codes_a, scales_a)?;
+        self.check_packed_operands(codes_b, scales_b)?;
+        let input_shape = input.descriptor.layout.shape();
+        if input_shape.rank() != 2 {
+            return Err(ExecutorError::InvalidShape(
+                "packed SwiGLU pair input must be rank two",
+            ));
+        }
+        if input_shape.dim(1)? != inner {
+            return Err(ExecutorError::InvalidShape(
+                "packed SwiGLU pair input width differs from weight width",
+            ));
+        }
+        let rows = input_shape.dim(0)?;
+        self.check_output_shape(output, Shape::new(&[rows, output_width])?)?;
+        if rows == 0 || output_width == 0 {
+            return Ok(());
+        }
+        if inner == 0 {
+            self.device
+                .record_clear(output.wgpu_buffer()?, output.byte_len());
+            return Ok(());
+        }
+        let destination = output.wgpu_buffer()?.clone();
+        let x = input.wgpu_buffer()?.clone();
+        let ca = codes_a.wgpu_buffer()?.clone();
+        let sa = scales_a.wgpu_buffer()?.clone();
+        let cb = codes_b.wgpu_buffer()?.clone();
+        let sb = scales_b.wgpu_buffer()?.clone();
+        let kernel = match format {
+            PackedStreamFormat::TernaryV1 => Kernel::PackedGemmPairSwiglu,
+            PackedStreamFormat::Nf4V1 => Kernel::PackedGemmPairSwigluNf4,
+        };
+        let columns = output_width.div_ceil(32);
+        let groups = rows
+            .div_ceil(64)
+            .checked_mul(columns)
+            .ok_or(ExecutorError::Overflow("SwiGLU pair grid overflows u64"))?;
+        self.device.dispatch(
+            kernel,
+            &[&destination, &x, &ca, &sa, &cb, &sb, &x],
+            &params(&[
+                param32(rows)?,
+                param32(output_width)?,
+                param32(inner)?,
+                param32(columns)?,
+            ]),
+            flat_grid(groups)?,
         )
     }
 
@@ -2578,6 +2653,18 @@ impl InferenceOps for WgpuBackend {
         scales: &Self::Buffer,
     ) -> Result<()> {
         WgpuBackend::packed_swiglu_linear(self, output, gate, up, codes, scales)
+    }
+
+    fn packed_swiglu_pair(
+        &self,
+        output: &mut Self::Buffer,
+        input: &Self::Buffer,
+        codes_a: &Self::Buffer,
+        scales_a: &Self::Buffer,
+        codes_b: &Self::Buffer,
+        scales_b: &Self::Buffer,
+    ) -> Result<()> {
+        WgpuBackend::packed_swiglu_pair(self, output, input, codes_a, scales_a, codes_b, scales_b)
     }
 
     fn add_row_rms_norm(

@@ -13,9 +13,31 @@
 )]
 
 use minifield_backend_wgpu::{WgpuBackend, WgpuBuffer};
+
 use minifield_engine_api::{
     AllocationClass, CompletionPoll, GqaSpec, InferenceCompletion, ResourceLimits, Shape,
 };
+
+/// Capability probe for the native-only cooperative-matrix path the E9
+/// experiment would need. Prints adapter info, experimental feature
+/// support, and the cooperative matrix configurations the driver offers.
+#[test]
+fn cooperative_matrix_probe() {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let adapter =
+        match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+        {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("no adapter: {e}");
+                return;
+            }
+        };
+    eprintln!("adapter: {:?}", adapter.get_info());
+    let props = adapter.cooperative_matrix_properties();
+    eprintln!("cooperative matrix configs: {props:#?}");
+    eprintln!("empty = unsupported on this adapter/driver");
+}
 
 fn gpu() -> Option<WgpuBackend> {
     WgpuBackend::new(
@@ -271,6 +293,48 @@ fn packed_prefill_bench() {
     eprintln!("prefill bench done");
 }
 
+/// E5 probe: scale m at the down-projection shape to separate per-row-tile
+/// decode amplification from per-column tile work.
+#[test]
+fn packed_m_scaling_bench() {
+    let Some(backend) = gpu() else {
+        eprintln!("no wgpu adapter; skipping");
+        return;
+    };
+    let mut backend = backend;
+    for (m, k, n) in [
+        (80_u64, 2560_u64, 1024_u64),
+        (96, 2560, 1024),
+        (112, 2560, 1024),
+        (256, 2560, 1024),
+        (346, 2560, 1024),
+        (80, 1024, 2560),
+        (112, 1024, 2560),
+        (346, 1024, 2560),
+    ] {
+        let x = backend
+            .upload_f32(
+                Shape::new(&[m, k]).expect("x shape"),
+                &vec![0.25f32; (m * k) as usize],
+            )
+            .expect("x");
+        let (codes, scales) = packed_fmt(&mut backend, k, n, true);
+        let mut out = backend
+            .allocate_f32_classified(Shape::new(&[m, n]).expect("out"), AllocationClass::Scratch)
+            .expect("out");
+        bench(
+            &backend,
+            &format!("packed_linear nf4 m={m} k={k} n={n}"),
+            30,
+            || {
+                backend
+                    .packed_linear(&mut out, &x, &codes, &scales)
+                    .expect("op");
+            },
+        );
+    }
+}
+
 /// Dense GEMM reference at prefill width for the same projection shape.
 #[test]
 fn dense_prefill_bench() {
@@ -373,6 +437,33 @@ fn classifier_prefill_components() {
     bench(&backend, "NF4 FFN down m=346 k=2560 n=1024", 6, || {
         backend
             .packed_swiglu_linear(&mut output, &gate, &up, &cd, &sd)
+            .expect("ffn down");
+    });
+    let mut hidden = backend
+        .allocate_f32(Shape::new(&[m, 2560]).expect("hidden"))
+        .expect("hidden alloc");
+    bench(
+        &backend,
+        "E1 swiglu + NF4 down m=346 k=2560 n=1024",
+        6,
+        || {
+            backend.swiglu(&mut hidden, &gate, &up).expect("ffn swiglu");
+            backend
+                .packed_linear(&mut output, &hidden, &cd, &sd)
+                .expect("ffn down");
+        },
+    );
+    bench(&backend, "E2 pair+swiglu m=346 k=1024 n=2560", 6, || {
+        backend
+            .packed_swiglu_pair(&mut hidden, &query, &ca, &sa, &cb, &sb)
+            .expect("ffn pair swiglu");
+    });
+    bench(&backend, "E2 pair_swiglu + NF4 down m=346", 6, || {
+        backend
+            .packed_swiglu_pair(&mut hidden, &query, &ca, &sa, &cb, &sb)
+            .expect("ffn pair swiglu");
+        backend
+            .packed_linear(&mut output, &hidden, &cd, &sd)
             .expect("ffn down");
     });
 }

@@ -373,6 +373,7 @@ impl CpuBackend {
             .with(OperationKind::PackedLinear)
             .with(OperationKind::PackedLinearPair)
             .with(OperationKind::PackedSwigluLinear)
+            .with(OperationKind::PackedSwigluPair)
             .with(OperationKind::AddRowRmsNorm)
             .with(OperationKind::QkNormRope)
             .with(OperationKind::Argmax);
@@ -1968,6 +1969,102 @@ impl CpuBackend {
         self.packed_linear(out_b, input, codes_b, scales_b)
     }
 
+    /// Paired packed projection with a fused SwiGLU epilogue:
+    /// `silu(a[t, r]) * b[t, r]` where `a` and `b` are the two packed
+    /// row dots against the shared input. The activation is applied only
+    /// after both reductions complete.
+    pub fn packed_swiglu_pair(
+        &self,
+        output: &mut CpuBuffer,
+        input: &CpuBuffer,
+        codes_a: &CpuBuffer,
+        scales_a: &CpuBuffer,
+        codes_b: &CpuBuffer,
+        scales_b: &CpuBuffer,
+    ) -> Result<()> {
+        self.check_operation(OperationKind::PackedSwigluPair)?;
+        self.check_f32_buffer(input)?;
+        if codes_a.descriptor.layout.shape() != codes_b.descriptor.layout.shape()
+            || scales_a.descriptor.layout.shape() != scales_b.descriptor.layout.shape()
+        {
+            return Err(ExecutorError::InvalidShape(
+                "packed SwiGLU pair requires equal weight shapes",
+            ));
+        }
+        let (output_width, inner, format) = self.check_packed_operands(codes_a, scales_a)?;
+        let input_shape = input.descriptor.layout.shape();
+        if input_shape.rank() != 2 {
+            return Err(ExecutorError::InvalidShape(
+                "packed SwiGLU pair input must be rank two",
+            ));
+        }
+        let rows = usize::try_from(input_shape.dim(0)?)
+            .map_err(|_| ExecutorError::Overflow("packed SwiGLU pair rows exceed usize"))?;
+        if usize::try_from(input_shape.dim(1)?)
+            .map_err(|_| ExecutorError::Overflow("packed SwiGLU pair width exceeds usize"))?
+            != inner
+        {
+            return Err(ExecutorError::InvalidShape(
+                "packed SwiGLU pair input width differs from weight width",
+            ));
+        }
+        self.check_output_shape(
+            output,
+            Shape::new(&[
+                u64::try_from(rows)
+                    .map_err(|_| ExecutorError::Overflow("packed SwiGLU pair rows overflow u64"))?,
+                u64::try_from(output_width).map_err(|_| {
+                    ExecutorError::Overflow("packed SwiGLU pair width overflows u64")
+                })?,
+            ])?,
+        )?;
+        let code_width = inner / format.weights_per_byte();
+        let groups = inner / 128;
+        let row_dot = match format {
+            minifield_kernels_simd::PackedWeightFormat::TernaryV1 => {
+                minifield_kernels_simd::ternary_row_dot
+            }
+            minifield_kernels_simd::PackedWeightFormat::Nf4V1 => {
+                minifield_kernels_simd::nf4_row_dot
+            }
+        };
+        for row in 0..rows {
+            let input_start = row.checked_mul(inner).ok_or(ExecutorError::Overflow(
+                "packed SwiGLU pair input offset overflows usize",
+            ))?;
+            let x = &input.values[input_start..input_start + inner];
+            for column in 0..output_width {
+                let code_start = column
+                    .checked_mul(code_width)
+                    .ok_or(ExecutorError::Overflow(
+                        "packed SwiGLU pair code offset overflows usize",
+                    ))?;
+                let scale_start = column.checked_mul(groups).ok_or(ExecutorError::Overflow(
+                    "packed SwiGLU pair scale offset overflows usize",
+                ))?;
+                let gate = row_dot(
+                    &codes_a.bytes[code_start..code_start + code_width],
+                    &scales_a.values[scale_start..scale_start + groups],
+                    x,
+                );
+                let up = row_dot(
+                    &codes_b.bytes[code_start..code_start + code_width],
+                    &scales_b.values[scale_start..scale_start + groups],
+                    x,
+                );
+                let sigmoid = 1.0_f32 / (1.0_f32 + (-gate).exp());
+                let value = (gate * sigmoid) * up;
+                if !value.is_finite() {
+                    return Err(ExecutorError::BackendFailure(
+                        "packed SwiGLU pair produced a non-finite value",
+                    ));
+                }
+                output.values[row * output_width + column] = value;
+            }
+        }
+        Ok(())
+    }
+
     /// Packed ternary projection over an on-the-fly `SiLU(gate) * up`
     /// activation. The staged activation feeds the same SIMD row dot as
     /// `packed_linear`.
@@ -2616,6 +2713,18 @@ impl InferenceOps for CpuBackend {
         scales: &Self::Buffer,
     ) -> Result<()> {
         CpuBackend::packed_swiglu_linear(self, output, gate, up, codes, scales)
+    }
+
+    fn packed_swiglu_pair(
+        &self,
+        output: &mut Self::Buffer,
+        input: &Self::Buffer,
+        codes_a: &Self::Buffer,
+        scales_a: &Self::Buffer,
+        codes_b: &Self::Buffer,
+        scales_b: &Self::Buffer,
+    ) -> Result<()> {
+        CpuBackend::packed_swiglu_pair(self, output, input, codes_a, scales_a, codes_b, scales_b)
     }
 
     fn add_row_rms_norm(

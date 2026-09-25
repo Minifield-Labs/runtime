@@ -698,6 +698,19 @@ impl InferenceOps for DeferredBackend {
             .packed_swiglu_linear(output, gate, up, codes, scales)
     }
 
+    fn packed_swiglu_pair(
+        &self,
+        output: &mut Self::Buffer,
+        input: &Self::Buffer,
+        codes_a: &Self::Buffer,
+        scales_a: &Self::Buffer,
+        codes_b: &Self::Buffer,
+        scales_b: &Self::Buffer,
+    ) -> Result<()> {
+        self.cpu
+            .packed_swiglu_pair(output, input, codes_a, scales_a, codes_b, scales_b)
+    }
+
     fn add_row_rms_norm(
         &self,
         sum: &mut Self::Buffer,

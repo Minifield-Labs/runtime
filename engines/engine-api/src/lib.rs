@@ -210,6 +210,7 @@ pub enum OperationKind {
     AddRowRmsNorm,
     PackedLinearPair,
     PackedSwigluLinear,
+    PackedSwigluPair,
     QkNormRope,
     Argmax,
     GatherColumns,
@@ -1191,6 +1192,25 @@ pub trait InferenceOps {
         up: &Self::Buffer,
         codes: &Self::Buffer,
         scales: &Self::Buffer,
+    ) -> Result<()>;
+
+    /// Paired packed linear over one shared input with a fused SwiGLU
+    /// epilogue: `output[t, r] = silu(a[t, r]) * b[t, r]` where `a` and `b`
+    /// are the `packed_linear` results of `input` against `codes_a`/`scales_a`
+    /// and `codes_b`/`scales_b` respectively. Both weight sets share the
+    /// `minifield.ternary.v1` layout and must have identical `[R, K]` shapes,
+    /// and `output` is f32 `[T, R]`. Semantically equal to
+    /// `packed_linear_pair` followed by `swiglu`; backends may fuse the
+    /// activation into the projection epilogue.
+    #[allow(clippy::too_many_arguments)]
+    fn packed_swiglu_pair(
+        &self,
+        output: &mut Self::Buffer,
+        input: &Self::Buffer,
+        codes_a: &Self::Buffer,
+        scales_a: &Self::Buffer,
+        codes_b: &Self::Buffer,
+        scales_b: &Self::Buffer,
     ) -> Result<()>;
 
     /// Fused residual add plus row RMS norm: `sum = left + right` and

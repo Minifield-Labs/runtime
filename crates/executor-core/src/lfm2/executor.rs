@@ -1060,93 +1060,169 @@ fn append_tokens<B: InferenceOps>(
                 .buffer_for(layer_role(index, Lfm2LayerWeightRole::FfnNorm))?,
             config.block_norm_epsilon,
         )?;
-        let mut gate = allocate(
-            backend,
-            shape(rows, intermediate)?,
-            AllocationClass::Scratch,
-        )?;
-        let mut up = allocate(
-            backend,
-            shape(rows, intermediate)?,
-            AllocationClass::Scratch,
-        )?;
-        if let (
-            Lfm2ResolvedWeight::Packed {
-                codes: gate_codes,
-                scales: gate_scales,
-            },
-            Lfm2ResolvedWeight::Packed {
-                codes: up_codes,
-                scales: up_scales,
-            },
-        ) = (
-            context
-                .weights
-                .resolve(layer_role(index, Lfm2LayerWeightRole::FfnW1))?,
-            context
-                .weights
-                .resolve(layer_role(index, Lfm2LayerWeightRole::FfnW3))?,
-        ) {
-            backend.packed_linear_pair(
-                &mut gate.buffer,
-                &mut up.buffer,
+        // After the final layer's sequence mixing, only the last token row is
+        // consumed (logits read row `rows - 1` alone). Run that FFN at m = 1
+        // and drop the other rows' gate/up/down work entirely.
+        let last_layer = index + 1 == config.layers.len();
+        let ffn_rows = if last_layer { 1 } else { rows };
+        if ffn_rows != rows {
+            let mut sliced_input = allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
+            backend.copy_rect_2d(
+                &mut sliced_input.buffer,
                 &ffn_input.buffer,
-                gate_codes,
-                gate_scales,
-                up_codes,
-                up_scales,
+                RectCopy2d::new(rows - 1, 0, 0, 0, 1, hidden),
             )?;
-        } else {
-            weight_linear(
-                backend,
-                &mut gate.buffer,
-                &ffn_input.buffer,
-                &context.weights,
-                layer_role(index, Lfm2LayerWeightRole::FfnW1),
+            let mut sliced_residual =
+                allocate(backend, shape(1, hidden)?, AllocationClass::Scratch)?;
+            backend.copy_rect_2d(
+                &mut sliced_residual.buffer,
+                &residual.buffer,
+                RectCopy2d::new(rows - 1, 0, 0, 0, 1, hidden),
             )?;
-            weight_linear(
-                backend,
-                &mut up.buffer,
-                &ffn_input.buffer,
-                &context.weights,
-                layer_role(index, Lfm2LayerWeightRole::FfnW3),
-            )?;
+            push_scratch::<B>(scratch, [ffn_input.buffer, residual.buffer]);
+            ffn_input = sliced_input;
+            residual = sliced_residual;
         }
-        let mut down = allocate(backend, shape(rows, hidden)?, AllocationClass::Scratch)?;
-        match context
-            .weights
-            .resolve(layer_role(index, Lfm2LayerWeightRole::FfnW2))?
-        {
-            Lfm2ResolvedWeight::Packed { codes, scales } => {
-                backend.packed_swiglu_linear(
-                    &mut down.buffer,
-                    &gate.buffer,
-                    &up.buffer,
-                    codes,
-                    scales,
-                )?;
-            }
-            Lfm2ResolvedWeight::Dense(_) => {
-                let mut activated = allocate(
+        let mut down = allocate(backend, shape(ffn_rows, hidden)?, AllocationClass::Scratch)?;
+        // Prefill on a fully packed FFN applies SwiGLU inside the gate/up
+        // projection's epilogue, so the down projection consumes one hidden
+        // buffer instead of recomputing the activation per output tile. The
+        // fused op only exists as a tiled GEMM, so below the backend's
+        // multi-token crossover the pair + SwiGLU-linear path (which has
+        // short-row kernels) is the faster route.
+        let fused = ffn_rows >= 96
+            && if let (
+                Lfm2ResolvedWeight::Packed {
+                    codes: gate_codes,
+                    scales: gate_scales,
+                },
+                Lfm2ResolvedWeight::Packed {
+                    codes: up_codes,
+                    scales: up_scales,
+                },
+                Lfm2ResolvedWeight::Packed {
+                    codes: down_codes,
+                    scales: down_scales,
+                },
+            ) = (
+                context
+                    .weights
+                    .resolve(layer_role(index, Lfm2LayerWeightRole::FfnW1))?,
+                context
+                    .weights
+                    .resolve(layer_role(index, Lfm2LayerWeightRole::FfnW3))?,
+                context
+                    .weights
+                    .resolve(layer_role(index, Lfm2LayerWeightRole::FfnW2))?,
+            ) {
+                let mut hidden = allocate(
                     backend,
-                    shape(rows, intermediate)?,
+                    shape(ffn_rows, intermediate)?,
                     AllocationClass::Scratch,
                 )?;
-                backend.swiglu(&mut activated.buffer, &gate.buffer, &up.buffer)?;
+                backend.packed_swiglu_pair(
+                    &mut hidden.buffer,
+                    &ffn_input.buffer,
+                    gate_codes,
+                    gate_scales,
+                    up_codes,
+                    up_scales,
+                )?;
+                backend.packed_linear(&mut down.buffer, &hidden.buffer, down_codes, down_scales)?;
+                push_scratch::<B>(scratch, [hidden.buffer]);
+                true
+            } else {
+                false
+            };
+        if !fused {
+            let mut gate = allocate(
+                backend,
+                shape(ffn_rows, intermediate)?,
+                AllocationClass::Scratch,
+            )?;
+            let mut up = allocate(
+                backend,
+                shape(ffn_rows, intermediate)?,
+                AllocationClass::Scratch,
+            )?;
+            if let (
+                Lfm2ResolvedWeight::Packed {
+                    codes: gate_codes,
+                    scales: gate_scales,
+                },
+                Lfm2ResolvedWeight::Packed {
+                    codes: up_codes,
+                    scales: up_scales,
+                },
+            ) = (
+                context
+                    .weights
+                    .resolve(layer_role(index, Lfm2LayerWeightRole::FfnW1))?,
+                context
+                    .weights
+                    .resolve(layer_role(index, Lfm2LayerWeightRole::FfnW3))?,
+            ) {
+                backend.packed_linear_pair(
+                    &mut gate.buffer,
+                    &mut up.buffer,
+                    &ffn_input.buffer,
+                    gate_codes,
+                    gate_scales,
+                    up_codes,
+                    up_scales,
+                )?;
+            } else {
                 weight_linear(
                     backend,
-                    &mut down.buffer,
-                    &activated.buffer,
+                    &mut gate.buffer,
+                    &ffn_input.buffer,
                     &context.weights,
-                    layer_role(index, Lfm2LayerWeightRole::FfnW2),
+                    layer_role(index, Lfm2LayerWeightRole::FfnW1),
                 )?;
-                push_scratch::<B>(scratch, [activated.buffer]);
+                weight_linear(
+                    backend,
+                    &mut up.buffer,
+                    &ffn_input.buffer,
+                    &context.weights,
+                    layer_role(index, Lfm2LayerWeightRole::FfnW3),
+                )?;
             }
+            match context
+                .weights
+                .resolve(layer_role(index, Lfm2LayerWeightRole::FfnW2))?
+            {
+                Lfm2ResolvedWeight::Packed { codes, scales } => {
+                    backend.packed_swiglu_linear(
+                        &mut down.buffer,
+                        &gate.buffer,
+                        &up.buffer,
+                        codes,
+                        scales,
+                    )?;
+                }
+                Lfm2ResolvedWeight::Dense(_) => {
+                    let mut activated = allocate(
+                        backend,
+                        shape(ffn_rows, intermediate)?,
+                        AllocationClass::Scratch,
+                    )?;
+                    backend.swiglu(&mut activated.buffer, &gate.buffer, &up.buffer)?;
+                    weight_linear(
+                        backend,
+                        &mut down.buffer,
+                        &activated.buffer,
+                        &context.weights,
+                        layer_role(index, Lfm2LayerWeightRole::FfnW2),
+                    )?;
+                    push_scratch::<B>(scratch, [activated.buffer]);
+                }
+            }
+            push_scratch::<B>(scratch, [gate.buffer, up.buffer]);
         }
         // The next layer's operator norm (or the final embedding norm) rides
         // on the same fused add+norm pass that produces the residual base.
-        let mut next_x = allocate(backend, shape(rows, hidden)?, AllocationClass::Scratch)?;
-        let mut next_u = allocate(backend, shape(rows, hidden)?, AllocationClass::Scratch)?;
+        let mut next_x = allocate(backend, shape(ffn_rows, hidden)?, AllocationClass::Scratch)?;
+        let mut next_u = allocate(backend, shape(ffn_rows, hidden)?, AllocationClass::Scratch)?;
         let (next_norm, next_epsilon) = if index + 1 < config.layers.len() {
             (
                 layer_role(index + 1, Lfm2LayerWeightRole::OperatorNorm),
@@ -1171,8 +1247,6 @@ fn append_tokens<B: InferenceOps>(
                 operator.buffer,
                 residual.buffer,
                 ffn_input.buffer,
-                gate.buffer,
-                up.buffer,
                 down.buffer,
             ],
         );
@@ -1193,7 +1267,8 @@ fn append_tokens<B: InferenceOps>(
             shape(1, u64::from(context.weights.output_width()))?,
             AllocationClass::Cache,
         )?;
-        if rows == 1 {
+        // A non-empty layer stack already reduced `u` to its last row.
+        if rows == 1 || !config.layers.is_empty() {
             weight_linear(
                 backend,
                 &mut logits.buffer,

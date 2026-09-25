@@ -1426,6 +1426,18 @@ impl InferenceOps for DeferredFenceBackend {
         self.cpu
             .packed_swiglu_linear(output, gate, up, codes, scales)
     }
+    fn packed_swiglu_pair(
+        &self,
+        output: &mut CpuBuffer,
+        input: &CpuBuffer,
+        codes_a: &CpuBuffer,
+        scales_a: &CpuBuffer,
+        codes_b: &CpuBuffer,
+        scales_b: &CpuBuffer,
+    ) -> Result<()> {
+        self.cpu
+            .packed_swiglu_pair(output, input, codes_a, scales_a, codes_b, scales_b)
+    }
     fn add_row_rms_norm(
         &self,
         sum: &mut CpuBuffer,

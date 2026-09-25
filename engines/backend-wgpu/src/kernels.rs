@@ -2079,6 +2079,53 @@ fn weight_b(row: u32, col: u32, k: u32) -> f32 {
 fn store_output(i: u32, a: f32, b: f32) { dst_a[i] = a; dst_b[i] = b; }
 ";
 
+/// `NF4_PAIR_HEADER` with the SwiGLU epilogue folded into the store: each
+/// invocation already owns the finished 2x2 fragments of both projections,
+/// so `silu(gate) * up` writes one hidden value instead of two buffers.
+const NF4_PAIR_SWIGLU_HEADER: &str = r"
+const PAIR: bool = true;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<storage, read> x: array<f32>;
+@group(0) @binding(3) var<storage, read> codes_a: array<u32>;
+@group(0) @binding(4) var<storage, read> scales_a: array<f32>;
+@group(0) @binding(5) var<storage, read> codes_b: array<u32>;
+@group(0) @binding(6) var<storage, read> scales_b: array<f32>;
+@group(0) @binding(7) var<storage, read> x4: array<vec4<f32>>;
+fn input_value(i: u32) -> f32 { return x[i]; }
+fn weight_a(row: u32, col: u32, k: u32) -> f32 {
+    let word = codes_a[row * (k / 8u) + col / 8u];
+    return NF4[(word >> ((col % 8u) * 4u)) & 15u] * scales_a[row * (k / 128u) + col / 128u];
+}
+fn weight_b(row: u32, col: u32, k: u32) -> f32 {
+    let word = codes_b[row * (k / 8u) + col / 8u];
+    return NF4[(word >> ((col % 8u) * 4u)) & 15u] * scales_b[row * (k / 128u) + col / 128u];
+}
+fn store_output(i: u32, a: f32, b: f32) { dst[i] = (a / (1.0 + exp(-a))) * b; }
+";
+
+/// Same fusion for `minifield.ternary.v1` streams: two-bit codes, 16 weights
+/// per u32 word, `code - 1` times the group scale.
+const TERNARY_PAIR_SWIGLU_HEADER: &str = r"
+const PAIR: bool = true;
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+@group(0) @binding(2) var<storage, read> x: array<f32>;
+@group(0) @binding(3) var<storage, read> codes_a: array<u32>;
+@group(0) @binding(4) var<storage, read> scales_a: array<f32>;
+@group(0) @binding(5) var<storage, read> codes_b: array<u32>;
+@group(0) @binding(6) var<storage, read> scales_b: array<f32>;
+@group(0) @binding(7) var<storage, read> x4: array<vec4<f32>>;
+fn input_value(i: u32) -> f32 { return x[i]; }
+fn weight_a(row: u32, col: u32, k: u32) -> f32 {
+    let word = codes_a[row * (k / 16u) + col / 16u];
+    return f32(i32((word >> ((col % 16u) * 2u)) & 3u) - 1) * scales_a[row * (k / 128u) + col / 128u];
+}
+fn weight_b(row: u32, col: u32, k: u32) -> f32 {
+    let word = codes_b[row * (k / 16u) + col / 16u];
+    return f32(i32((word >> ((col % 16u) * 2u)) & 3u) - 1) * scales_b[row * (k / 128u) + col / 128u];
+}
+fn store_output(i: u32, a: f32, b: f32) { dst[i] = (a / (1.0 + exp(-a))) * b; }
+";
+
 const NF4_SWIGLU_HEADER: &str = r"
 const PAIR: bool = false;
 @group(0) @binding(1) var<storage, read_write> dst: array<f32>;
@@ -2128,6 +2175,8 @@ pub enum Kernel {
     PackedGemmPairNf4,
     PackedSwigluGemvMtNf4,
     PackedSwigluGemmNf4,
+    PackedGemmPairSwigluNf4,
+    PackedGemmPairSwiglu,
     AddNorm,
     QkNormRope,
     Argmax,
@@ -2166,6 +2215,8 @@ impl Kernel {
         Self::PackedGemmPairNf4,
         Self::PackedSwigluGemvMtNf4,
         Self::PackedSwigluGemmNf4,
+        Self::PackedGemmPairSwigluNf4,
+        Self::PackedGemmPairSwiglu,
         Self::AddNorm,
         Self::QkNormRope,
         Self::Argmax,
@@ -2197,6 +2248,9 @@ impl Kernel {
             | Self::PackedSwigluGemmNf4 => {
                 0b1111_1100 // gate..up4
             }
+            Self::PackedGemmPairSwigluNf4 | Self::PackedGemmPairSwiglu => {
+                0b1111_1100 // x, a+b streams, x4
+            }
             Self::Argmax | Self::ArgmaxBlocks => 0b1100, // src, allow
             Self::ArgmaxFinal => 0b100,                  // partials
             Self::GatherColumns => 0b110,                // src, cols
@@ -2210,6 +2264,8 @@ impl Kernel {
             Self::PackedGemmNf4 => NF4_LINEAR_HEADER,
             Self::PackedGemmPairNf4 => NF4_PAIR_HEADER,
             Self::PackedSwigluGemmNf4 => NF4_SWIGLU_HEADER,
+            Self::PackedGemmPairSwigluNf4 => NF4_PAIR_SWIGLU_HEADER,
+            Self::PackedGemmPairSwiglu => TERNARY_PAIR_SWIGLU_HEADER,
             Self::Fill => FILL,
             Self::Binary => BINARY,
             Self::Copy2d => COPY2D,
@@ -2244,9 +2300,23 @@ impl Kernel {
         };
         if matches!(
             self,
-            Self::PackedGemmNf4 | Self::PackedGemmPairNf4 | Self::PackedSwigluGemmNf4
+            Self::PackedGemmNf4
+                | Self::PackedGemmPairNf4
+                | Self::PackedSwigluGemmNf4
+                | Self::PackedGemmPairSwigluNf4
+                | Self::PackedGemmPairSwiglu
         ) {
-            return [WGSL_INDEX, NF4_LUT, body, include_str!("nf4_prefill.wgsl")].concat();
+            let lut = if matches!(self, Self::PackedGemmPairSwiglu) {
+                ""
+            } else {
+                NF4_LUT
+            };
+            let tile = if matches!(self, Self::PackedGemmNf4) {
+                include_str!("nf4_prefill_n64.wgsl")
+            } else {
+                include_str!("nf4_prefill.wgsl")
+            };
+            return [WGSL_INDEX, lut, body, tile].concat();
         }
         let mut source = String::with_capacity(WGSL_INDEX.len() + body.len() + 1);
         source.push_str(WGSL_INDEX);
@@ -2299,6 +2369,7 @@ impl Kernel {
             | Self::PackedGemvPairNf4
             | Self::PackedGemvPairMtNf4
             | Self::PackedGemmPairNf4 => 8,
+            Self::PackedGemmPairSwigluNf4 | Self::PackedGemmPairSwiglu => 7,
         }
     }
 
@@ -2332,6 +2403,8 @@ impl Kernel {
             Self::PackedGemvPairMtNf4 => "packed_gemv_pair_mt_nf4",
             Self::PackedSwigluGemmNf4 => "packed_swiglu_gemm_nf4",
             Self::PackedSwigluGemvMtNf4 => "packed_swiglu_gemv_mt_nf4",
+            Self::PackedGemmPairSwigluNf4 => "packed_gemm_pair_swiglu_nf4",
+            Self::PackedGemmPairSwiglu => "packed_gemm_pair_swiglu",
             Self::AddNorm => "add_norm",
             Self::QkNormRope => "qk_norm_rope",
             Self::Argmax => "argmax",

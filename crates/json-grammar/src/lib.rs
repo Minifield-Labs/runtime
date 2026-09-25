@@ -1469,7 +1469,11 @@ mod tests {
         assert!(allows(&mut enforcer, id_of(&vocab, "\"")));
         assert!(!allows(&mut enforcer, id_of(&vocab, "t")));
         assert!(!allows(&mut enforcer, id_of(&vocab, "a")));
-        feed_str(&mut enforcer, &vocab, "\"content\":\"sure\",\"tool_calls\":[");
+        feed_str(
+            &mut enforcer,
+            &vocab,
+            "\"content\":\"sure\",\"tool_calls\":[",
+        );
         // Inside the calls array: `{` opens a call, `]` ends it.
         assert!(allows(&mut enforcer, id_of(&vocab, "{")));
         assert!(allows(&mut enforcer, id_of(&vocab, "]")));
@@ -1490,7 +1494,11 @@ mod tests {
     fn assistant_body_accepts_empty_and_multi_call_arrays() {
         let vocab = assist_vocab();
         let mut enforcer = assist_enforcer(&vocab);
-        feed_str(&mut enforcer, &vocab, "{\"content\":\"ok\",\"tool_calls\":[]}");
+        feed_str(
+            &mut enforcer,
+            &vocab,
+            "{\"content\":\"ok\",\"tool_calls\":[]}",
+        );
         assert!(enforcer.complete());
         assert!(allows(&mut enforcer, 7));
 

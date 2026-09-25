@@ -1158,6 +1158,60 @@ fn packed_swiglu_linear_matches_cpu() {
     }
 }
 
+/// Ternary `packed_swiglu_pair` shares the GEMM template with the NF4
+/// variant; one small shape covers the ternary decode header.
+#[test]
+fn packed_swiglu_pair_ternary_matches_cpu() {
+    let Some(mut backend) = gpu() else { return };
+    let mut reference = cpu();
+    for (m, n, k) in [(1_u64, 37_u64, 256_u64), (5, 37, 384), (33, 37, 256)] {
+        let input_shape = Shape::new(&[m, k]).expect("input shape");
+        let codes_shape = Shape::new(&[n, k / 4]).expect("codes shape");
+        let scales_shape = Shape::new(&[n, k / 128]).expect("scales shape");
+        let out_shape = Shape::new(&[m, n]).expect("out shape");
+        let input = values(41, (m * k) as usize);
+        let (codes_a, scales_a) =
+            pack_weights(&values(43, (n * k) as usize), n as usize, k as usize);
+        let (codes_b, scales_b) =
+            pack_weights(&values(47, (n * k) as usize), n as usize, k as usize);
+        let gpu_in = backend.upload_f32(input_shape, &input).expect("gpu in");
+        let gpu_ca = backend
+            .upload_u8_classified(codes_shape, &codes_a, AllocationClass::Weight)
+            .expect("gpu codes a");
+        let gpu_sa = backend
+            .upload_f32_classified(scales_shape, &scales_a, AllocationClass::Weight)
+            .expect("gpu scales a");
+        let gpu_cb = backend
+            .upload_u8_classified(codes_shape, &codes_b, AllocationClass::Weight)
+            .expect("gpu codes b");
+        let gpu_sb = backend
+            .upload_f32_classified(scales_shape, &scales_b, AllocationClass::Weight)
+            .expect("gpu scales b");
+        let cpu_in = reference.upload_f32(input_shape, &input).expect("cpu in");
+        let cpu_ca = reference
+            .upload_u8_classified(codes_shape, &codes_a, AllocationClass::Weight)
+            .expect("cpu codes a");
+        let cpu_sa = reference
+            .upload_f32_classified(scales_shape, &scales_a, AllocationClass::Weight)
+            .expect("cpu scales a");
+        let cpu_cb = reference
+            .upload_u8_classified(codes_shape, &codes_b, AllocationClass::Weight)
+            .expect("cpu codes b");
+        let cpu_sb = reference
+            .upload_f32_classified(scales_shape, &scales_b, AllocationClass::Weight)
+            .expect("cpu scales b");
+        let mut gpu_out = backend.allocate_f32(out_shape).expect("gpu out");
+        let mut cpu_out = reference.allocate_f32(out_shape).expect("cpu out");
+        backend
+            .packed_swiglu_pair(&mut gpu_out, &gpu_in, &gpu_ca, &gpu_sa, &gpu_cb, &gpu_sb)
+            .expect("gpu packed swiglu pair");
+        reference
+            .packed_swiglu_pair(&mut cpu_out, &cpu_in, &cpu_ca, &cpu_sa, &cpu_cb, &cpu_sb)
+            .expect("cpu packed swiglu pair");
+        assert_close(&read(&backend, &gpu_out), cpu_out.as_slice(), 1e-4, 1e-4);
+    }
+}
+
 /// `minifield.nf4.v1` packed streams take the same operand shapes apart from
 /// the codes width (`k/2` bytes), so one test exercises every packed op
 /// against the CPU baseline.
@@ -1275,6 +1329,36 @@ fn packed_nf4_ops_match_cpu() {
             .expect("cpu packed pair");
         assert_close(&read(&backend, &gpu_a), cpu_a.as_slice(), 1e-4, 1e-4);
         assert_close(&read(&backend, &gpu_b), cpu_b.as_slice(), 1e-4, 1e-4);
+
+        // packed_swiglu_pair: SwiGLU epilogue fused into the pair's store
+        let mut gpu_hidden = backend.allocate_f32(out_shape).expect("gpu hidden");
+        let mut cpu_hidden = reference.allocate_f32(out_shape).expect("cpu hidden");
+        backend
+            .packed_swiglu_pair(
+                &mut gpu_hidden,
+                &gpu_in,
+                &gpu_codes,
+                &gpu_scales,
+                &gpu_cb,
+                &gpu_sb,
+            )
+            .expect("gpu packed swiglu pair");
+        reference
+            .packed_swiglu_pair(
+                &mut cpu_hidden,
+                &cpu_in,
+                &cpu_codes,
+                &cpu_scales,
+                &cpu_cb,
+                &cpu_sb,
+            )
+            .expect("cpu packed swiglu pair");
+        assert_close(
+            &read(&backend, &gpu_hidden),
+            cpu_hidden.as_slice(),
+            1e-4,
+            1e-4,
+        );
 
         // packed_swiglu_linear
         let gate = values(51, (m * k) as usize);

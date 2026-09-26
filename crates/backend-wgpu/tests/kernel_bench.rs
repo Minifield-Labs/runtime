@@ -3,7 +3,7 @@
 //! Dispatches each op N times inside one submission and reports per-dispatch
 //! wall time — dominated by GPU execution plus per-dispatch launch overhead.
 //! Run: `cargo test --release -p minifield-backend-wgpu --test kernel_bench
-//! -- --nocapture`. Skips cleanly without an adapter.
+//! -- --ignored --nocapture`. Skips cleanly without an adapter.
 
 #![allow(
     clippy::expect_used,
@@ -159,6 +159,7 @@ fn adapter_features_probe() {
 }
 
 #[test]
+#[ignore = "device timing experiment; run explicitly with --ignored --nocapture"]
 fn kernel_bench_lfm25_shapes() {
     let Some(backend) = gpu() else {
         eprintln!("no wgpu adapter; skipping");
@@ -264,6 +265,7 @@ fn kernel_bench_lfm25_shapes() {
 
 /// Prefill probe: same packed matmul shapes the classifier runs at m=346.
 #[test]
+#[ignore = "device timing experiment; run explicitly with --ignored --nocapture"]
 fn packed_prefill_bench() {
     let Some(backend) = gpu() else {
         eprintln!("no wgpu adapter; skipping");
@@ -307,6 +309,7 @@ fn packed_prefill_bench() {
 /// E5 probe: scale m at the down-projection shape to separate per-row-tile
 /// decode amplification from per-column tile work.
 #[test]
+#[ignore = "device timing experiment; run explicitly with --ignored --nocapture"]
 fn packed_m_scaling_bench() {
     let Some(backend) = gpu() else {
         eprintln!("no wgpu adapter; skipping");
@@ -361,6 +364,7 @@ fn packed_m_scaling_bench() {
 
 /// Dense GEMM reference at prefill width for the same projection shape.
 #[test]
+#[ignore = "device timing experiment; run explicitly with --ignored --nocapture"]
 fn dense_prefill_bench() {
     let Some(backend) = gpu() else {
         eprintln!("no wgpu adapter; skipping");
@@ -396,6 +400,7 @@ fn dense_prefill_bench() {
 
 /// Isolate attention and FFN costs at the polyomino classifier's prefill shape.
 #[test]
+#[ignore = "device timing experiment; run explicitly with --ignored --nocapture"]
 fn classifier_prefill_components() {
     let Some(mut backend) = gpu() else {
         eprintln!("no wgpu adapter; skipping");

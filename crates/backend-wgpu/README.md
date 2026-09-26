@@ -28,7 +28,7 @@ Raw packed APIs accept canonical codes only. LUT2/PN4 buffers have separate layo
 
 ```sh
 scripts/check.sh gpu
-cargo test --release --locked -p minifield-backend-wgpu --test kernel_bench -- --nocapture
+cargo test --release --locked -p minifield-backend-wgpu --test kernel_bench -- --ignored --nocapture
 ```
 
 Run commands from the repository root. The required GPU tier runs serial CPU/GPU parity, low-bit conformance, and allocation/layout regressions. Missing adapters fail that tier. Portable workspace tests may skip only a genuinely unavailable adapter.

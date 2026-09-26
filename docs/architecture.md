@@ -48,7 +48,7 @@ Canonical packed bytes are portable. LUT2 and PN4 are backend-private representa
 `Lfm2ExecutionOptions` makes ternary LUT2 policy explicit:
 
 - `Off` uses canonical streams and performs no repacking.
-- `Down` admits FFN down projections first.
+- `DownOnly` admits FFN down projections first.
 - `Auto` also admits eligible gate/up pairs.
 - `max_lut2_bytes` caps duplicate repack storage, defaulting to 64 MiB.
 

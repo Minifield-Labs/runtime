@@ -2,6 +2,7 @@
 
 - [Architecture](architecture.md): strategy boundaries, formats, dispatch, budgets, and converter ownership.
 - [Development procedure](procedure.md): checks, evidence standards, publication gates.
+- [Ternary format v1](ternary-format-v1.md) and [NF4 format v1](nf4-format-v1.md): canonical packed-byte contracts.
 - [FFN prefill experiments](ffn-prefill-experiments.md): measured kernel choices and historical timing comparisons.
 - [Bundle qualification](../tools/qualification/README.md): profiles, comparisons, matched benchmarks.
 - [Browser harness](../web/README.md): build and actual WebGPU qualification.

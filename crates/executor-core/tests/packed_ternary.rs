@@ -27,8 +27,9 @@ use minifield_engine_api::{
     TokenChoiceExecutor, TokenChunk, TokenExecutor, TokenIds,
 };
 use minifield_executor_core::{
-    Lfm2ExecutionLimits, Lfm2Executor, Lfm2LoadRequest, Lfm2WeightFormat, Lfm2WeightLoadTask,
-    LoaderLimits, LoaderPoll,
+    Lfm2ExecutionLimits, Lfm2Executor, Lfm2LayerWeightRole, Lfm2LoadRequest, Lfm2WeightFormat,
+    Lfm2WeightLoadTask, Lfm2WeightRole, LoaderLimits, LoaderPoll, detect_lfm2_weight_format,
+    parse_lfm2_tensor_quantization,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -342,7 +343,18 @@ fn packed_ops_reject_invalid_operands() {
 
 /// Minimal safetensors writer: name -> (dtype, shape, little-endian bytes).
 fn safetensors(tensors: &[(&str, &str, Vec<u64>, &[u8])]) -> Vec<u8> {
+    safetensors_with_metadata(tensors, None)
+}
+
+/// Same writer with an optional `__metadata__` object.
+fn safetensors_with_metadata(
+    tensors: &[(&str, &str, Vec<u64>, &[u8])],
+    metadata: Option<Value>,
+) -> Vec<u8> {
     let mut header = serde_json::Map::new();
+    if let Some(metadata) = metadata {
+        header.insert("__metadata__".to_owned(), metadata);
+    }
     let mut offset = 0_u64;
     for (name, dtype, dims, bytes) in tensors {
         header.insert(
@@ -397,6 +409,14 @@ fn load_executor(
         format,
     )
     .expect("load request");
+    finish_load(request, weights, total_bytes)
+}
+
+fn finish_load(
+    request: Lfm2LoadRequest,
+    weights: &[u8],
+    total_bytes: u64,
+) -> Lfm2Executor<CpuBackend> {
     let mut cpu = backend(total_bytes);
     let mut provider = MemoryAssetProvider::new(weights.to_vec(), weights.len() as u64);
     let mut task = Lfm2WeightLoadTask::begin(request).expect("load task");
@@ -421,8 +441,16 @@ fn load_executor(
 /// safetensors). hidden=intermediate=vocab=128 keeps every matmul input width
 /// a multiple of 128 so all roles pack. One conv + one attention layer.
 #[allow(clippy::too_many_lines)]
+type DenseTensors = Vec<(String, Vec<u64>, Vec<f32>)>;
+
 fn tiny_packed_fixture() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-    type DenseTensors = Vec<(String, Vec<u64>, Vec<f32>)>;
+    let (config, dense) = tiny_dense_base();
+    tiny_packed_fixture_from(&config, dense)
+}
+
+/// The deterministic dense tensor list shared by every fixture flavour.
+#[allow(clippy::too_many_lines)]
+fn tiny_dense_base() -> (Vec<u8>, DenseTensors) {
     let config = serde_json::to_vec(&json!({
         "block_auto_adjust_ff_dim": false,
         "bos_token_id": 1,
@@ -529,6 +557,12 @@ fn tiny_packed_fixture() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         }
     }
 
+    (config, dense)
+}
+
+/// Pack every rank-two matmul in `dense` to ternary and write the packed +
+/// dequantized-dense safetensors side by side.
+fn tiny_packed_fixture_from(config: &[u8], dense: DenseTensors) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     // Write the packed and dequantized-dense safetensors side by side.
     let mut packed_tensors: Vec<(String, String, Vec<u64>, Vec<u8>)> = Vec::new();
     let mut dequant_tensors: Vec<(String, String, Vec<u64>, Vec<u8>)> = Vec::new();
@@ -582,7 +616,7 @@ fn tiny_packed_fixture() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         .collect();
     let packed_bytes = safetensors(&packed_refs);
     let dequant_bytes = safetensors(&dequant_refs);
-    (config, packed_bytes, dequant_bytes)
+    (config.to_vec(), packed_bytes, dequant_bytes)
 }
 
 #[test]
@@ -1069,4 +1103,143 @@ fn real_packed_model_loads_and_runs() {
         "packed: load {packed_load:?}, 26-token teacher-forced run {packed_run:?}; \
          dense: load {dense_load:?}, run {dense_run:?}"
     );
+}
+
+/// Mixed bundle: every rank-two matmul packs ternary except the token
+/// embedding, which stays dense exactly as a QAT-eval scope would leave it.
+/// Returns (config, mixed safetensors, expected-dense safetensors).
+fn tiny_mixed_fixture() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let (config, dense) = tiny_dense_base();
+    let mut mixed_tensors: Vec<(String, String, Vec<u64>, Vec<u8>)> = Vec::new();
+    let mut expected_tensors: Vec<(String, String, Vec<u64>, Vec<u8>)> = Vec::new();
+    let mut quantization = serde_json::Map::new();
+    for (name, dims, values) in &dense {
+        let is_matmul =
+            dims.len() == 2 && *dims.last().expect("dims") >= 128 && dims[1].is_multiple_of(128);
+        if is_matmul && name != "model.embed_tokens.weight" {
+            let rows = dims[0] as usize;
+            let columns = dims[1] as usize;
+            let groups = columns / 128;
+            let mut codes = Vec::with_capacity(rows * columns / 4);
+            let mut scales = Vec::with_capacity(rows * groups * 2);
+            let mut dequant = Vec::with_capacity(values.len());
+            for row in values.chunks_exact(columns) {
+                for group in row.as_chunks::<128>().0 {
+                    let (code_bytes, decoded, deq) = pack_group(group);
+                    codes.extend_from_slice(&code_bytes);
+                    scales.extend_from_slice(&f32_to_f16(decoded).to_le_bytes());
+                    dequant.extend_from_slice(&deq);
+                }
+            }
+            mixed_tensors.push((
+                format!("{name}.codes"),
+                "U8".to_owned(),
+                vec![dims[0], dims[1] / 4],
+                codes,
+            ));
+            mixed_tensors.push((
+                format!("{name}.scales"),
+                "F16".to_owned(),
+                vec![dims[0], groups as u64],
+                scales,
+            ));
+            expected_tensors.push((
+                name.clone(),
+                "F32".to_owned(),
+                dims.clone(),
+                f32_bytes(&dequant),
+            ));
+            quantization.insert(name.clone(), Value::from("ternary-v1"));
+        } else {
+            let bytes = f32_bytes(values);
+            mixed_tensors.push((name.clone(), "F32".to_owned(), dims.clone(), bytes.clone()));
+            expected_tensors.push((name.clone(), "F32".to_owned(), dims.clone(), bytes));
+            quantization.insert(name.clone(), Value::from("f32"));
+        }
+    }
+    let mixed_refs: Vec<(&str, &str, Vec<u64>, &[u8])> = mixed_tensors
+        .iter()
+        .map(|(n, d, s, b)| (n.as_str(), d.as_str(), s.clone(), b.as_slice()))
+        .collect();
+    let expected_refs: Vec<(&str, &str, Vec<u64>, &[u8])> = expected_tensors
+        .iter()
+        .map(|(n, d, s, b)| (n.as_str(), d.as_str(), s.clone(), b.as_slice()))
+        .collect();
+    let metadata = json!({
+        "format": "minifield.mixed.v1",
+        "tensor_quantization": serde_json::to_string(&quantization).expect("quantization map"),
+    });
+    let mixed_bytes = safetensors_with_metadata(&mixed_refs, Some(metadata));
+    let expected_bytes = safetensors(&expected_refs);
+    (config, mixed_bytes, expected_bytes)
+}
+
+#[test]
+fn mixed_bundle_loads_dense_embedding_and_packed_matmuls() {
+    let (config, mixed_bytes, expected_bytes) = tiny_mixed_fixture();
+
+    let format = detect_lfm2_weight_format(&mixed_bytes).expect("detect format");
+    assert_eq!(format, Lfm2WeightFormat::MixedV1);
+    let quantization = parse_lfm2_tensor_quantization(&mixed_bytes).expect("quantization map");
+    let request = Lfm2LoadRequest::new_with_quantization(
+        config.clone(),
+        digest(&config),
+        mixed_bytes.len() as u64,
+        digest(&mixed_bytes),
+        LoaderLimits {
+            max_asset_bytes: mixed_bytes.len() as u64,
+            max_header_bytes: 1 << 20,
+            max_source_tensor_bytes: mixed_bytes.len() as u64,
+            max_retained_host_bytes: mixed_bytes.len() as u64 * 6,
+            max_tensor_name_bytes: 1024,
+            max_tensors: 4096,
+            max_rank: 4,
+        },
+        format,
+        &quantization,
+    )
+    .expect("load request");
+    let plan = request.plan();
+    assert_eq!(
+        plan.role_quant(Lfm2WeightRole::TokenEmbedding),
+        Lfm2WeightFormat::Dense
+    );
+    assert_eq!(
+        plan.role_quant(Lfm2WeightRole::Layer {
+            index: 0,
+            role: Lfm2LayerWeightRole::FfnW1
+        }),
+        Lfm2WeightFormat::TernaryV1
+    );
+    assert!(plan.has_packed());
+
+    let mut mixed_exec = finish_load(request, &mixed_bytes, 1 << 24);
+    let mut dense_exec = load_executor(&config, &expected_bytes, Lfm2WeightFormat::Dense, 1 << 24);
+
+    let tokens: Vec<u32> = vec![1, 5, 9, 42, 7, 100];
+    let mut mixed_task = mixed_exec
+        .prefill(TokenChunk::all(&tokens[..1]))
+        .expect("prefill");
+    let mut dense_task = dense_exec
+        .prefill(TokenChunk::all(&tokens[..1]))
+        .expect("prefill");
+    let mut mixed_prefix = ready(&mut mixed_task);
+    let mut dense_prefix = ready(&mut dense_task);
+    for (step, token) in tokens.iter().enumerate().skip(1) {
+        let mut ma = mixed_exec
+            .append_known(&mixed_prefix, TokenChunk::all(&[*token]))
+            .expect("append");
+        let mut da = dense_exec
+            .append_known(&dense_prefix, TokenChunk::all(&[*token]))
+            .expect("append");
+        mixed_prefix = ready(&mut ma);
+        dense_prefix = ready(&mut da);
+        let mut ml = mixed_exec.next_logits(&mixed_prefix).expect("logits");
+        let mut dl = dense_exec.next_logits(&dense_prefix).expect("logits");
+        assert_within_reorder(
+            &ready(&mut ml),
+            &ready(&mut dl),
+            &format!("step {step}: mixed bundle diverged from expected dense"),
+        );
+    }
 }

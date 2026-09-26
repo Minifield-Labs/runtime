@@ -9,6 +9,8 @@ use minifield_engine_api::{
     validate_asset_manifest,
 };
 
+use std::collections::HashMap;
+
 use crate::{
     lfm2::{LayerKind, Lfm2Config, Lfm2StorageDType, parse_lfm2_config},
     loader::{
@@ -33,10 +35,16 @@ pub enum Lfm2WeightFormat {
     /// low nibble first) plus a `<tensor>.scales` F16 [rows, k/128] tensor.
     /// Norm and convolution-kernel roles stay dense.
     Nf4V1,
+    /// `minifield.mixed.v1`: per-tensor quantization declared in the
+    /// `tensor_quantization` metadata map. Listed tensors carry their named
+    /// scheme (`ternary-v1`, `nf4-v1`); unlisted matmul roles stay dense.
+    MixedV1,
 }
 
 impl Lfm2WeightFormat {
     /// Whether matmul roles are stored as packed code/scale split streams.
+    /// Mixed bundles answer per role instead; see
+    /// [`Lfm2WeightPlan::role_quant`].
     #[must_use]
     pub const fn is_packed(self) -> bool {
         matches!(self, Self::TernaryV1 | Self::Nf4V1)
@@ -48,6 +56,64 @@ impl Lfm2WeightFormat {
 /// This is a routing hint for callers; the real header validation happens in
 /// the bounded loader.
 pub fn detect_lfm2_weight_format(asset: &[u8]) -> Result<Lfm2WeightFormat> {
+    match sniff_metadata(asset)?
+        .get("format")
+        .and_then(serde_json::Value::as_str)
+    {
+        Some("minifield.ternary.v1") => Ok(Lfm2WeightFormat::TernaryV1),
+        Some("minifield.nf4.v1") => Ok(Lfm2WeightFormat::Nf4V1),
+        Some("minifield.mixed.v1") => Ok(Lfm2WeightFormat::MixedV1),
+        _ => Ok(Lfm2WeightFormat::Dense),
+    }
+}
+
+/// Parse the `__metadata__.tensor_quantization` map: tensor name to the
+/// scheme it was packed with (`"ternary-v1"`, `"nf4-v1"`, or a dense dtype
+/// name). Absent or non-object metadata yields an empty map, which callers
+/// treat as "every matmul role follows the bundle format".
+pub fn parse_lfm2_tensor_quantization(
+    asset: &[u8],
+) -> Result<std::collections::HashMap<String, Lfm2WeightFormat>> {
+    let metadata = sniff_metadata(asset)?;
+    // `__metadata__` values are strings per the safetensors spec, so the map
+    // arrives JSON-encoded. A bare object is accepted as well for callers
+    // that hand-assembled a header.
+    let entries = match metadata.get("tensor_quantization") {
+        None => return Ok(std::collections::HashMap::new()),
+        Some(serde_json::Value::String(encoded)) => serde_json::from_str::<
+            serde_json::Map<String, serde_json::Value>,
+        >(encoded)
+        .map_err(|_| {
+            ExecutorError::InvalidArgument("tensor_quantization metadata is not valid JSON")
+        })?,
+        Some(serde_json::Value::Object(entries)) => entries.clone(),
+        Some(_) => {
+            return Err(ExecutorError::InvalidArgument(
+                "tensor_quantization metadata must be a JSON map",
+            ));
+        }
+    };
+    entries
+        .iter()
+        .map(|(name, level)| {
+            let level = match level.as_str() {
+                Some("ternary-v1") => Lfm2WeightFormat::TernaryV1,
+                Some("nf4-v1") => Lfm2WeightFormat::Nf4V1,
+                Some("dense" | "bf16" | "f16" | "f32") => Lfm2WeightFormat::Dense,
+                _ => {
+                    return Err(ExecutorError::InvalidArgument(
+                        "tensor_quantization level must be ternary-v1, nf4-v1, or a dense dtype",
+                    ));
+                }
+            };
+            Ok((name.clone(), level))
+        })
+        .collect()
+}
+
+/// Read a `SafeTensors` header's `__metadata__` object without ingesting
+/// tensors. Dense remains the default when no marker is present.
+fn sniff_metadata(asset: &[u8]) -> Result<serde_json::Map<String, serde_json::Value>> {
     const MAX_SNIFF_HEADER_BYTES: usize = 8 << 20;
     let prefix = asset.get(..8).ok_or(ExecutorError::InvalidArgument(
         "asset is shorter than a safetensors prefix",
@@ -72,15 +138,11 @@ pub fn detect_lfm2_weight_format(asset: &[u8]) -> Result<Lfm2WeightFormat> {
             ))?;
     let value: serde_json::Value = serde_json::from_slice(header)
         .map_err(|_| ExecutorError::InvalidArgument("safetensors header is not valid JSON"))?;
-    match value
+    Ok(value
         .get("__metadata__")
-        .and_then(|metadata| metadata.get("format"))
-        .and_then(serde_json::Value::as_str)
-    {
-        Some("minifield.ternary.v1") => Ok(Lfm2WeightFormat::TernaryV1),
-        Some("minifield.nf4.v1") => Ok(Lfm2WeightFormat::Nf4V1),
-        _ => Ok(Lfm2WeightFormat::Dense),
-    }
+        .and_then(serde_json::Value::as_object)
+        .cloned()
+        .unwrap_or_default())
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -120,6 +182,9 @@ pub struct Lfm2WeightPlan {
     format: Lfm2WeightFormat,
     classes: Option<u32>,
     plan: WeightPlan,
+    /// Stored quantization scheme per matmul role base name (`token_embedding`,
+    /// `layer.3.ffn.w1`, ...). Roles absent from this map are dense.
+    quant_by_role: HashMap<Box<str>, Lfm2WeightFormat>,
 }
 
 impl Lfm2WeightPlan {
@@ -130,8 +195,20 @@ impl Lfm2WeightPlan {
 
     /// Derive all names, layouts, dimensions and source dtype before reading an asset header.
     /// This uses effective FF width, never raw `intermediate_size`.
-    #[allow(clippy::too_many_lines)] // Exact inventory is intentionally listed together for audit.
     pub fn from_config_with_format(config: Lfm2Config, format: Lfm2WeightFormat) -> Result<Self> {
+        Self::from_config_with_quantization(config, format, &HashMap::new())
+    }
+
+    /// Derive the inventory with per-tensor quantization overrides, keyed by
+    /// tensor name (`model.embed_tokens.weight`, ...). Overrides apply under
+    /// every packed format; under `minifield.mixed.v1` unlisted matmul roles
+    /// stay dense.
+    #[allow(clippy::too_many_lines)] // Exact inventory is intentionally listed together for audit.
+    pub fn from_config_with_quantization(
+        config: Lfm2Config,
+        format: Lfm2WeightFormat,
+        overrides: &HashMap<String, Lfm2WeightFormat>,
+    ) -> Result<Self> {
         config.validate()?;
         let source_dtype = match config.weight_storage_dtype {
             Lfm2StorageDType::F32 => StorageDType::F32,
@@ -152,6 +229,7 @@ impl Lfm2WeightPlan {
         ))?;
 
         let mut requirements = Vec::new();
+        let mut quant_by_role = HashMap::new();
         requirements
             .try_reserve_exact(
                 3_usize
@@ -168,6 +246,8 @@ impl Lfm2WeightPlan {
         push_matmul(
             &mut requirements,
             format,
+            overrides,
+            &mut quant_by_role,
             "token_embedding",
             "model.embed_tokens.weight",
             source_dtype,
@@ -177,6 +257,8 @@ impl Lfm2WeightPlan {
         push_matmul(
             &mut requirements,
             format,
+            overrides,
+            &mut quant_by_role,
             "tied_lm_head",
             "model.embed_tokens.weight",
             source_dtype,
@@ -209,6 +291,8 @@ impl Lfm2WeightPlan {
                     push_matmul(
                         &mut requirements,
                         format,
+                        overrides,
+                        &mut quant_by_role,
                         &format!("layer.{index}.conv.in_projection"),
                         &format!("{prefix}.conv.in_proj.weight"),
                         source_dtype,
@@ -218,6 +302,8 @@ impl Lfm2WeightPlan {
                     push_matmul(
                         &mut requirements,
                         format,
+                        overrides,
+                        &mut quant_by_role,
                         &format!("layer.{index}.conv.out_projection"),
                         &format!("{prefix}.conv.out_proj.weight"),
                         source_dtype,
@@ -247,6 +333,8 @@ impl Lfm2WeightPlan {
                     push_matmul(
                         &mut requirements,
                         format,
+                        overrides,
+                        &mut quant_by_role,
                         &format!("layer.{index}.attention.q_projection"),
                         &format!("{prefix}.self_attn.q_proj.weight"),
                         source_dtype,
@@ -256,6 +344,8 @@ impl Lfm2WeightPlan {
                     push_matmul(
                         &mut requirements,
                         format,
+                        overrides,
+                        &mut quant_by_role,
                         &format!("layer.{index}.attention.k_projection"),
                         &format!("{prefix}.self_attn.k_proj.weight"),
                         source_dtype,
@@ -265,6 +355,8 @@ impl Lfm2WeightPlan {
                     push_matmul(
                         &mut requirements,
                         format,
+                        overrides,
+                        &mut quant_by_role,
                         &format!("layer.{index}.attention.v_projection"),
                         &format!("{prefix}.self_attn.v_proj.weight"),
                         source_dtype,
@@ -274,6 +366,8 @@ impl Lfm2WeightPlan {
                     push_matmul(
                         &mut requirements,
                         format,
+                        overrides,
+                        &mut quant_by_role,
                         &format!("layer.{index}.attention.out_projection"),
                         &format!("{prefix}.self_attn.out_proj.weight"),
                         source_dtype,
@@ -285,6 +379,8 @@ impl Lfm2WeightPlan {
             push_matmul(
                 &mut requirements,
                 format,
+                overrides,
+                &mut quant_by_role,
                 &format!("layer.{index}.ffn.w1"),
                 &format!("{prefix}.feed_forward.w1.weight"),
                 source_dtype,
@@ -294,6 +390,8 @@ impl Lfm2WeightPlan {
             push_matmul(
                 &mut requirements,
                 format,
+                overrides,
+                &mut quant_by_role,
                 &format!("layer.{index}.ffn.w2"),
                 &format!("{prefix}.feed_forward.w2.weight"),
                 source_dtype,
@@ -303,6 +401,8 @@ impl Lfm2WeightPlan {
             push_matmul(
                 &mut requirements,
                 format,
+                overrides,
+                &mut quant_by_role,
                 &format!("layer.{index}.ffn.w3"),
                 &format!("{prefix}.feed_forward.w3.weight"),
                 source_dtype,
@@ -346,6 +446,7 @@ impl Lfm2WeightPlan {
             format,
             classes: None,
             plan,
+            quant_by_role,
         })
     }
 
@@ -363,12 +464,23 @@ impl Lfm2WeightPlan {
         classes: u32,
         format: Lfm2WeightFormat,
     ) -> Result<Self> {
+        Self::from_config_classifier_with_quantization(config, classes, format, &HashMap::new())
+    }
+
+    /// Classifier backbone with per-tensor quantization overrides; see
+    /// [`Lfm2WeightPlan::from_config_with_quantization`].
+    pub fn from_config_classifier_with_quantization(
+        config: Lfm2Config,
+        classes: u32,
+        format: Lfm2WeightFormat,
+        overrides: &HashMap<String, Lfm2WeightFormat>,
+    ) -> Result<Self> {
         if classes == 0 || classes > 65_536 {
             return Err(ExecutorError::InvalidArgument(
                 "classifier needs 1..=65536 classes",
             ));
         }
-        let mut result = Self::from_config_with_format(config, format)?;
+        let mut result = Self::from_config_with_quantization(config, format, overrides)?;
         result
             .plan
             .requirements
@@ -398,6 +510,27 @@ impl Lfm2WeightPlan {
     #[must_use]
     pub const fn format(&self) -> Lfm2WeightFormat {
         self.format
+    }
+
+    /// Stored quantization scheme for one role. Dense roles (norms,
+    /// convolution kernels, unlisted `mixed.v1` tensors) return
+    /// [`Lfm2WeightFormat::Dense`].
+    #[must_use]
+    pub fn role_quant(&self, role: Lfm2WeightRole) -> Lfm2WeightFormat {
+        self.role_base_name(role)
+            .ok()
+            .and_then(|base| self.quant_by_role.get(base.as_str()).copied())
+            .unwrap_or(Lfm2WeightFormat::Dense)
+    }
+
+    /// Whether any role is stored as a packed code/scale split stream.
+    #[allow(clippy::case_sensitive_file_extension_comparisons)] // role names are not paths
+    #[must_use]
+    pub fn has_packed(&self) -> bool {
+        self.plan
+            .requirements
+            .iter()
+            .any(|item| item.role.ends_with(".codes"))
     }
 
     #[must_use]
@@ -550,16 +683,29 @@ fn push(
 /// `minifield.ternary.v1`, two NF4 weights per byte for `minifield.nf4.v1`)
 /// and `<role>.scales` is F16 `[rows, k/128]`, where `[rows, k]` is the dense
 /// operator shape.
+#[allow(clippy::too_many_arguments)]
 fn push_matmul(
     requirements: &mut Vec<WeightRequirement>,
     format: Lfm2WeightFormat,
+    overrides: &HashMap<String, Lfm2WeightFormat>,
+    quant_by_role: &mut HashMap<Box<str>, Lfm2WeightFormat>,
     role: &str,
     tensor_name: &str,
     storage_dtype: StorageDType,
     dimensions: &[u64],
     tied_to_role: Option<&str>,
 ) -> Result<()> {
-    let weights_per_byte = match format {
+    let quant =
+        overrides
+            .get(tensor_name)
+            .copied()
+            .unwrap_or(if format == Lfm2WeightFormat::MixedV1 {
+                Lfm2WeightFormat::Dense
+            } else {
+                format
+            });
+    quant_by_role.insert(role.into(), quant);
+    let weights_per_byte = match quant {
         Lfm2WeightFormat::Dense => {
             return push(
                 requirements,
@@ -573,6 +719,11 @@ fn push_matmul(
         }
         Lfm2WeightFormat::TernaryV1 => 4,
         Lfm2WeightFormat::Nf4V1 => 2,
+        Lfm2WeightFormat::MixedV1 => {
+            return Err(ExecutorError::InvalidArgument(
+                "mixed.v1 must resolve to a per-tensor scheme",
+            ));
+        }
     };
     if dimensions.len() != 2 {
         return Err(ExecutorError::InvalidShape(
@@ -642,8 +793,30 @@ impl Lfm2LoadRequest {
         limits: LoaderLimits,
         format: Lfm2WeightFormat,
     ) -> Result<Self> {
+        Self::new_with_quantization(
+            config_bytes,
+            expected_config_sha256,
+            declared_asset_bytes,
+            expected_asset_sha256,
+            limits,
+            format,
+            &HashMap::new(),
+        )
+    }
+
+    /// Build a request whose inventory matches the asset's stored format plus
+    /// its `tensor_quantization` overrides.
+    pub fn new_with_quantization(
+        config_bytes: Vec<u8>,
+        expected_config_sha256: [u8; 32],
+        declared_asset_bytes: u64,
+        expected_asset_sha256: [u8; 32],
+        limits: LoaderLimits,
+        format: Lfm2WeightFormat,
+        quantization: &HashMap<String, Lfm2WeightFormat>,
+    ) -> Result<Self> {
         let config = parse_lfm2_config(&config_bytes)?;
-        let plan = Lfm2WeightPlan::from_config_with_format(config, format)?;
+        let plan = Lfm2WeightPlan::from_config_with_quantization(config, format, quantization)?;
         Ok(Self {
             request: LoadRequest {
                 config_name: LFM2_CONFIG_NAME.to_owned(),
@@ -688,8 +861,38 @@ impl Lfm2LoadRequest {
         classes: u32,
         format: Lfm2WeightFormat,
     ) -> Result<Self> {
+        Self::new_classifier_with_quantization(
+            config_bytes,
+            expected_config_sha256,
+            declared_asset_bytes,
+            expected_asset_sha256,
+            limits,
+            classes,
+            format,
+            &HashMap::new(),
+        )
+    }
+
+    /// Load classifier weights matching the asset's stored format plus
+    /// `tensor_quantization` overrides.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_classifier_with_quantization(
+        config_bytes: Vec<u8>,
+        expected_config_sha256: [u8; 32],
+        declared_asset_bytes: u64,
+        expected_asset_sha256: [u8; 32],
+        limits: LoaderLimits,
+        classes: u32,
+        format: Lfm2WeightFormat,
+        quantization: &HashMap<String, Lfm2WeightFormat>,
+    ) -> Result<Self> {
         let config = parse_lfm2_config(&config_bytes)?;
-        let plan = Lfm2WeightPlan::from_config_classifier_with_format(config, classes, format)?;
+        let plan = Lfm2WeightPlan::from_config_classifier_with_quantization(
+            config,
+            classes,
+            format,
+            quantization,
+        )?;
         Ok(Self {
             request: LoadRequest {
                 config_name: LFM2_CONFIG_NAME.to_owned(),
@@ -807,17 +1010,30 @@ impl<Buffer> Lfm2TypedWeights<Buffer> {
         self.plan.format
     }
 
+    /// Stored quantization scheme for one role; see
+    /// [`Lfm2WeightPlan::role_quant`].
+    #[must_use]
+    pub fn role_quant(&self, role: Lfm2WeightRole) -> Lfm2WeightFormat {
+        self.plan.role_quant(role)
+    }
+
+    /// Whether any role is stored as a packed code/scale split stream.
+    #[allow(clippy::case_sensitive_file_extension_comparisons)] // role names are not paths
+    #[must_use]
+    pub fn has_packed(&self) -> bool {
+        self.plan.has_packed()
+    }
+
     /// Resolve a role to its stored operand set: one dense buffer, or the
     /// packed code/scale pair for packed matmul roles.
     pub fn resolve(&self, role: Lfm2WeightRole) -> Result<Lfm2ResolvedWeight<'_, Buffer>> {
         let base = self.plan.role_base_name(role)?;
-        if self.plan.format.is_packed()
-            && self
-                .plan
-                .plan
-                .requirements
-                .iter()
-                .any(|item| item.role == format!("{base}.codes"))
+        if self
+            .plan
+            .plan
+            .requirements
+            .iter()
+            .any(|item| item.role == format!("{base}.codes"))
         {
             return Ok(Lfm2ResolvedWeight::Packed {
                 codes: self.inner.buffer_for_role(&format!("{base}.codes"))?,

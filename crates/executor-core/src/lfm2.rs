@@ -10,4 +10,5 @@ pub use executor::{
 pub use weights::{
     Lfm2LayerWeightRole, Lfm2LoadRequest, Lfm2ResolvedWeight, Lfm2TypedWeights, Lfm2WeightFormat,
     Lfm2WeightLoadTask, Lfm2WeightPlan, Lfm2WeightRole, detect_lfm2_weight_format,
+    parse_lfm2_tensor_quantization,
 };

@@ -268,7 +268,7 @@ impl<B: InferenceOps> Lfm2Executor<B> {
         // consumes the LUT2 layout; the raw streams stay resident for every
         // short-row and unfused path that decodes them directly.
         let mut lut2_codes = HashMap::new();
-        if weights.format() == Lfm2WeightFormat::TernaryV1 && backend.supports_ternary_lut2() {
+        if backend.supports_ternary_lut2() {
             for index in 0..weights.config().layers.len() {
                 for role in [
                     Lfm2LayerWeightRole::FfnW1,
@@ -276,6 +276,9 @@ impl<B: InferenceOps> Lfm2Executor<B> {
                     Lfm2LayerWeightRole::FfnW2,
                 ] {
                     let weight_role = layer_role(index, role);
+                    if weights.role_quant(weight_role) != Lfm2WeightFormat::TernaryV1 {
+                        continue;
+                    }
                     if let Ok(Lfm2ResolvedWeight::Packed { codes, .. }) =
                         weights.resolve(weight_role)
                     {
@@ -313,7 +316,7 @@ impl<B: InferenceOps> Lfm2Executor<B> {
             ] {
                 capabilities.validate(minifield_engine_api::DType::F32, operation, 2, 0, 0)?;
             }
-            if weights.format().is_packed() {
+            if weights.has_packed() {
                 for operation in [
                     minifield_engine_api::OperationKind::PackedGatherRows,
                     minifield_engine_api::OperationKind::PackedLinear,

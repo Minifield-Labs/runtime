@@ -6,7 +6,7 @@ use minifield_engine_api::{
 };
 use minifield_executor_core::{
     Lfm2Classifier, Lfm2ExecutionLimits, Lfm2LoadRequest, Lfm2WeightLoadTask, LoaderLimits,
-    LoaderPoll, detect_lfm2_weight_format,
+    LoaderPoll, detect_lfm2_weight_format, parse_lfm2_tensor_quantization,
 };
 use minifield_text_tokenizer::{EncodeOptions, Tokenizer, TokenizerLimits};
 use sha2::{Digest, Sha256};
@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_pending_operations: 512,
         },
     )?;
-    let request = Lfm2LoadRequest::new_classifier_with_format(
+    let request = Lfm2LoadRequest::new_classifier_with_quantization(
         config.clone(),
         Sha256::digest(&config).into(),
         size,
@@ -54,6 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         8,
         detect_lfm2_weight_format(&weights)?,
+        &parse_lfm2_tensor_quantization(&weights)?,
     )?;
     let mut provider = MemoryAssetProvider::new(weights, size);
     let mut task = Lfm2WeightLoadTask::begin(request)?;

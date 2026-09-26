@@ -13,11 +13,22 @@ fn limits(total: u64) -> ResourceLimits {
 }
 
 fn gpu(limits: ResourceLimits) -> Option<WgpuBackend> {
+    let required = match std::env::var("MINIFIELD_REQUIRE_GPU") {
+        Ok(value) if value == "1" => true,
+        Ok(value) if value == "0" => false,
+        Err(std::env::VarError::NotPresent) => false,
+        _ => panic!("MINIFIELD_REQUIRE_GPU must be 0 or 1"),
+    };
     match WgpuBackend::new(0xB0D, limits) {
-        Ok(backend) => Some(backend),
+        Ok(backend) => {
+            assert!(
+                !required || backend.adapter_info().device_type != wgpu::DeviceType::Cpu,
+                "required GPU qualification rejects a software CPU adapter"
+            );
+            Some(backend)
+        }
         Err(ExecutorError::BackendFailure(message))
-            if message.contains("no adapters found")
-                && std::env::var("MINIFIELD_REQUIRE_GPU").as_deref() != Ok("1") =>
+            if message.contains("no adapters found") && !required =>
         {
             eprintln!("SKIP GPU allocation tests: {message}");
             None

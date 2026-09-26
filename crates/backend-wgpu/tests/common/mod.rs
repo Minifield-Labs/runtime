@@ -12,7 +12,13 @@ pub fn required() -> bool {
 
 pub fn gpu(limits: ResourceLimits) -> Option<WgpuBackend> {
     match WgpuBackend::new(0x77, limits) {
-        Ok(backend) => Some(backend),
+        Ok(backend) => {
+            assert!(
+                !required() || backend.adapter_info().device_type != wgpu::DeviceType::Cpu,
+                "required GPU qualification rejects a software CPU adapter"
+            );
+            Some(backend)
+        }
         Err(ExecutorError::BackendFailure(message))
             if message.contains("no adapters found") && !required() =>
         {

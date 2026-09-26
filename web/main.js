@@ -1,23 +1,17 @@
 import init, { load } from "./pkg/minifield_web_demo.js";
-import { canonicalModelJson } from "../src/context/lfm2-chatml.mjs";
+import { canonicalModelJson } from "./canonical-json.mjs";
+import { createYieldScheduler } from "./yield.mjs";
 
-// Rust polls GPU completions cooperatively; this hands the event loop back one
-// macrotask so WebGPU device-timeline promises can resolve. MessageChannel is
-// unclamped, unlike nested setTimeout(0).
-{
-  const { port1, port2 } = new MessageChannel();
-  globalThis.__minifieldYield = () =>
-    new Promise((resolve) => {
-      port1.onmessage = resolve;
-      port2.postMessage(0);
-    });
-}
+const scheduler = createYieldScheduler();
+globalThis.__minifieldYield = scheduler.yield;
+addEventListener("pagehide", () => scheduler.close(), { once: true });
 
-const MODEL_DIR = "../tmp/models/lfm2.5-230m";
+const modelDir = new URLSearchParams(location.search).get("bundle") ?? "../models/demo";
+const base = new URL(`${modelDir.replace(/\/$/, "")}/`, location.href);
 const FILES = {
-  config: `${MODEL_DIR}/config.json`,
-  weights: `${MODEL_DIR}/qat.safetensors`,
-  tokenizer: `${MODEL_DIR}/tokenizer.json`,
+  config: new URL("config.json", base),
+  weights: new URL("model.safetensors", base),
+  tokenizer: new URL("tokenizer/tokenizer.json", base),
 };
 
 // Task-manager schemas for the demo's default tool names, in the same

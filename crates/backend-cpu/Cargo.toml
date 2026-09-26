@@ -8,7 +8,7 @@ publish.workspace = true
 description = "Owned portable scalar CPU inference operations"
 
 [dependencies]
-minifield-engine-api = { path = "../../engines/engine-api" }
+minifield-engine-api = { path = "../engine-api" }
 minifield-kernels-simd = { path = "../kernels-simd" }
 
 [dev-dependencies]

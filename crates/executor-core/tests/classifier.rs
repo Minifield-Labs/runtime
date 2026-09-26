@@ -16,6 +16,10 @@ const WEIGHTS: &[u8] = include_bytes!("fixtures/numerical-lfm-001-weights.safete
 const CLASSES: [usize; 3] = [2, 5, 7];
 
 fn classifier_weights() -> Vec<u8> {
+    classifier_weights_for(&CLASSES)
+}
+
+fn classifier_weights_for(rows: &[usize]) -> Vec<u8> {
     let header_len = usize::try_from(u64::from_le_bytes(WEIGHTS[..8].try_into().expect("length")))
         .expect("header length");
     let mut header: serde_json::Value =
@@ -25,12 +29,11 @@ fn classifier_weights() -> Vec<u8> {
     let offset =
         usize::try_from(embedding["data_offsets"][0].as_u64().expect("offset")).expect("offset");
     let start = payload.len();
-    for row in CLASSES {
+    for row in rows {
         let bytes = payload[offset + row * 16 * 4..offset + (row + 1) * 16 * 4].to_vec();
         payload.extend_from_slice(&bytes);
     }
-    header["classification_head.weight"] =
-        serde_json::json!({"dtype":"F32","shape":[3,16],"data_offsets":[start,payload.len()]});
+    header["classification_head.weight"] = serde_json::json!({"dtype":"F32","shape":[rows.len(),16],"data_offsets":[start,payload.len()]});
     let mut encoded = serde_json::to_vec(&header).expect("header bytes");
     while encoded.len() % 8 != 0 {
         encoded.push(b' ');
@@ -139,4 +142,46 @@ fn classifier_and_language_model_heads_cannot_be_confused() {
     assert!(Lfm2Executor::new(backend, weights, limits).is_err());
     let (backend, weights) = load(WEIGHTS.to_vec(), None);
     assert!(Lfm2Classifier::new(backend, weights, limits).is_err());
+}
+
+#[test]
+fn cached_classifier_tail_accepts_33_classes_with_a_32_token_vocabulary() {
+    let rows: Vec<_> = (0..33).map(|index| index % 32).collect();
+    let (backend, weights) = load(classifier_weights_for(&rows), Some(33));
+    let mut classifier = Lfm2Classifier::new(
+        backend,
+        weights,
+        Lfm2ExecutionLimits {
+            max_logical_tokens: 64,
+        },
+    )
+    .expect("classifier");
+    let expected = ready(
+        classifier
+            .classify(TokenChunk::all(&[1, 5, 7, 9]))
+            .expect("full classification"),
+    );
+    let base = ready(
+        classifier
+            .prefill_base(TokenChunk::all(&[1, 5]))
+            .expect("base"),
+    );
+    let actual = ready(
+        classifier
+            .classify_tail(&base, TokenChunk::all(&[7, 9]))
+            .expect("cached classification"),
+    );
+    assert_eq!(actual.len(), 33);
+    assert_eq!(actual, expected);
+    assert_eq!(
+        classifier.lut2_mode(),
+        minifield_executor_core::Lfm2Lut2Mode::Auto
+    );
+    assert_eq!(
+        classifier
+            .inspect_backend(CpuBackend::identity)
+            .expect("inspect")
+            .owner,
+        1
+    );
 }

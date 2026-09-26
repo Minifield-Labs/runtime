@@ -8,7 +8,7 @@ publish.workspace = true
 description = "Portable greedy plaintext generation over Minifield token executors"
 
 [dependencies]
-minifield-engine-api = { path = "../../engines/engine-api" }
+minifield-engine-api = { path = "../engine-api" }
 minifield-text-tokenizer = { path = "../text-tokenizer" }
 
 [lints]

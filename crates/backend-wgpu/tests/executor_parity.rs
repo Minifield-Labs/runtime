@@ -1,0 +1,426 @@
+//! Full-model wgpu-vs-CPU parity: the real LFM2.5-230M dense bundle runs the
+//! same teacher-forced token stream through `Lfm2Executor` on both backends,
+//! and per-position logits are compared. Skips cleanly without
+//! `MINIFIELD_LFM25_BUNDLE_DIR` or a usable GPU adapter.
+#![allow(clippy::cast_possible_truncation, clippy::expect_used)]
+
+use std::{fs, path::PathBuf, rc::Rc};
+
+use minifield_backend_cpu::CpuBackend;
+use minifield_backend_wgpu::WgpuBackend;
+use minifield_engine_api::{
+    CompletionPoll, InferenceCompletion, InferenceOps, MemoryAssetProvider, ResourceLimits,
+    TokenChoiceExecutor, TokenChunk, TokenExecutor,
+};
+use minifield_executor_core::{
+    Lfm2ExecutionLimits, Lfm2Executor, Lfm2LoadRequest, Lfm2WeightFormat, Lfm2WeightLoadTask,
+    LoaderLimits, LoaderPoll,
+};
+use sha2::{Digest, Sha256};
+
+const LOGIT_TOLERANCE: f32 = 0.05;
+
+fn ready<T, C: InferenceCompletion<Output = T>>(completion: &mut C) -> T {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        match completion.poll_step() {
+            CompletionPoll::Pending if std::time::Instant::now() < deadline => {
+                std::thread::yield_now();
+            }
+            CompletionPoll::Pending => panic!("completion did not become ready"),
+            CompletionPoll::Ready(Ok(value)) => return value,
+            CompletionPoll::Ready(Err(error)) => panic!("completion error: {error:?}"),
+        }
+    }
+}
+
+fn load<B: InferenceOps>(mut backend: B, config: &[u8], weights: &[u8]) -> Lfm2Executor<B> {
+    let request = Lfm2LoadRequest::new(
+        config.to_vec(),
+        Sha256::digest(config).into(),
+        weights.len() as u64,
+        Sha256::digest(weights).into(),
+        LoaderLimits {
+            max_asset_bytes: weights.len() as u64,
+            max_header_bytes: 1 << 20,
+            max_source_tensor_bytes: weights.len() as u64,
+            max_retained_host_bytes: weights.len() as u64 * 6,
+            max_tensor_name_bytes: 1024,
+            max_tensors: 4096,
+            max_rank: 4,
+        },
+    )
+    .expect("load request");
+    let mut provider = MemoryAssetProvider::new(weights.to_vec(), weights.len() as u64);
+    let mut task = Lfm2WeightLoadTask::begin(request).expect("load task");
+    let typed = loop {
+        match task.poll_step(&mut provider, &mut backend) {
+            LoaderPoll::Pending => {}
+            LoaderPoll::Ready(Ok(typed)) => break typed,
+            LoaderPoll::Ready(Err(error)) => panic!("loader error: {error:?}"),
+        }
+    };
+    Lfm2Executor::new(
+        backend,
+        typed,
+        Lfm2ExecutionLimits {
+            max_logical_tokens: 64,
+        },
+    )
+    .expect("executor")
+}
+
+fn teacher_forced_logits<B: InferenceOps>(
+    executor: &mut Lfm2Executor<B>,
+    tokens: &[u32],
+) -> (Vec<f32>, Vec<u32>) {
+    let mut task = executor
+        .prefill(TokenChunk::all(&tokens[..1]))
+        .expect("prefill");
+    let mut prefix = ready(&mut task);
+    let mut top_ids = Vec::new();
+    for token in tokens.iter().skip(1) {
+        let mut logits_task = executor.next_logits(&prefix).expect("logits");
+        top_ids.push(argmax(&ready(&mut logits_task)));
+        let mut append = executor
+            .append_known(&prefix, TokenChunk::all(&[*token]))
+            .expect("append");
+        prefix = ready(&mut append);
+    }
+    let mut logits_task = executor.next_logits(&prefix).expect("logits");
+    let logits = ready(&mut logits_task);
+    top_ids.push(argmax(&logits));
+    (logits, top_ids)
+}
+
+fn argmax(logits: &[f32]) -> u32 {
+    logits
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map(|(i, _)| i as u32)
+        .expect("argmax")
+}
+
+#[test]
+#[ignore = "requires MINIFIELD_LFM25_BUNDLE_DIR and a wgpu adapter"]
+fn wgpu_executor_matches_cpu_on_real_model() {
+    let bundle = PathBuf::from(
+        std::env::var_os("MINIFIELD_LFM25_BUNDLE_DIR").expect("MINIFIELD_LFM25_BUNDLE_DIR"),
+    );
+    let config = fs::read(bundle.join("config.json")).expect("config.json");
+    let weights = fs::read(bundle.join("model.safetensors")).expect("model.safetensors");
+
+    // Oracle prompt p01, tokenized by llama.cpp (BOS included).
+    let tokens: Vec<u32> = vec![
+        1, 1098, 4605, 10800, 36387, 56586, 1391, 779, 46199, 4949, 3627, 779,
+    ];
+    let limits = ResourceLimits {
+        max_allocation_bytes: 1 << 30,
+        max_total_bytes: 6 << 30,
+        max_pending_operations: 512,
+    };
+
+    let gpu_start = std::time::Instant::now();
+    let gpu = WgpuBackend::new(0xE0_3C, limits).expect("wgpu backend");
+    let mut gpu_exec = load(gpu, &config, &weights);
+    let gpu_load = gpu_start.elapsed();
+    let gpu_run = std::time::Instant::now();
+    let (gpu_logits, gpu_top) = teacher_forced_logits(&mut gpu_exec, &tokens);
+    let gpu_run = gpu_run.elapsed();
+
+    let cpu_start = std::time::Instant::now();
+    let cpu = CpuBackend::new(0xE0_2C, limits);
+    let mut cpu_exec = load(cpu, &config, &weights);
+    let cpu_load = cpu_start.elapsed();
+    let cpu_run = std::time::Instant::now();
+    let (cpu_logits, cpu_top) = teacher_forced_logits(&mut cpu_exec, &tokens);
+    let cpu_run = cpu_run.elapsed();
+
+    assert_eq!(gpu_logits.len(), cpu_logits.len(), "logit width");
+    let max_delta = gpu_logits
+        .iter()
+        .zip(cpu_logits.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0_f32, f32::max);
+    let agreements = gpu_top
+        .iter()
+        .zip(cpu_top.iter())
+        .filter(|(a, b)| a == b)
+        .count();
+    println!(
+        "wgpu vs cpu: {}/{} top-1 positions agree, final-position max|delta|={max_delta:.4}",
+        agreements,
+        gpu_top.len()
+    );
+    println!(
+        "wgpu: load {gpu_load:?}, 12-token run {gpu_run:?}; \
+         cpu: load {cpu_load:?}, run {cpu_run:?}"
+    );
+    println!("wgpu top-1 sequence: {gpu_top:?}");
+    println!("cpu  top-1 sequence: {cpu_top:?}");
+    assert_eq!(gpu_top, cpu_top, "top-1 sequences diverged");
+    assert!(
+        max_delta <= LOGIT_TOLERANCE,
+        "logit divergence {max_delta} exceeds {LOGIT_TOLERANCE}"
+    );
+}
+
+fn load_format<B: InferenceOps>(
+    mut backend: B,
+    config: &[u8],
+    weights: &[u8],
+    format: Lfm2WeightFormat,
+) -> Lfm2Executor<B> {
+    let request = Lfm2LoadRequest::new_with_format(
+        config.to_vec(),
+        Sha256::digest(config).into(),
+        weights.len() as u64,
+        Sha256::digest(weights).into(),
+        LoaderLimits {
+            max_asset_bytes: weights.len() as u64,
+            max_header_bytes: 1 << 20,
+            max_source_tensor_bytes: weights.len() as u64,
+            max_retained_host_bytes: weights.len() as u64 * 6,
+            max_tensor_name_bytes: 1024,
+            max_tensors: 4096,
+            max_rank: 4,
+        },
+        format,
+    )
+    .expect("load request");
+    let mut provider = MemoryAssetProvider::new(weights.to_vec(), weights.len() as u64);
+    let mut task = Lfm2WeightLoadTask::begin(request).expect("load task");
+    let typed = loop {
+        match task.poll_step(&mut provider, &mut backend) {
+            LoaderPoll::Pending => {}
+            LoaderPoll::Ready(Ok(typed)) => break typed,
+            LoaderPoll::Ready(Err(error)) => panic!("loader error: {error:?}"),
+        }
+    };
+    Lfm2Executor::new(
+        backend,
+        typed,
+        Lfm2ExecutionLimits {
+            max_logical_tokens: 64,
+        },
+    )
+    .expect("executor")
+}
+
+/// Packed ternary end-to-end: the real `minifield.ternary.v1` bundle runs
+/// the same teacher-forced stream on wgpu and CPU, and per-position logits
+/// and top-1 ids are compared within the SIMD/reorder tolerance.
+#[test]
+#[ignore = "requires MINIFIELD_LFM25_BUNDLE_DIR, MINIFIELD_LFM25_PACKED and a wgpu adapter"]
+// Keep the complete external-oracle scenario and its staged failure diagnostics together.
+#[allow(clippy::too_many_lines)]
+fn wgpu_packed_executor_matches_cpu_on_real_model() {
+    let bundle = PathBuf::from(
+        std::env::var_os("MINIFIELD_LFM25_BUNDLE_DIR").expect("MINIFIELD_LFM25_BUNDLE_DIR"),
+    );
+    let packed_path =
+        PathBuf::from(std::env::var_os("MINIFIELD_LFM25_PACKED").expect("MINIFIELD_LFM25_PACKED"));
+    let config = fs::read(bundle.join("config.json")).expect("config.json");
+    let packed = fs::read(&packed_path).expect("packed safetensors");
+
+    // Oracle prompt p01, tokenized by llama.cpp (BOS included).
+    let tokens: Vec<u32> = vec![
+        1, 1098, 4605, 10800, 36387, 56586, 1391, 779, 46199, 4949, 3627, 779,
+    ];
+    let limits = ResourceLimits {
+        max_allocation_bytes: 1 << 30,
+        max_total_bytes: 6 << 30,
+        max_pending_operations: 512,
+    };
+
+    let gpu_start = std::time::Instant::now();
+    let gpu = WgpuBackend::new(0xE0_3C, limits).expect("wgpu backend");
+    let mut gpu_exec = load_format(gpu, &config, &packed, Lfm2WeightFormat::TernaryV1);
+    let gpu_load = gpu_start.elapsed();
+    let gpu_run = std::time::Instant::now();
+    let (gpu_logits, gpu_top) = teacher_forced_logits(&mut gpu_exec, &tokens);
+    let gpu_run = gpu_run.elapsed();
+
+    let cpu_start = std::time::Instant::now();
+    let cpu = CpuBackend::new(0xE0_2C, limits);
+    let mut cpu_exec = load_format(cpu, &config, &packed, Lfm2WeightFormat::TernaryV1);
+    let cpu_load = cpu_start.elapsed();
+    let cpu_run = std::time::Instant::now();
+    let (cpu_logits, cpu_top) = teacher_forced_logits(&mut cpu_exec, &tokens);
+    let cpu_run = cpu_run.elapsed();
+
+    assert_eq!(gpu_logits.len(), cpu_logits.len(), "logit width");
+    let max_delta = gpu_logits
+        .iter()
+        .zip(cpu_logits.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0_f32, f32::max);
+    let agreements = gpu_top
+        .iter()
+        .zip(cpu_top.iter())
+        .filter(|(a, b)| a == b)
+        .count();
+    println!(
+        "wgpu packed vs cpu packed: {}/{} top-1 positions agree, \
+         final-position max|delta|={max_delta:.4}",
+        agreements,
+        gpu_top.len()
+    );
+    println!(
+        "wgpu packed: load {gpu_load:?}, 12-token run {gpu_run:?}; \
+         cpu packed: load {cpu_load:?}, run {cpu_run:?}"
+    );
+    println!("wgpu top-1 sequence: {gpu_top:?}");
+    println!("cpu  top-1 sequence: {cpu_top:?}");
+    assert_eq!(gpu_top, cpu_top, "top-1 sequences diverged");
+    assert!(
+        max_delta <= LOGIT_TOLERANCE,
+        "logit divergence {max_delta} exceeds {LOGIT_TOLERANCE}"
+    );
+
+    // Greedy decode loop: the real generation path (storage reuse,
+    // device-resident sample, single 4-byte readback per token).
+    let mut prefill = gpu_exec
+        .prefill(TokenChunk::all(&tokens[..1]))
+        .expect("prefill");
+    let mut prefix = ready(&mut prefill);
+    let mut unmasked_ids = vec![
+        gpu_exec
+            .sampled_token(&prefix)
+            .expect("sampled")
+            .expect("sample"),
+    ];
+    let decode_start = std::time::Instant::now();
+    for _ in 0..12 {
+        let mut task = gpu_exec.append_argmax(prefix).expect("append_argmax");
+        prefix = ready(&mut task);
+        unmasked_ids.push(
+            gpu_exec
+                .sampled_token(&prefix)
+                .expect("sampled")
+                .expect("sample"),
+        );
+    }
+    let decode = decode_start.elapsed();
+    println!("wgpu packed append_argmax loop: 12 tokens in {decode:?}");
+
+    // Same loop under an all-ones mask: identical ids, per-step overhead is
+    // only the 8KB mask upload plus the argmax flag read.
+    let all_ones: Rc<[u64]> = vec![u64::MAX; 65_536_usize.div_ceil(64)].into();
+    let mut masked_prefill = gpu_exec
+        .prefill_masked(TokenChunk::all(&tokens[..1]), Rc::clone(&all_ones))
+        .expect("masked prefill");
+    let mut masked_prefix = ready(&mut masked_prefill);
+    let mut masked_ids = Vec::new();
+    masked_ids.push(
+        gpu_exec
+            .sampled_token(&masked_prefix)
+            .expect("sampled")
+            .expect("sample"),
+    );
+    let masked_start = std::time::Instant::now();
+    for _ in 0..12 {
+        let mut task = gpu_exec
+            .append_argmax_masked(masked_prefix, Rc::clone(&all_ones))
+            .expect("masked append_argmax");
+        masked_prefix = ready(&mut task);
+        masked_ids.push(
+            gpu_exec
+                .sampled_token(&masked_prefix)
+                .expect("sampled")
+                .expect("sample"),
+        );
+    }
+    let masked = masked_start.elapsed();
+    println!("wgpu packed append_argmax_masked loop: 12 tokens in {masked:?}");
+    assert_eq!(
+        masked_ids, unmasked_ids,
+        "all-ones mask must not change the greedy stream"
+    );
+
+    // Masked decode end to end: a mask allowing only id 42 must produce 42
+    // on both backends regardless of the logits. Mask width is the model
+    // vocab (65,536 ids -> 1,024 u64 words).
+    let mut words = vec![0_u64; 65_536_usize.div_ceil(64)];
+    words[0] |= 1_u64 << 42;
+    let only_42: Rc<[u64]> = words.into();
+
+    let mut gpu_prefill = gpu_exec
+        .prefill_masked(TokenChunk::all(&tokens[..1]), Rc::clone(&only_42))
+        .expect("gpu prefill_masked");
+    let mut gpu_prefix = ready(&mut gpu_prefill);
+    assert_eq!(
+        gpu_exec.sampled_token(&gpu_prefix).expect("gpu sampled"),
+        Some(42),
+        "gpu masked prefill must emit the only allowed id"
+    );
+    let mut gpu_append = gpu_exec
+        .append_argmax_masked(gpu_prefix, Rc::clone(&only_42))
+        .expect("gpu append_argmax_masked");
+    gpu_prefix = ready(&mut gpu_append);
+    assert_eq!(
+        gpu_exec.sampled_token(&gpu_prefix).expect("gpu sampled"),
+        Some(42),
+        "gpu masked append must emit the only allowed id"
+    );
+
+    let mut cpu_prefill = cpu_exec
+        .prefill_masked(TokenChunk::all(&tokens[..1]), Rc::clone(&only_42))
+        .expect("cpu prefill_masked");
+    let cpu_prefix = ready(&mut cpu_prefill);
+    assert_eq!(
+        cpu_exec.sampled_token(&cpu_prefix).expect("cpu sampled"),
+        Some(42),
+        "cpu masked prefill must emit the only allowed id"
+    );
+
+    // Direct choice readback: one bulk prefill plus a selected-column gather,
+    // no published prefix. wgpu must agree with CPU on the selected values.
+    let selectors = [42_u32, 7, 100];
+    let mut gpu_choice = gpu_exec
+        .prefill_choice_logits(TokenChunk::all(&tokens), &selectors)
+        .expect("gpu choice prefill");
+    let gpu_selected = ready(&mut gpu_choice);
+    let mut cpu_choice = cpu_exec
+        .prefill_choice_logits(TokenChunk::all(&tokens), &selectors)
+        .expect("cpu choice prefill");
+    let cpu_selected = ready(&mut cpu_choice);
+    assert_eq!(gpu_selected.len(), selectors.len());
+    assert_eq!(cpu_selected.len(), selectors.len());
+    for (index, (gpu_value, cpu_value)) in gpu_selected.iter().zip(&cpu_selected).enumerate() {
+        assert!(
+            (gpu_value - cpu_value).abs() <= LOGIT_TOLERANCE,
+            "selector {index}: wgpu {gpu_value} diverged from cpu {cpu_value}"
+        );
+    }
+
+    // Shared-base branches: one unscored base prefill per backend, then two
+    // serial tails; each branch's selected logits must agree across backends.
+    let mut gpu_base_task = gpu_exec
+        .prefill_choice_base(TokenChunk::all(&tokens[..8]))
+        .expect("gpu base prefill");
+    let gpu_base = ready(&mut gpu_base_task);
+    let mut cpu_base_task = cpu_exec
+        .prefill_choice_base(TokenChunk::all(&tokens[..8]))
+        .expect("cpu base prefill");
+    let cpu_base = ready(&mut cpu_base_task);
+    for tail in [&tokens[8..10], &tokens[10..]] {
+        let mut gpu_branch = gpu_exec
+            .append_choice_logits(&gpu_base, TokenChunk::all(tail), &selectors)
+            .expect("gpu branch");
+        let gpu_values = ready(&mut gpu_branch);
+        let mut cpu_branch = cpu_exec
+            .append_choice_logits(&cpu_base, TokenChunk::all(tail), &selectors)
+            .expect("cpu branch");
+        let cpu_values = ready(&mut cpu_branch);
+        assert_eq!(gpu_values.len(), selectors.len());
+        assert_eq!(cpu_values.len(), selectors.len());
+        for (index, (gpu_value, cpu_value)) in gpu_values.iter().zip(&cpu_values).enumerate() {
+            assert!(
+                (gpu_value - cpu_value).abs() <= LOGIT_TOLERANCE,
+                "branch selector {index}: wgpu {gpu_value} diverged from cpu {cpu_value}"
+            );
+        }
+    }
+}

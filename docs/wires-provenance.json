@@ -1,6 +1,6 @@
 {
   "reviewed_on": "2026-09-11",
-  "source_root": "/Users/xandermay/Documents/wires",
+  "source_root": "wires (local source snapshot; record paths are relative to this root)",
   "source_revision": "file-sha256; source folders have no accessible Git history",
   "original_sources_modified": false,
   "records": [
@@ -9,7 +9,7 @@
       "sha256": "94ac274957a6147d89aa0347bbafa3ea6a7b618d43a0d4bae5b47280d44edd44",
       "bytes": 12602,
       "destinations": [
-        "engines/quant-reference/src/q4.rs"
+        "tools/quant-reference/src/q4.rs"
       ],
       "use": "adapted-or-extracted"
     },
@@ -18,7 +18,7 @@
       "sha256": "4376f161d542a156e9c252b7b84b3b3af2045b50965c718fc4596a69f1656bfd",
       "bytes": 2066,
       "destinations": [
-        "engines/quant-reference/src/error.rs"
+        "tools/quant-reference/src/error.rs"
       ],
       "use": "adapted-or-extracted"
     },
@@ -27,7 +27,7 @@
       "sha256": "452128a04541eb861f3628182b26fc5055ee57df79d855078d9ba67248ec0dfc",
       "bytes": 1081,
       "destinations": [
-        "engines/quant-reference/LICENSE"
+        "tools/quant-reference/LICENSE"
       ],
       "use": "adapted-or-extracted"
     },
@@ -46,7 +46,7 @@
       "sha256": "f86e152b55789de2a920a8e4fa7075a7cb7828214e3dc3989e49df93186b2191",
       "bytes": 31555,
       "destinations": [
-        "engines/quant-reference/src/q8.rs"
+        "tools/quant-reference/src/q8.rs"
       ],
       "use": "adapted-or-extracted"
     },

@@ -1,0 +1,26 @@
+[project]
+name = "minifield-converters"
+version = "0.1.0"
+description = "Offline LFM2 asset packaging and explicit packed-weight quantization"
+requires-python = ">=3.11"
+dependencies = ["numpy>=2.2,<3", "safetensors>=0.6,<1"]
+
+[project.scripts]
+minifield-convert = "minifield_converters.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.3,<10", "ruff>=0.12,<1"]
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

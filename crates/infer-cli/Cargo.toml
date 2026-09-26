@@ -10,7 +10,7 @@ description = "Thin plaintext stdin/stdout runner for the Minifield inference ru
 [dependencies]
 minifield-text-generation = { path = "../text-generation" }
 minifield-text-tokenizer = { path = "../text-tokenizer" }
-minifield-engine-api = { path = "../../engines/engine-api" }
+minifield-engine-api = { path = "../engine-api" }
 minifield-executor-core = { path = "../executor-core" }
 minifield-backend-cpu = { path = "../backend-cpu" }
 sha2 = "=0.10.9"

@@ -10,4 +10,4 @@ Schemas and examples are checked locally, so this repository can work without si
 - Run contract checks in every affected repository. Preserve older versions while any supported artifact still uses them.
 - Never quietly refresh schemas from the network at startup.
 
-These initial 0.1.0 contracts are a starting interface for implementation. They don't establish a working generator, trainer, or inference backend.
+These snapshots describe artifact exchange. Passing their checks establishes structural compatibility; model execution and product acceptance require separate evidence.

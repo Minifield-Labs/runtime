@@ -1,0 +1,19 @@
+[project]
+name = "minifield-qualification"
+version = "0.1.0"
+description = "Portable bundle qualification and pinned contract checks"
+requires-python = ">=3.11"
+dependencies = ["jsonschema==4.25.1"]
+
+[dependency-groups]
+dev = ["ruff==0.12.12"]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

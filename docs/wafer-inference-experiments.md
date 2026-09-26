@@ -58,35 +58,35 @@ There is another concrete design constraint: the workspace's `training/src/minif
 
 ## Experiments, in order
 
-The [experiment index](../experiments/README.md) now owns order and status. Each file contains the description, hypothesis, prerequisites, comparison, measurements, decision criteria, and result record. The links below preserve the original reading's experiment numbers.
+The [experiment index](research/proposals/README.md) now owns order and status. Each file contains the description, hypothesis, prerequisites, comparison, measurements, decision criteria, and result record. The links below preserve the original reading's experiment numbers.
 
 ### 1. Establish one complete decoder and a device report
 
-[0001: Complete decoder and device baseline](../experiments/0001-decoder-baseline.md).
+[0001: Complete decoder and device baseline](research/proposals/0001-decoder-baseline.md).
 
 ### 2. Reuse app context and session history
 
-[0002: Prefix and session reuse](../experiments/0002-prefix-session-reuse.md).
+[0002: Prefix and session reuse](research/proposals/0002-prefix-session-reuse.md).
 
 ### 3. Keep prefill and decode allocations bounded
 
-[0003: Bounded prefill and decode allocations](../experiments/0003-bounded-attention.md).
+[0003: Bounded prefill and decode allocations](research/proposals/0003-bounded-attention.md).
 
 ### 4. Measure actual packed-weight execution
 
-[0004: Packed-weight execution](../experiments/0004-packed-weight-execution.md).
+[0004: Packed-weight execution](research/proposals/0004-packed-weight-execution.md).
 
 ### 5. Constrain action syntax and reduce repair cycles
 
-[0005: Constrained action generation](../experiments/0005-constrained-action-generation.md).
+[0005: Constrained action generation](research/proposals/0005-constrained-action-generation.md).
 
 ### 6. Compress KV only when its cost warrants it
 
-[0006: KV-cache compression](../experiments/0006-kv-cache-compression.md), conditional on measured cache cost.
+[0006: KV-cache compression](research/proposals/0006-kv-cache-compression.md), conditional on measured cache cost.
 
 ### 7. Evaluate speculative decoding when decode cost warrants it
 
-[0007: Speculative decoding, including DSpark](../experiments/0007-speculative-decoding.md), conditional on measured task latency and resource headroom.
+[0007: Speculative decoding, including DSpark](research/proposals/0007-speculative-decoding.md), conditional on measured task latency and resource headroom.
 
 ## Additional resource: Inside vLLM
 
@@ -100,7 +100,7 @@ Our reading priorities for batch 1:
 | Chunked prefill | Experiment 3: measure memory, responsiveness, and cancellation between chunks. |
 | Guided decoding | Experiment 5: include grammar compilation and token-masking overhead. |
 | Latency benchmarks | Experiment 1: separate first-token, per-token, and complete-action latency. |
-| Prompt-lookup speculation | Conditional [experiment 0007](../experiments/0007-speculative-decoding.md): measure acceptance and verification cost. |
+| Prompt-lookup speculation | Conditional [experiment 0007](research/proposals/0007-speculative-decoding.md): measure acceptance and verification cost. |
 
 Continuous batching, distributed serving, and paged allocation across concurrent requests remain outside our current scope. CUDA graph replay requires a compatible native backend; browser execution needs separate validation. This resource adds reading and comparison ideas, with no measured Minifield speedup.
 
@@ -111,7 +111,7 @@ Continuous batching, distributed serving, and paged allocation across concurrent
 | Continuous batching and sophisticated paged KV allocation | An explicit new requirement beyond the current batch-1 runtime; bulk generation belongs to a separate worker experiment |
 | Parallel test-time candidate generation | A deliberate product/quality experiment with its own memory and latency budget |
 | Distributed KV stores, tensor parallel serving, separate prefill/decode servers | A defined server workload under platform/data-generation with measured scale and cost |
-| Draft-model speculative decoding | See the measured latency and resource triggers in [0007](../experiments/0007-speculative-decoding.md) |
+| Draft-model speculative decoding | See the measured latency and resource triggers in [0007](research/proposals/0007-speculative-decoding.md) |
 | CUDA-specific kernel ports | A measured NVIDIA worker bottleneck, or an explicit NVIDIA native target |
 | Changes to attention architecture | A separate training/recovery experiment with product evaluations and deployment support |
 
@@ -119,6 +119,6 @@ Bulk teacher generation and RL rollout throughput belong to their own worker exp
 
 ## First backlog slice
 
-Start with [0001: Complete decoder and device baseline](../experiments/0001-decoder-baseline.md), including the reference device and declared limits. Follow the [experiment index](../experiments/README.md) for subsequent comparisons, conditional triggers, and result status.
+Start with [0001: Complete decoder and device baseline](research/proposals/0001-decoder-baseline.md), including the reference device and declared limits. Follow the [experiment index](research/proposals/README.md) for subsequent comparisons, conditional triggers, and result status.
 
 The experiment index also owns shared measurement rules and evidence storage. The [runtime procedure](procedure.md) continues to own product and release acceptance.

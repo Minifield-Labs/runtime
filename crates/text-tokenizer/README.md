@@ -21,9 +21,12 @@ are invalid. `skip_special_tokens` skips only definitions marked `special`; the
 six non-special added tokens remain visible.
 
 The default resource limits reject oversized assets, input, pretokenized
-pieces, output ID sequences, and BPE rank-lookups. The simple merger charges
-each adjacent rank lookup across the entire `encode` call against `max_merge_steps`, so adversarial input
-cannot consume unbounded work.
+pieces, output ID sequences, BPE rank-lookups, and added-token matching. The
+simple merger charges each adjacent rank lookup across the entire `encode`
+call against `max_merge_steps`. Added-token matching charges every attempted
+trie byte edge, including failed edges, against `max_added_token_steps` across
+the same call. Both work limits default to 16,777,216 steps and return their
+specific work-limit error before doing work beyond the budget.
 
 Run the compact default suite with:
 

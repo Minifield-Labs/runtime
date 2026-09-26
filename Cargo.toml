@@ -1,7 +1,7 @@
 [workspace]
 members = [
-    "engines/engine-api",
-    "engines/backend-wgpu",
+    "crates/engine-api",
+    "crates/backend-wgpu",
     "crates/backend-cpu",
     "crates/kernels-simd",
     "crates/executor-core",
@@ -9,14 +9,11 @@ members = [
     "crates/text-generation",
     "crates/infer-cli",
     "crates/json-grammar",
-    "engines/decoding-protocol",
+    "crates/decoding-protocol",
     "web",
 ]
 exclude = [
-    "engines/quant-reference",
-    "engines/lfm2-native",
-    "backends/cuda",
-    "backends/metal",
+    "tools/quant-reference",
 ]
 resolver = "3"
 

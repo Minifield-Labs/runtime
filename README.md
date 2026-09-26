@@ -1,44 +1,61 @@
 # Minifield Runtime
 
-Minifield Runtime is an inference-only Rust component for executing delivered models locally. It is intended to embed in native applications and browser/WASM callers, with a thin executable accepting plaintext input and returning plaintext output. Product policy, tool execution, UI, network services, jobs, training, and artifact distribution belong to callers.
+Local LFM2 inference in Rust, with CPU and WebGPU backends. The runtime loads dense or packed weights, tokenizes input, runs generation or classification, and supports reusable prefixes and constrained decoding.
 
-The active Rust workspace owns its execution and kernels. It has no third-party tensor or inference framework. CPU/WASM is the portable baseline; CUDA and Metal are planned low-level backends.
-This independent repository includes audited scalar Q4/Q8 matrix references,
-serialized model ownership, WASM memory checks, token validation, bounded
-sequence buckets, and a native mistral.rs adapter for complete LFM2 training
-model exports. Browser Worker hosting and product integration remain to be
-implemented.
+This is an early implementation with tested numerical paths and explicit limits. Hardware support and model quality require evidence for the actual bundle and device. Trained weights and a finished product integration aren't included.
 
-## Current implementation
+## Start here
 
-- engines/engine-api: backend-neutral tensor, resource, completion, asset, token, and finite inference-operation contracts.
-- crates/backend-cpu: owned scalar FP32 storage and arithmetic, packed-ternary and packed-NF4, fused decode, linear, normalization, convolution, rotary-position, and attention kernels.
-- engines/backend-wgpu: wgpu 30 backend implementing the same finite operation contract (F32 plus `minifield.ternary.v1` and `minifield.nf4.v1` packed kernels) with batched command recording and nonblocking completions.
-- crates/executor-core: checked configuration and bounded typed weight loading, full LFM2 execution, prefix caches, append/fork operations, and complete candidate scoring.
-- crates/text-tokenizer: owned bounded tokenizer asset parsing, byte-level BPE, Unicode pretokenization, and incremental UTF-8 decoding.
-- crates/text-generation: backend-neutral bounded greedy plaintext generation and typed binary-criterion choice scoring over a caller-provided tokenizer and token executor; choice scoring evaluates each criterion serially and reads back only its true/false logits.
-- crates/infer-cli: native bounded local-bundle loader and plaintext stdin/stdout executable with explicit BOS and capacity options.
-- engines/decoding-protocol: separate pure Rust schema/argument framing and teacher-trace component for caller integration.
+The repository pins Rust 1.89.0, including rustfmt, Clippy, and the WASM target. Portable checks also use Python 3.11+, uv, and Node.js 22+.
 
-The model executor, tokenizer, bounded greedy generation loop, and plaintext binary now run the trained tiny diagnostic model through owned Rust APIs. Quantized execution and device backends remain implementation work. Read [implementation status](docs/two-stage-implementation-status.md) for exact validation and remaining gaps.
+```sh
+scripts/check.sh quick
+scripts/check.sh ci
+```
 
-Historical JavaScript helpers and excluded engine prototypes are not part of the new Rust execution core. The scalar CPU implementation provides a correctness baseline; it makes no throughput claim.
+`ci` runs portable tests, lints, contracts, JavaScript, and converter checks. GPU and browser qualification require actual hardware. See [the development procedure](docs/procedure.md).
 
-## Local checks
+Run a local language-model bundle on the CPU:
 
-Use Rust 1.89 with the wasm32 target installed:
+```sh
+printf 'Hello' | cargo run --release --locked -p minifield-infer -- --model-dir /absolute/model --bos true --max-output-tokens 12 --max-context-tokens 64
+```
 
-    cargo +1.89.0 fmt --all --check
-    cargo +1.89.0 test --workspace --locked
-    cargo +1.89.0 clippy --workspace --all-targets --locked -- -D warnings
-    cargo +1.89.0 check --workspace --target wasm32-unknown-unknown --locked
+The directory must contain `config.json`, `model.safetensors`, and `tokenizer/tokenizer.json`. The CLI consumes the prompt exactly as supplied. Callers own chat templates and product policy.
 
-Opt-in checks requiring external model assets or private corpus inputs are documented in their test sources and are separate from the standalone synthetic suite. A wasm32 compile check is not browser execution qualification.
+Use [bundle qualification](tools/qualification/README.md) for GPU classification and matched quantization benchmarks, [the browser harness](web/README.md) for WASM execution, and [offline converters](tools/converters/README.md) for packaging or explicitly requested quantization.
+
+## Repository map
+
+| Path | Responsibility |
+| --- | --- |
+| `crates/engine-api` | Finite operation, tensor, ownership, completion, and resource contracts |
+| `crates/backend-cpu` | Scalar reference implementation and packed arithmetic |
+| `crates/backend-wgpu` | GPU storage, dispatch, shaders, completion, and diagnostics |
+| `crates/kernels-simd` | Isolated portable SIMD kernel work |
+| `crates/executor-core` | Bounded loader, LFM2 execution, classification, and prefix state |
+| `crates/text-tokenizer` | Bounded BPE assets, tokenization, and incremental decoding |
+| `crates/text-generation` | Bounded generation and candidate/choice scoring |
+| `crates/json-grammar` | Byte-level decoding constraints and token masks |
+| `crates/decoding-protocol` | Schema validation, framing, and deterministic teacher traces |
+| `crates/infer-cli` | Native plaintext host |
+| `web` | WASM bindings and browser development harness |
+| `tools/converters` | Independent Python conversion package |
+| `tools/qualification` | Native bundle correctness and timing reports |
+| `tools/quant-reference` | Separate MFQ8/Q4 compatibility reference |
+| `contracts`, `examples` | Pinned contracts and compact synthetic fixtures |
+| `docs/research` | Historical plans and research proposals |
+
+## Supported execution
+
+The active model is LFM2 with the configuration subset validated by the loader. Dense F32/BF16 assets execute as F32. Packed `minifield.ternary.v1` and `minifield.nf4.v1` matrices use group-128 scales; mixed formats resolve per weight role. CPU and WebGPU implement the same `InferenceOps` contract.
+
+The model file specifies weight representation. The runtime chooses compatible kernels from the backend, tensor shape, and explicit memory policy. Backend-private repacks stay in memory. Experimental kernels require a Cargo feature and typed selection. See [architecture](docs/architecture.md).
+
+Native Metal and browser WebGPU are exercised on a reference Apple device. Other GPU families need their own qualification. Dedicated CUDA and Metal backends, general model imports, and mobile/browser compatibility matrices remain future work.
 
 ## Boundaries
 
-Backend-neutral Rust owns model loading and execution policy within a caller-supplied resource budget. Backends own storage, finite kernels, and device completion. Opaque ownership and generation checks prevent foreign or stale tensors from being reused.
+Runtime owns inference and its evidence. Applications own authorization, tool execution, UI, and product sessions. Training owns optimizer state, QAT, evaluation datasets, and release metadata. Converters operate offline; Rust builds never invoke Python.
 
-Only synthetic test fixtures live with source. Actual model weights, private corpus records, training output, and run logs remain outside Git. The tiny numerical loader fixture contains generated random values and is retained solely for standalone tests.
-
-This repository must work as a standalone clone and cannot import sibling repositories by filesystem path.
+This is a standalone repository with no sibling source imports. Weights, customer data, generated reports, and logs stay outside Git. See [contributing](CONTRIBUTING.md), [security reporting](SECURITY.md), and [third-party notices](THIRD_PARTY.md).

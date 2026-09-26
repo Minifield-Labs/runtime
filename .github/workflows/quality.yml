@@ -1,0 +1,39 @@
+name: Portable quality checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  cpu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.30"
+      - name: Install locked check dependencies
+        run: |
+          uv sync --locked --project tools/qualification
+          uv sync --locked --project tools/converters
+      - name: Locked workspace, contracts, JavaScript, and Python checks
+        run: scripts/check.sh ci
+
+  wasm-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Compile the portable WASM target
+        run: scripts/check.sh wasm

@@ -11,8 +11,8 @@ description = "Browser WebGPU demo harness for the Minifield inference runtime"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-minifield-engine-api = { path = "../engines/engine-api" }
-minifield-backend-wgpu = { path = "../engines/backend-wgpu" }
+minifield-engine-api = { path = "../crates/engine-api" }
+minifield-backend-wgpu = { path = "../crates/backend-wgpu" }
 minifield-executor-core = { path = "../crates/executor-core" }
 minifield-json-grammar = { path = "../crates/json-grammar" }
 minifield-text-generation = { path = "../crates/text-generation" }

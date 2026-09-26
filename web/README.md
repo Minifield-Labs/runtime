@@ -1,106 +1,53 @@
-# Browser demo: packed ternary LFM2 on WebGPU
+# Browser WebGPU harness
 
-Runs the `minifield.ternary.v1` packed LFM2.5-230M bundle entirely in a browser
-tab: model fetch, weight upload, greedy decode, and token streaming, with all
-inference in the Rust `minifield-backend-wgpu` engine compiled to wasm32.
+The browser harness loads LFM2 assets, performs generation/classification in Rust/WASM, and streams results through thin JavaScript bindings. It requires WebGPU. Model quality depends on the supplied weights.
 
-This is a developer harness, not a product surface. The naive ternary export
-produces incoherent text; the demo exists to exercise the end-to-end path and
-show decode throughput.
-
-## Build
+## Build and run
 
 ```sh
-cargo build --target wasm32-unknown-unknown -p minifield-web-demo --release
-wasm-bindgen --target web --out-dir web/pkg \
-  target/wasm32-unknown-unknown/release/minifield_web_demo.wasm
+cargo build --target wasm32-unknown-unknown -p minifield-web-demo --release --locked
+cargo install wasm-bindgen-cli --version 0.2.127 --locked
+wasm-bindgen --target web --out-dir web/pkg target/wasm32-unknown-unknown/release/minifield_web_demo.wasm
+python3 -m http.server 8642 --bind 127.0.0.1
 ```
 
-`web/pkg/` is gitignored build output. The `wasm-bindgen` CLI version must
-match the crate version pinned in `web/Cargo.toml`.
+The CLI version must match `web/Cargo.toml`. `web/pkg/` is ignored generated output.
 
-## Run
+Put a local bundle at `models/demo/`, or open `http://localhost:8642/web/index.html?bundle=../models/your-model`. The bundle contains `config.json`, `model.safetensors`, and `tokenizer/tokenizer.json`. Serve only a directory whose contents you're willing to expose locally.
 
-Serve the repository root so both `web/` and the local bundle under
-`tmp/models/` resolve:
+The page is a development harness. Product UI, application authorization, and tool execution belong to the host application.
+
+## Actual browser qualification
 
 ```sh
-python3 -m http.server 8642
+scripts/check.sh browser --bundle /absolute/bundle --prompts /absolute/prompts.json --classes 8 --expected /absolute/native-result.json --out /absolute/browser-result.json
 ```
 
-Open `http://localhost:8642/web/index.html` in Chrome or Edge (WebGPU
-required). The page fetches `config.json`, the packed safetensors, and
-`tokenizer.json` from `tmp/models/lfm2.5-230m/` relative to the server root.
+This command builds the WASM package, then launches installed Chrome with an isolated temporary profile. Use `--chrome /absolute/executable` or `CHROME_BIN` to select the browser. Node.js 22+ and the matching wasm-bindgen CLI are required. No browser download or existing user profile is used.
 
-## How it works
+Prompts are a nonempty JSON array of nonempty strings. `--expected` accepts a native qualification result, native classifier JSON result, or hash-bound expected-logit fixture. The weight, config, tokenizer, and prompt hashes and class count must match. Omitting expected evidence checks full/cached parity and recovery only.
 
-- `WgpuBackend::new_async` creates the adapter/device through the browser's
-  WebGPU promise path; the blocking constructor would starve on wasm32.
-- `load()` builds the packed executor from fetched bytes via the standard
-  `Lfm2WeightLoadTask`/`MemoryAssetProvider` path.
-- `generate()` mirrors `text-generation`'s greedy loop but pumps each
-  completion cooperatively: a pending poll yields one macrotask so
-  `map_async`/`on_submitted_work_done` can resolve. The page provides
-  `__minifieldYield` (a `MessageChannel` post, unclamped); `setTimeout(0)` is
-  the fallback.
-- Each sampled id streams back through an `on_token` callback; the page
-  renders `id | decoded fragment` chips and reports tokens/second.
-- `generate_json()` runs the same loop under a decode constraint:
-  `crates/json-grammar`'s byte-level acceptor yields an allowed-token bitset
-  per step, and `prefill_masked`/`append_argmax_masked` gate the on-device
-  argmax so only grammar-continuable tokens can win. The page's Tool call
-  button uses `AssistantCallEnforcer` with the comma-separated names input:
-  output is exactly the serialized assistant body
-  `{"content":<value>,"tool_calls":[{"arguments":<object>,"id":"<string>","name":"<name>"}]}`
-  where `<name>` is one of the registered names, matching the
-  lfm2-chatml-tool-json training serializer. The crate also exposes
-  `JsonEnforcer` for general JSON-shaped output and `ToolCallEnforcer` for
-  the simpler `{"<name>":true|false}` shape.
-- `choose(base_prompt, names, tails)` runs `text-generation`'s typed choice
-  scoring. The shared base prompt is prefilled once in a single multi-token
-  pass, then each criterion tail is scored serially by branching the immutable
-  base and gathering its true/false selector logits, so only 2 logits per
-  criterion cross to the host. It resolves to the standard answer
-  `{ type: "choice", choice, confidence, probabilities }`, where
-  `probabilities` maps each criterion name to its relative score. The page's
-  "Structured choice" section drives it with a state textarea and one
-  `name: description` criterion per line; the full state, question, and
-  criteria map live once in the shared base while each tail carries only its
-  criterion's JSON key.
-- The prompt is wrapped in the lfm2-chatml-tool-json template
-  (`<|im_start|>` turns plus an `Available tools:` system block). The system
-  block is fixed per tool-name set, so `warm_tools` prefills it once at load
-  and `generate_json` appends only the short user/assistant tail onto the
-  cached KV prefix; the tail's pending sample is verified against the
-  grammar mask, with a full masked prefill as the fallback.
+The check runs actual WebGPU inference, full and cached classification, 64 concurrent scheduler yields, empty-input rejection, and successful inference afterward. It requires finite outputs, matching argmax, and the declared tolerances. It records browser/adapter identity, WASM/asset hashes, source revision/dirty status, timing samples, and comparison results. A deadline or absent adapter fails the command.
 
-## Classifiers
+Compilation uses `scripts/check.sh wasm`. JavaScript helper checks use `npm test`. Neither command establishes browser inference support.
 
-`load_classifier(config, weights, tokenizer, classes)` loads a backbone with
-`classification_head.weight` shaped `[classes, hidden]`. Dense F32 or BF16
-artifacts are accepted, and so are packed `minifield.ternary.v1` and
-`minifield.nf4.v1` bundles: the weight-load plan infers the format from each
-`X.codes`/`X.scales` pair's shape, so the caller API doesn't change. BF16
-expands to FP32 at load time; packed streams upload and decode on device.
-`classify(prompt)` returns raw class scores from the final valid token. It
-adds no template or special tokens, and starts with empty attention and
-convolution state on every call. Callers own action masks, sampling,
-prompts, and game state.
+The runner uses official [Chrome headless](https://developer.chrome.com/docs/automation-and-testing/headless) and [DevTools Runtime](https://chromedevtools.github.io/devtools-protocol/tot/Runtime/) interfaces.
 
-The core `Lfm2Classifier` uses the same backbone and backend operations as
-`Lfm2Executor`. Input vocabulary size remains independent of class count.
-A classifier cannot be constructed as a language-model executor, and a
-tied language-model head cannot be used as a classifier.
+## Binding behavior
 
-For native GPU verification of a bundle containing `config.json`,
-`tokenizer.json`, and `model.safetensors`:
+- Async backend creation and cooperative completion polling keep the browser event loop active. `__minifieldYield` uses a queued MessageChannel scheduler; every concurrent waiter resolves.
+- `load` and `generate` run bounded greedy language-model inference with incremental token callbacks.
+- `generate_json` applies grammar masks to on-device argmax. Grammar validity and registered tool names don't establish application authorization or complete JSON Schema validation.
+- `choose` prefills shared context once and scores criterion tails serially, reading only selector logits.
+- `load_classifier` loads an explicit dense classifier head `[classes, hidden]`. Dense F32/BF16 and packed ternary/NF4 backbones share the same API.
+- `classify` starts fresh state. `classify_cached` reuses a shared prefix when possible, with independent class width and input vocabulary. Callers own prompts, action masks, and application state.
+
+## Native bundle evidence
+
+Use [tools/qualification](../tools/qualification/README.md) for repeated native measurements. The native example emits one structured JSON result with asset hashes, token IDs, logits, timings, dispatch counts, policy, and adapter details.
 
 ```sh
-cargo run --release -p minifield-web-demo --example classify -- \
-  /path/to/bundle /path/to/prompts.json
+cargo run --release --locked -p minifield-web-demo --example classify -- /absolute/bundle /absolute/prompts.json --classes 8 --lut2 auto --prefix true
 ```
 
-The prompt file is a JSON array of strings. Output is one JSON record per
-prompt with exact token IDs, raw logits, and elapsed inference seconds.
-This exercises the same classifier and wgpu kernels as the WASM build;
-it doesn't replace browser validation.
+The default tokenizer path is `tokenizer/tokenizer.json`. Legacy bundles require an explicit `--tokenizer` path. Native results complement the browser check.

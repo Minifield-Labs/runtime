@@ -1,6 +1,6 @@
 # Constrained decoding for product actions
 
-Status: researched proposal, 2026-09-15. No grammar engine has been integrated or benchmarked in this repository. [Experiment 0005](../experiments/0005-constrained-action-generation.md) owns execution and acceptance.
+Status: researched proposal, 2026-09-15. No grammar engine has been integrated or benchmarked in this repository. [Experiment 0005](research/proposals/0005-constrained-action-generation.md) owns execution and acceptance.
 
 ## Recommendation
 

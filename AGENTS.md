@@ -19,5 +19,9 @@ This repository is part of Minifield Labs and must work as a standalone clone.
 - Treat schema versions as immutable once consumed. Update contract snapshots and their checksums explicitly, with compatibility checks.
 - Read the local README before changing a module. Preserve other contributors' work.
 - Use conventional commits. Don't publish remotes, start paid jobs, or collect customer data as part of scaffolding.
-- Run `python scripts/check_contracts.py` after changing contracts or examples. This checks structure and fixture consistency; product behavior requires its own tests.
+- Run `uv run --locked --project tools/qualification python scripts/check_contracts.py` after changing contracts or examples. This checks structure and fixture consistency; product behavior requires its own tests.
 - Write concise documentation, use contractions naturally, and avoid em dashes.
+
+- Read `docs/architecture.md` and `docs/procedure.md` for active boundaries and checks. Keep Rust crates under `crates/`, independent offline tools under `tools/`, and browser hosting under `web/`.
+- Core inference configuration is typed. Parse environment variables in hosts only. Model files describe representations; runtime dispatch chooses compatible kernels.
+- Run `scripts/check.sh ci` before merge. GPU changes need `scripts/check.sh gpu`; browser changes need actual browser qualification. Never count a skipped hardware check as a pass.

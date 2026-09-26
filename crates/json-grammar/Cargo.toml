@@ -8,7 +8,7 @@ publish.workspace = true
 description = "Byte-level JSON grammar enforcer producing allowed-token bitsets for masked decode"
 
 [dependencies]
-minifield-engine-api = { path = "../../engines/engine-api" }
+minifield-engine-api = { path = "../engine-api" }
 
 [lints]
 workspace = true

@@ -392,6 +392,16 @@ fn load_executor(
     format: Lfm2WeightFormat,
     total_bytes: u64,
 ) -> Lfm2Executor<CpuBackend> {
+    load_executor_with_capacity(config, weights, format, total_bytes, 64)
+}
+
+fn load_executor_with_capacity(
+    config: &[u8],
+    weights: &[u8],
+    format: Lfm2WeightFormat,
+    total_bytes: u64,
+    capacity: u64,
+) -> Lfm2Executor<CpuBackend> {
     let request = Lfm2LoadRequest::new_with_format(
         config.to_vec(),
         digest(config),
@@ -409,13 +419,22 @@ fn load_executor(
         format,
     )
     .expect("load request");
-    finish_load(request, weights, total_bytes)
+    finish_load_with_capacity(request, weights, total_bytes, capacity)
 }
 
 fn finish_load(
     request: Lfm2LoadRequest,
     weights: &[u8],
     total_bytes: u64,
+) -> Lfm2Executor<CpuBackend> {
+    finish_load_with_capacity(request, weights, total_bytes, 64)
+}
+
+fn finish_load_with_capacity(
+    request: Lfm2LoadRequest,
+    weights: &[u8],
+    total_bytes: u64,
+    capacity: u64,
 ) -> Lfm2Executor<CpuBackend> {
     let mut cpu = backend(total_bytes);
     let mut provider = MemoryAssetProvider::new(weights.to_vec(), weights.len() as u64);
@@ -431,7 +450,7 @@ fn finish_load(
         cpu,
         weights,
         Lfm2ExecutionLimits {
-            max_logical_tokens: 64,
+            max_logical_tokens: capacity,
         },
     )
     .expect("executor")
@@ -445,7 +464,7 @@ type DenseTensors = Vec<(String, Vec<u64>, Vec<f32>)>;
 
 fn tiny_packed_fixture() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let (config, dense) = tiny_dense_base();
-    tiny_packed_fixture_from(&config, dense)
+    tiny_packed_fixture_from(&config, &dense)
 }
 
 /// The deterministic dense tensor list shared by every fixture flavour.
@@ -562,11 +581,11 @@ fn tiny_dense_base() -> (Vec<u8>, DenseTensors) {
 
 /// Pack every rank-two matmul in `dense` to ternary and write the packed +
 /// dequantized-dense safetensors side by side.
-fn tiny_packed_fixture_from(config: &[u8], dense: DenseTensors) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+fn tiny_packed_fixture_from(config: &[u8], dense: &DenseTensors) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     // Write the packed and dequantized-dense safetensors side by side.
     let mut packed_tensors: Vec<(String, String, Vec<u64>, Vec<u8>)> = Vec::new();
     let mut dequant_tensors: Vec<(String, String, Vec<u64>, Vec<u8>)> = Vec::new();
-    for (name, dims, values) in &dense {
+    for (name, dims, values) in dense {
         if dims.len() == 2 && *dims.last().expect("dims") >= 128 && dims[1].is_multiple_of(128) {
             let rows = dims[0] as usize;
             let columns = dims[1] as usize;
@@ -1241,5 +1260,201 @@ fn mixed_bundle_loads_dense_embedding_and_packed_matmuls() {
             &ready(&mut dl),
             &format!("step {step}: mixed bundle diverged from expected dense"),
         );
+    }
+}
+
+// Independent NF4 codebook used to build dequantized reference tensors.
+const NF4_REFERENCE: [f32; 16] = [
+    -1.0,
+    -0.696_192_8,
+    -0.525_073_05,
+    -0.394_917_5,
+    -0.284_441_38,
+    -0.184_773_43,
+    -0.091_050_036,
+    0.0,
+    0.079_580_3,
+    0.160_930_2,
+    0.246_112_3,
+    0.337_915_24,
+    0.440_709_83,
+    0.562_617,
+    0.722_956_84,
+    1.0,
+];
+
+fn pack_nf4_group(row: &[f32]) -> (Vec<u8>, f32, Vec<f32>) {
+    let scale = row
+        .iter()
+        .fold(0.0_f32, |maximum, value| maximum.max(value.abs()));
+    let decoded = f16_to_f32(f32_to_f16(scale));
+    let indices: Vec<usize> = row
+        .iter()
+        .map(|value| {
+            let normalized = if scale == 0.0 { 0.0 } else { value / scale };
+            (0..16)
+                .min_by(|left, right| {
+                    (NF4_REFERENCE[*left] - normalized)
+                        .abs()
+                        .total_cmp(&(NF4_REFERENCE[*right] - normalized).abs())
+                })
+                .expect("nonempty NF4 table")
+        })
+        .collect();
+    let codes = indices
+        .chunks_exact(2)
+        .map(|pair| pair[0] as u8 | ((pair[1] as u8) << 4))
+        .collect();
+    let dequantized = indices
+        .iter()
+        .map(|index| NF4_REFERENCE[*index] * decoded)
+        .collect();
+    (codes, decoded, dequantized)
+}
+
+fn mixed_pair_fixture(nf4_first: bool) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let (config, dense) = tiny_dense_base();
+    let mut packed_tensors = Vec::new();
+    let mut reference_tensors = Vec::new();
+    let mut quantization = serde_json::Map::new();
+    for (name, dims, values) in dense {
+        if dims.len() == 2 && dims[1].is_multiple_of(128) {
+            let first = name.ends_with("self_attn.k_proj.weight")
+                || name.ends_with("feed_forward.w1.weight");
+            let second = name.ends_with("self_attn.v_proj.weight")
+                || name.ends_with("feed_forward.w3.weight");
+            let nf4 = (nf4_first && first) || (!nf4_first && second);
+            let columns = dims[1] as usize;
+            let mut codes = Vec::new();
+            let mut scales = Vec::new();
+            let mut reference = Vec::new();
+            for row in values.chunks_exact(columns) {
+                for group in row.chunks_exact(128) {
+                    let (bytes, scale, dequantized) = if nf4 {
+                        pack_nf4_group(group)
+                    } else {
+                        let (bytes, scale, dequantized) = pack_group(group);
+                        (bytes.to_vec(), scale, dequantized)
+                    };
+                    codes.extend(bytes);
+                    scales.extend(f32_to_f16(scale).to_le_bytes());
+                    reference.extend(dequantized);
+                }
+            }
+            quantization.insert(
+                name.clone(),
+                json!(if nf4 { "nf4-v1" } else { "ternary-v1" }),
+            );
+            packed_tensors.push((
+                format!("{name}.codes"),
+                "U8".to_owned(),
+                vec![dims[0], dims[1] / if nf4 { 2 } else { 4 }],
+                codes,
+            ));
+            packed_tensors.push((
+                format!("{name}.scales"),
+                "F16".to_owned(),
+                vec![dims[0], dims[1] / 128],
+                scales,
+            ));
+            reference_tensors.push((name, "F32".to_owned(), dims, f32_bytes(&reference)));
+        } else {
+            let bytes = f32_bytes(&values);
+            packed_tensors.push((name.clone(), "F32".to_owned(), dims.clone(), bytes.clone()));
+            reference_tensors.push((name, "F32".to_owned(), dims, bytes));
+        }
+    }
+    let packed_refs: Vec<_> = packed_tensors
+        .iter()
+        .map(|(n, d, s, b)| (n.as_str(), d.as_str(), s.clone(), b.as_slice()))
+        .collect();
+    let reference_refs: Vec<_> = reference_tensors
+        .iter()
+        .map(|(n, d, s, b)| (n.as_str(), d.as_str(), s.clone(), b.as_slice()))
+        .collect();
+    let packed = safetensors_with_metadata(
+        &packed_refs,
+        Some(json!({
+            "format": "minifield.mixed.v1",
+            "tensor_quantization": serde_json::to_string(&quantization).expect("quantization"),
+        })),
+    );
+    (config, packed, safetensors(&reference_refs))
+}
+
+#[test]
+fn mixed_pair_encodings_match_dequantized_cpu_for_decode_and_bulk_prefill_in_both_orders() {
+    for nf4_first in [false, true] {
+        let (config, packed, reference) = mixed_pair_fixture(nf4_first);
+        let format = detect_lfm2_weight_format(&packed).expect("format");
+        let quantization = parse_lfm2_tensor_quantization(&packed).expect("quantization");
+        let request = Lfm2LoadRequest::new_with_quantization(
+            config.clone(),
+            digest(&config),
+            packed.len() as u64,
+            digest(&packed),
+            LoaderLimits {
+                max_asset_bytes: packed.len() as u64,
+                max_header_bytes: 1 << 20,
+                max_source_tensor_bytes: packed.len() as u64,
+                max_retained_host_bytes: packed.len() as u64 * 6,
+                max_tensor_name_bytes: 1024,
+                max_tensors: 4096,
+                max_rank: 4,
+            },
+            format,
+            &quantization,
+        )
+        .expect("mixed request");
+        let mut packed_executor = finish_load_with_capacity(request, &packed, 1 << 26, 128);
+        let mut reference_executor =
+            load_executor_with_capacity(&config, &reference, Lfm2WeightFormat::Dense, 1 << 26, 128);
+        for rows in [1, 96] {
+            let tokens: Vec<_> = (0..rows)
+                .map(|index| ((index * 13 + 1) % 128) as u32)
+                .collect();
+            let packed_prefix = ready(
+                &mut packed_executor
+                    .prefill(TokenChunk::all(&tokens))
+                    .expect("mixed prefill"),
+            );
+            let reference_prefix = ready(
+                &mut reference_executor
+                    .prefill(TokenChunk::all(&tokens))
+                    .expect("dense prefill"),
+            );
+            let actual = ready(
+                &mut packed_executor
+                    .next_logits(&packed_prefix)
+                    .expect("mixed logits"),
+            );
+            let expected = ready(
+                &mut reference_executor
+                    .next_logits(&reference_prefix)
+                    .expect("dense logits"),
+            );
+            assert_within_reorder(&actual, &expected, "mixed pair bulk/decode logits");
+            let packed_next = ready(
+                &mut packed_executor
+                    .append_known(&packed_prefix, TokenChunk::all(&[5]))
+                    .expect("mixed decode"),
+            );
+            let reference_next = ready(
+                &mut reference_executor
+                    .append_known(&reference_prefix, TokenChunk::all(&[5]))
+                    .expect("dense decode"),
+            );
+            let actual = ready(
+                &mut packed_executor
+                    .next_logits(&packed_next)
+                    .expect("mixed next logits"),
+            );
+            let expected = ready(
+                &mut reference_executor
+                    .next_logits(&reference_next)
+                    .expect("dense next logits"),
+            );
+            assert_within_reorder(&actual, &expected, "mixed pair appended logits");
+        }
     }
 }

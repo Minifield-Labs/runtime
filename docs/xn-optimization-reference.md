@@ -6,7 +6,7 @@ Reviewed September 14, 2026. Status: source research and proposed comparisons. N
 
 Pin this review to commit [`91c700563e12dc1463a13903fe7b11472da02153`](https://github.com/gradium-ai/xn/tree/91c700563e12dc1463a13903fe7b11472da02153), whose workspace version is `0.2.4`. The latest commit inspected gates WASM relaxed-SIMD instructions by target feature. Recheck changes and compatibility before using a newer revision.
 
-Our target remains **batch 1, one resident model, and one reusable KV allocation**. Multiple CPU threads or GPU commands can accelerate that single sequence. The [experiment index](../experiments/README.md) owns order and status; the [runtime procedure](procedure.md) owns acceptance.
+Our target remains **batch 1, one resident model, and one reusable KV allocation**. Multiple CPU threads or GPU commands can accelerate that single sequence. The [experiment index](research/proposals/README.md) owns order and status; the [runtime procedure](procedure.md) owns acceptance.
 
 ## Code worth studying
 
@@ -35,10 +35,10 @@ The quantized references use GGML formats. Q8 repacking requires positive matrix
 
 ## Comparisons mapped to the experiment protocols
 
-1. **[Decoder baseline and profiling](../experiments/0001-decoder-baseline.md):** add per-operation timing and memory attribution once the exact decoder works. On the target device, identify whether weight reads, attention, dispatch, allocation, or readback dominates. Use that evidence to select an xn technique.
-2. **[Prefix reuse](../experiments/0002-prefix-session-reuse.md) and [bounded attention](../experiments/0003-bounded-attention.md):** compare cache appends/active views and GQA-aware single-query attention against the numerical reference at the same context lengths. Measure both active bytes and allocated capacity. Keep prefill correctness and causal masking covered separately.
-3. **[Packed execution](../experiments/0004-packed-weight-execution.md):** compare scalar and SIMD matrix-vector kernels on exact exported shapes. Trial repacking only for compatible formats, with identical effective weights and activation semantics. Include setup costs, scratch allocations, and complete-action latency.
-4. **Scheduling and GPU overhead:** compare supported thread counts under [0004](../experiments/0004-packed-weight-execution.md), and command submissions/buffer reuse under [0003](../experiments/0003-bounded-attention.md). Keep batch 1 fixed. Retain a change only when device gains survive repeated product requests and the existing numerical, behavioral, memory, and responsiveness gates.
+1. **[Decoder baseline and profiling](research/proposals/0001-decoder-baseline.md):** add per-operation timing and memory attribution once the exact decoder works. On the target device, identify whether weight reads, attention, dispatch, allocation, or readback dominates. Use that evidence to select an xn technique.
+2. **[Prefix reuse](research/proposals/0002-prefix-session-reuse.md) and [bounded attention](research/proposals/0003-bounded-attention.md):** compare cache appends/active views and GQA-aware single-query attention against the numerical reference at the same context lengths. Measure both active bytes and allocated capacity. Keep prefill correctness and causal masking covered separately.
+3. **[Packed execution](research/proposals/0004-packed-weight-execution.md):** compare scalar and SIMD matrix-vector kernels on exact exported shapes. Trial repacking only for compatible formats, with identical effective weights and activation semantics. Include setup costs, scratch allocations, and complete-action latency.
+4. **Scheduling and GPU overhead:** compare supported thread counts under [0004](research/proposals/0004-packed-weight-execution.md), and command submissions/buffer reuse under [0003](research/proposals/0003-bounded-attention.md). Keep batch 1 fixed. Retain a change only when device gains survive repeated product requests and the existing numerical, behavioral, memory, and responsiveness gates.
 
 Use the upstream [attention benchmark](https://github.com/gradium-ai/xn/blob/91c700563e12dc1463a13903fe7b11472da02153/xn-core/examples/sdpa_decode_bench.rs) and [correctness cases](https://github.com/gradium-ai/xn/blob/91c700563e12dc1463a13903fe7b11472da02153/xn-core/tests/tensor_tests.rs#L1069) as harness references. The benchmark reports the minimum average from repeated rounds; our device reports still need p50/p95, sample counts, and sustained runs.
 
@@ -48,6 +48,6 @@ The inspected [CI workflow](https://github.com/gradium-ai/xn/blob/91c700563e12dc
 
 ## Adoption boundary
 
-Keep xn as a source reference and potential comparison engine until a measured bottleneck justifies a focused trial. Isolate any future dependency or borrowed kernel under `engines/`, pin its revision, and preserve provenance. The project declares MIT/Apache-2.0 licensing in [Cargo.toml](https://github.com/gradium-ai/xn/blob/91c700563e12dc1463a13903fe7b11472da02153/Cargo.toml); retain applicable license files and upstream notices, including the repacking code's GGML attribution, if code is reused.
+Keep xn as a source reference and potential comparison engine until a measured bottleneck justifies a focused trial. Isolate any future dependency or borrowed kernel under an isolated backend crate or `tools/`, pin its revision, and preserve provenance. The project declares MIT/Apache-2.0 licensing in [Cargo.toml](https://github.com/gradium-ai/xn/blob/91c700563e12dc1463a13903fe7b11472da02153/Cargo.toml); retain applicable license files and upstream notices, including the repacking code's GGML attribution, if code is reused.
 
 No framework migration, new model format, or performance gain is accepted by adding this reference.

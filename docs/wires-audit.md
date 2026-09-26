@@ -1,3 +1,5 @@
+> Historical transfer audit. The Q4/MFQ8 compatibility probe remains in `tools/quant-reference`. The JavaScript adapter and lifecycle helpers described below were retired in the 2026-09-25 restructure.
+
 # Wires transfer: runtime audit
 
 Reviewed September 11, 2026. Source hashes and destination mappings are recorded in wires-provenance.json. This audit covers the extracted components, with the source GPU experiment retained as design evidence.
@@ -6,8 +8,8 @@ Reviewed September 11, 2026. Source hashes and destination mappings are recorded
 
 | Source in unrvl-embdb | Destination | Decision |
 | --- | --- | --- |
-| src/quant.rs, src/error.rs | engines/quant-reference/src/q4.rs, error.rs | Extract scalar packed-INT4 operations and shape checks; preserve source tests and MIT notice |
-| experiments/cubecl-q4-probe/src/w8.rs | engines/quant-reference/src/q8.rs | Extract row-local INT8 CPU math and checked reading; remove fixed encoder assumptions |
+| src/quant.rs, src/error.rs | tools/quant-reference/src/q4.rs, error.rs | Extract scalar packed-INT4 operations and shape checks; preserve source tests and MIT notice |
+| experiments/cubecl-q4-probe/src/w8.rs | tools/quant-reference/src/q8.rs | Extract row-local INT8 CPU math and checked reading; remove fixed encoder assumptions |
 | web/unrvl-embdb.js | src/inference/wasm-memory.mjs, src/context/token-input.mjs | Preserve fresh memory views and copied results; add pre-coercion input and finite-output validation |
 | experiments/cubecl-q4-probe/src/wasm.rs and w8_runner.rs | src/inference/resident-model.mjs | Adapt resident ownership into a bounded FIFO lifecycle |
 | Optimization notes and experience report | src/inference/sequence-buckets.mjs and procedure additions | Bound shape specialization and record device-specific measurements |
@@ -81,10 +83,10 @@ From the runtime root:
 
 ```sh
 npm test
-cargo test --manifest-path engines/quant-reference/Cargo.toml --offline
-cargo clippy --manifest-path engines/quant-reference/Cargo.toml --offline --all-targets -- -D warnings
-cargo build --manifest-path engines/quant-reference/Cargo.toml --offline --example matrix_probe
-cargo build --manifest-path engines/quant-reference/Cargo.toml --offline --target wasm32-unknown-unknown
+cargo test --manifest-path tools/quant-reference/Cargo.toml --offline
+cargo clippy --manifest-path tools/quant-reference/Cargo.toml --offline --all-targets -- -D warnings
+cargo build --manifest-path tools/quant-reference/Cargo.toml --offline --example matrix_probe
+cargo build --manifest-path tools/quant-reference/Cargo.toml --offline --target wasm32-unknown-unknown
 python scripts/check_contracts.py
 ```
 

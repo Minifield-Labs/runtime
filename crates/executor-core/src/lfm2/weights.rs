@@ -52,24 +52,33 @@ impl Lfm2WeightFormat {
 }
 
 /// Sniff a `SafeTensors` asset's `__metadata__.format` marker without
-/// ingesting tensors. Dense remains the default when no marker is present.
+/// ingesting tensors. Dense remains the default only when no marker is present.
+/// The known `pt` producer marker also routes to dense; the bounded loader
+/// still admits tensors by their dtype, shape, and exact inventory.
+/// Explicit unknown formats or versions, and nonstring markers, reject.
 /// This is a routing hint for callers; the real header validation happens in
 /// the bounded loader.
 pub fn detect_lfm2_weight_format(asset: &[u8]) -> Result<Lfm2WeightFormat> {
-    match sniff_metadata(asset)?
-        .get("format")
-        .and_then(serde_json::Value::as_str)
-    {
-        Some("minifield.ternary.v1") => Ok(Lfm2WeightFormat::TernaryV1),
-        Some("minifield.nf4.v1") => Ok(Lfm2WeightFormat::Nf4V1),
-        Some("minifield.mixed.v1") => Ok(Lfm2WeightFormat::MixedV1),
-        _ => Ok(Lfm2WeightFormat::Dense),
+    match sniff_metadata(asset)?.get("format") {
+        None => Ok(Lfm2WeightFormat::Dense),
+        Some(serde_json::Value::String(marker)) => match marker.as_str() {
+            "pt" => Ok(Lfm2WeightFormat::Dense),
+            "minifield.ternary.v1" => Ok(Lfm2WeightFormat::TernaryV1),
+            "minifield.nf4.v1" => Ok(Lfm2WeightFormat::Nf4V1),
+            "minifield.mixed.v1" => Ok(Lfm2WeightFormat::MixedV1),
+            _ => Err(ExecutorError::Unsupported(
+                "unrecognized LFM2 weight format",
+            )),
+        },
+        Some(_) => Err(ExecutorError::InvalidArgument(
+            "LFM2 weight format marker must be a string",
+        )),
     }
 }
 
 /// Parse the `__metadata__.tensor_quantization` map: tensor name to the
 /// scheme it was packed with (`"ternary-v1"`, `"nf4-v1"`, or a dense dtype
-/// name). Absent or non-object metadata yields an empty map, which callers
+/// name). An absent declaration yields an empty map, which callers
 /// treat as "every matmul role follows the bundle format".
 pub fn parse_lfm2_tensor_quantization(
     asset: &[u8],
@@ -138,11 +147,16 @@ fn sniff_metadata(asset: &[u8]) -> Result<serde_json::Map<String, serde_json::Va
             ))?;
     let value: serde_json::Value = serde_json::from_slice(header)
         .map_err(|_| ExecutorError::InvalidArgument("safetensors header is not valid JSON"))?;
-    Ok(value
-        .get("__metadata__")
-        .and_then(serde_json::Value::as_object)
-        .cloned()
-        .unwrap_or_default())
+    let header = value.as_object().ok_or(ExecutorError::InvalidArgument(
+        "safetensors header must be a JSON object",
+    ))?;
+    match header.get("__metadata__") {
+        None => Ok(serde_json::Map::new()),
+        Some(serde_json::Value::Object(metadata)) => Ok(metadata.clone()),
+        Some(_) => Err(ExecutorError::InvalidArgument(
+            "safetensors metadata must be a JSON object",
+        )),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

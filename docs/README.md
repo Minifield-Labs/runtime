@@ -1,13 +1,12 @@
 # Engineering documentation
 
-Keep repository-specific design decisions, interface changes, and operational instructions here. Company strategy and cross-repository architecture live in the parent workspace's docs/ directory; they aren't required to run this repository's checks.
+- [Architecture](architecture.md): strategy boundaries, formats, dispatch, budgets, and converter ownership.
+- [Development procedure](procedure.md): checks, evidence standards, publication gates.
+- [FFN prefill experiments](ffn-prefill-experiments.md): measured kernel choices and historical timing comparisons.
+- [Bundle qualification](../tools/qualification/README.md): profiles, comparisons, matched benchmarks.
+- [Browser harness](../web/README.md): build and actual WebGPU qualification.
+- [Converters](../tools/converters/README.md): packaging, quantization, cross-language checks.
+- [Research archive](research/README.md): historical plans and proposals.
+- [Wires audit](wires-audit.md): source provenance and retained reference code.
 
-Record accepted decisions with numbered files such as `0001-rollout-transport.md`. Keep implementation details beside the module they describe when that makes ownership clearer.
-
-- [Runtime procedure](procedure.md): implementation order and delivery gates.
-- [Runtime experiments](../experiments/README.md): ordered protocols, hypotheses, comparisons, criteria, status, and a shared run-record template.
-- [Constrained decoding research](constrained-decoding-research.md): function-derived grammars, Rust/WASM options, quality and performance evidence, and an incremental plan that preserves new action sequences.
-- [Wires audit](wires-audit.md): reused foundations and their verification limits.
-- [Wafer inference reading](wafer-inference-experiments.md): research sources, Falcon/MiniCPM cache estimates, and links to the experiment protocols.
-- [xn optimization reference](xn-optimization-reference.md): pinned Rust kernel, cache, and scheduling references, with batch-1 trials and browser/model compatibility limits.
-- [Inside vLLM](https://www.aleksagordic.com/blog/vllm), Aleksa Gordić: engine internals and inference techniques, with [batch-1 reading priorities](wafer-inference-experiments.md#additional-resource-inside-vllm).
+Research notes preserve their original assumptions. Current supported behavior belongs in architecture, procedure, and module documentation.

@@ -11,13 +11,14 @@ use minifield_backend_cpu::{CpuBackend, CpuBuffer, CpuCompletion};
 use minifield_engine_api::{
     BackendCapabilities, BackendIdentity, BackendLease, CompletionPoll, ExecutorError,
     FenceRetirement, GatedShortConvSpec, GqaSpec, InferenceCompletion, InferenceOps,
-    MemoryAssetProvider, MemoryAssetRead, PackedHeadSpec, RectCopy2d, ResourceLimits,
-    ResourceReport, Result, RetirementRejection, RotarySpec, Shape, TokenChoiceExecutor,
-    TokenChunk, TokenExecutor, TokenId, TokenIds,
+    MemoryAssetProvider, MemoryAssetRead, OperationKind, OperationSet, PackedHeadSpec, RectCopy2d,
+    ResourceLimits, ResourceReport, Result, RetirementRejection, RotarySpec, Shape,
+    TokenChoiceExecutor, TokenChunk, TokenExecutor, TokenId, TokenIds,
 };
 use minifield_executor_core::{
-    Lfm2ExecutionLimits, Lfm2Executor, Lfm2LoadRequest, Lfm2WeightLoadTask, LoaderLimits,
-    LoaderPoll,
+    Lfm2ExecutionLimits, Lfm2ExecutionOptions, Lfm2Executor, Lfm2LayerWeightRole, Lfm2LoadRequest,
+    Lfm2Lut2Mode, Lfm2TypedWeights, Lfm2WeightFormat, Lfm2WeightLoadTask, Lfm2WeightPlan,
+    Lfm2WeightRole, LoaderLimits, LoaderPoll, StorageDType, parse_lfm2_config,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -246,6 +247,11 @@ struct DeferredState {
     fail_after_n_copies: Cell<Option<u32>>,
     dropped_pending_fences: Cell<u32>,
     dropped_pending_readbacks: Cell<u32>,
+    lut2_supported: Cell<bool>,
+    repack_calls: Cell<usize>,
+    repack_limit: Cell<Option<usize>>,
+    repack_error: RefCell<Option<ExecutorError>>,
+    missing_operation: Cell<Option<OperationKind>>,
 }
 
 impl DeferredState {
@@ -431,7 +437,37 @@ impl InferenceOps for DeferredBackend {
     }
 
     fn capabilities(&self) -> BackendCapabilities {
-        self.cpu.capabilities()
+        let mut capabilities = self.cpu.capabilities();
+        if let Some(missing) = self.state.missing_operation.get() {
+            capabilities.operations = [
+                OperationKind::Copy,
+                OperationKind::RectCopy2d,
+                OperationKind::GatherRows,
+                OperationKind::GatherColumns,
+                OperationKind::Add,
+                OperationKind::Multiply,
+                OperationKind::Linear,
+                OperationKind::RowRmsNorm,
+                OperationKind::Embedding,
+                OperationKind::Rotary,
+                OperationKind::GroupedQueryAttention,
+                OperationKind::GatedShortConvolution,
+                OperationKind::SwiGlu,
+                OperationKind::LmProjection,
+                OperationKind::PackedGatherRows,
+                OperationKind::PackedLinear,
+                OperationKind::AddRowRmsNorm,
+                OperationKind::PackedLinearPair,
+                OperationKind::PackedSwigluLinear,
+                OperationKind::PackedSwigluPair,
+                OperationKind::QkNormRope,
+                OperationKind::Argmax,
+            ]
+            .into_iter()
+            .filter(|operation| *operation != missing)
+            .fold(OperationSet::empty(), OperationSet::with);
+        }
+        capabilities
     }
 
     fn resource_report(&self) -> ResourceReport {
@@ -535,6 +571,43 @@ impl InferenceOps for DeferredBackend {
         columns: &[TokenId],
     ) -> Result<()> {
         self.cpu.gather_columns(output, input, columns)
+    }
+
+    fn argmax_masked(
+        &self,
+        output: &mut Self::Buffer,
+        input: &Self::Buffer,
+        mask: &[u64],
+    ) -> Result<()> {
+        self.cpu.argmax_masked(output, input, mask)
+    }
+
+    fn supports_ternary_lut2(&self) -> bool {
+        self.state.lut2_supported.get()
+    }
+
+    fn repack_ternary_lut2(&mut self, codes: &Self::Buffer) -> Result<Self::Buffer> {
+        let index = self.state.repack_calls.get();
+        self.state.repack_calls.set(index + 1);
+        if let Some(error) = self.state.repack_error.borrow().as_ref() {
+            return Err(error.clone());
+        }
+        if self
+            .state
+            .repack_limit
+            .get()
+            .is_some_and(|limit| index >= limit)
+        {
+            return Err(ExecutorError::ResourceLimit(
+                "synthetic repack allocation limit",
+            ));
+        }
+        // The adapter copies raw codes so it can qualify policy and ownership with CPU math.
+        self.cpu.upload_u8_classified(
+            codes.descriptor().layout.shape(),
+            codes.as_bytes(),
+            minifield_engine_api::AllocationClass::Weight,
+        )
     }
 
     fn argmax(&self, output: &mut Self::Buffer, input: &Self::Buffer) -> Result<()> {
@@ -1211,4 +1284,337 @@ fn deferred_branch_copy_failure_quarantines_recorded_work_and_retains_base() {
         "recorded branch copies without a fence must quarantine the executor"
     );
     drop(base);
+}
+
+#[test]
+fn predictable_capacity_and_mask_rejections_leave_deferred_executor_usable() {
+    let config = include_bytes!("fixtures/numerical-lfm-001-config.json");
+    let weights = include_bytes!("fixtures/numerical-lfm-001-weights.safetensors").to_vec();
+    let state = Rc::new(DeferredState::default());
+    let mut executor = load_with_backend(
+        config,
+        weights,
+        DeferredBackend::new(state),
+        Lfm2ExecutionLimits {
+            max_logical_tokens: 2,
+        },
+    );
+    let prefix = prefix_for(&mut executor, &[1, 3]);
+    let before = executor.resource_report().expect("report");
+    assert!(matches!(
+        executor.append_argmax(prefix.clone()),
+        Err(ExecutorError::OutOfBounds(_))
+    ));
+    assert!(matches!(
+        executor.append_argmax_masked(prefix.clone(), Rc::from([u64::MAX])),
+        Err(ExecutorError::OutOfBounds(_))
+    ));
+    assert!(matches!(
+        executor.prefill_masked(TokenChunk::all(&[1]), Rc::from([])),
+        Err(ExecutorError::InvalidArgument(_))
+    ));
+    assert_eq!(executor.resource_report().expect("usable report"), before);
+    let short = prefix_for(&mut executor, &[1]);
+    assert!(matches!(
+        executor.append_argmax_masked(short.clone(), Rc::from([])),
+        Err(ExecutorError::InvalidArgument(_))
+    ));
+    let mut valid = executor
+        .append_argmax_masked(short, Rc::from([u64::MAX]))
+        .expect("valid greedy append after rejected masks");
+    let next = ready(&mut valid);
+    assert_eq!(next.logical_length(), 2);
+    assert_eq!(logits_for(&mut executor, &next).len(), 32);
+    assert_eq!(prefix_for(&mut executor, &[3]).logical_length(), 1);
+}
+
+fn lut2_policy_fixture() -> (Vec<u8>, Vec<u8>) {
+    let mut config: Value =
+        serde_json::from_slice(include_bytes!("fixtures/numerical-lfm-001-config.json"))
+            .expect("config");
+    config["hidden_size"] = serde_json::json!(128);
+    config["intermediate_size"] = serde_json::json!(128);
+    config["vocab_size"] = serde_json::json!(128);
+    config["num_attention_heads"] = serde_json::json!(2);
+    config["num_key_value_heads"] = serde_json::json!(1);
+    config["num_hidden_layers"] = serde_json::json!(1);
+    config["layer_types"] = serde_json::json!(["conv"]);
+    let config = serde_json::to_vec(&config).expect("config bytes");
+    let plan = Lfm2WeightPlan::from_config_with_format(
+        parse_lfm2_config(&config).expect("config"),
+        Lfm2WeightFormat::TernaryV1,
+    )
+    .expect("plan");
+    let mut header = serde_json::Map::new();
+    let mut payload = Vec::new();
+    for requirement in &plan.generic_plan().requirements {
+        if requirement.tied_to_role.is_some() {
+            continue;
+        }
+        let count = usize::try_from(requirement.source_shape.element_count().expect("count"))
+            .expect("count usize");
+        let (dtype, bytes) = match requirement.storage_dtype {
+            StorageDType::U8 => ("U8", vec![0x55; count]),
+            StorageDType::F16 => (
+                "F16",
+                vec![0x3C00_u16; count]
+                    .into_iter()
+                    .flat_map(u16::to_le_bytes)
+                    .collect(),
+            ),
+            StorageDType::F32 => (
+                "F32",
+                vec![1.0_f32; count]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes)
+                    .collect(),
+            ),
+            StorageDType::BF16 => panic!("fixture has no BF16"),
+        };
+        let shape: Vec<_> = (0..requirement.source_shape.rank())
+            .map(|index| {
+                requirement
+                    .source_shape
+                    .dim(usize::from(index))
+                    .expect("dimension")
+            })
+            .collect();
+        let start = payload.len();
+        payload.extend(bytes);
+        header.insert(
+            requirement.tensor_name.clone(),
+            serde_json::json!({"dtype":dtype, "shape":shape, "data_offsets":[start,payload.len()]}),
+        );
+    }
+    let header = serde_json::to_vec(&header).expect("header");
+    let mut bytes = u64::try_from(header.len())
+        .expect("header length")
+        .to_le_bytes()
+        .to_vec();
+    bytes.extend(header);
+    bytes.extend(payload);
+    (config, bytes)
+}
+
+fn load_lut2_policy_weights(
+    state: Rc<DeferredState>,
+) -> (DeferredBackend, Lfm2TypedWeights<CpuBuffer>) {
+    let (config, bytes) = lut2_policy_fixture();
+    let request = Lfm2LoadRequest::new_with_format(
+        config.clone(),
+        digest(&config),
+        u64::try_from(bytes.len()).expect("length"),
+        digest(&bytes),
+        loader_limits(bytes.len()),
+        Lfm2WeightFormat::TernaryV1,
+    )
+    .expect("request");
+    let mut backend = DeferredBackend::new(state);
+    let mut task = Lfm2WeightLoadTask::begin(request).expect("task");
+    let mut provider = MemoryAssetProvider::new(bytes, 1 << 24);
+    loop {
+        match task.poll_step(&mut provider, &mut backend) {
+            LoaderPoll::Pending => {}
+            LoaderPoll::Ready(Ok(weights)) => return (backend, weights),
+            LoaderPoll::Ready(Err(error)) => panic!("load failed: {error:?}"),
+        }
+    }
+}
+
+#[test]
+fn typed_lut2_policy_controls_load_repacking_and_exposes_skipped_roles() {
+    for (mode, budget, calls, loaded) in [
+        (Lfm2Lut2Mode::Off, 64 << 20, 0, 0),
+        (Lfm2Lut2Mode::DownOnly, 64 << 20, 1, 1),
+        (Lfm2Lut2Mode::Auto, 64 << 20, 3, 3),
+        (Lfm2Lut2Mode::Auto, 4096, 1, 1),
+        (Lfm2Lut2Mode::Auto, 0, 0, 0),
+    ] {
+        let state = Rc::new(DeferredState::default());
+        state.lut2_supported.set(true);
+        let (backend, weights) = load_lut2_policy_weights(Rc::clone(&state));
+        let mut executor = Lfm2Executor::new_with_options(
+            backend,
+            weights,
+            Lfm2ExecutionLimits {
+                max_logical_tokens: 8,
+            },
+            Lfm2ExecutionOptions {
+                lut2_mode: mode,
+                max_lut2_bytes: budget,
+            },
+        )
+        .expect("executor");
+        assert_eq!(executor.lut2_mode(), mode);
+        assert_eq!(state.repack_calls.get(), calls);
+        assert_eq!(executor.skipped_lut2_roles().len(), 3 - loaded);
+        let role = |role| Lfm2WeightRole::Layer { index: 0, role };
+        if mode == Lfm2Lut2Mode::DownOnly || budget == 4096 {
+            assert!(executor.has_lut2_codes(role(Lfm2LayerWeightRole::FfnW2)));
+            assert!(!executor.has_lut2_codes(role(Lfm2LayerWeightRole::FfnW1)));
+            assert!(!executor.has_lut2_codes(role(Lfm2LayerWeightRole::FfnW3)));
+        }
+        executor.set_lut2_mode(Lfm2Lut2Mode::Auto);
+        assert_eq!(
+            state.repack_calls.get(),
+            calls,
+            "dispatch setter must not allocate"
+        );
+        assert_eq!(prefix_for(&mut executor, &[1]).logical_length(), 1);
+    }
+}
+
+#[test]
+fn lut2_resource_rejection_keeps_raw_model_usable_and_fatal_errors_propagate() {
+    let state = Rc::new(DeferredState::default());
+    state.lut2_supported.set(true);
+    state.repack_limit.set(Some(2));
+    let (backend, weights) = load_lut2_policy_weights(Rc::clone(&state));
+    let mut executor = Lfm2Executor::new(
+        backend,
+        weights,
+        Lfm2ExecutionLimits {
+            max_logical_tokens: 8,
+        },
+    )
+    .expect("optional memory fallback");
+    assert_eq!(state.repack_calls.get(), 3);
+    assert_eq!(executor.skipped_lut2_roles().len(), 2);
+    assert!(!executor.has_lut2_codes(Lfm2WeightRole::Layer {
+        index: 0,
+        role: Lfm2LayerWeightRole::FfnW1
+    }));
+    assert!(!executor.has_lut2_codes(Lfm2WeightRole::Layer {
+        index: 0,
+        role: Lfm2LayerWeightRole::FfnW3
+    }));
+    assert!(executor.has_lut2_codes(Lfm2WeightRole::Layer {
+        index: 0,
+        role: Lfm2LayerWeightRole::FfnW2
+    }));
+    assert_eq!(prefix_for(&mut executor, &[1]).logical_length(), 1);
+    let state = Rc::new(DeferredState::default());
+    state.lut2_supported.set(true);
+    let (backend, weights) = load_lut2_policy_weights(Rc::clone(&state));
+    *state.repack_error.borrow_mut() = Some(ExecutorError::BackendFailure("fatal repack"));
+    assert!(matches!(
+        Lfm2Executor::new(
+            backend,
+            weights,
+            Lfm2ExecutionLimits {
+                max_logical_tokens: 8
+            }
+        ),
+        Err(ExecutorError::BackendFailure("fatal repack"))
+    ));
+}
+
+#[test]
+fn lut2_capability_and_lease_failures_are_rejected_before_repacking() {
+    for operation in [
+        OperationKind::Argmax,
+        OperationKind::AddRowRmsNorm,
+        OperationKind::QkNormRope,
+        OperationKind::PackedSwigluPair,
+    ] {
+        let state = Rc::new(DeferredState::default());
+        state.lut2_supported.set(true);
+        let (backend, weights) = load_lut2_policy_weights(Rc::clone(&state));
+        state.missing_operation.set(Some(operation));
+        assert!(matches!(
+            Lfm2Executor::new(
+                backend,
+                weights,
+                Lfm2ExecutionLimits {
+                    max_logical_tokens: 8
+                }
+            ),
+            Err(ExecutorError::Unsupported(_))
+        ));
+        assert_eq!(state.repack_calls.get(), 0);
+    }
+    let state = Rc::new(DeferredState::default());
+    state.lut2_supported.set(true);
+    let (mut backend, weights) = load_lut2_policy_weights(Rc::clone(&state));
+    backend.advance_generation().expect("advance");
+    assert!(matches!(
+        Lfm2Executor::new(
+            backend,
+            weights,
+            Lfm2ExecutionLimits {
+                max_logical_tokens: 8
+            }
+        ),
+        Err(ExecutorError::WrongBackend)
+    ));
+    assert_eq!(state.repack_calls.get(), 0);
+}
+
+#[test]
+fn synthetic_recorded_copy_failure_still_quarantines_executor() {
+    let config = include_bytes!("fixtures/numerical-lfm-001-config.json");
+    let weights = include_bytes!("fixtures/numerical-lfm-001-weights.safetensors").to_vec();
+    let state = Rc::new(DeferredState::default());
+    let mut executor = load_with_backend(
+        config,
+        weights,
+        DeferredBackend::new(Rc::clone(&state)),
+        Lfm2ExecutionLimits {
+            max_logical_tokens: 8,
+        },
+    );
+    let base = ready(
+        &mut executor
+            .prefill_choice_base(TokenChunk::all(&[1, 3]))
+            .expect("base"),
+    );
+    state.fail_after_n_copies.set(Some(1));
+    assert!(matches!(
+        executor.append_choice_logits(&base, TokenChunk::all(&[5]), &[2]),
+        Err(ExecutorError::BackendFailure(
+            "injected failure while recording a deferred copy"
+        ))
+    ));
+    assert!(matches!(
+        executor.resource_report(),
+        Err(ExecutorError::BackendFailure(
+            "LFM2 executor is quarantined after an unconfirmed fence submission failure"
+        ))
+    ));
+}
+
+#[test]
+fn rejected_optional_repack_still_submits_a_nonblocking_retirement_fence() {
+    let state = Rc::new(DeferredState::default());
+    state.lut2_supported.set(true);
+    state.repack_limit.set(Some(0));
+    let (backend, weights) = load_lut2_policy_weights(Rc::clone(&state));
+    state.fence_polls.set(2);
+    let executor = Lfm2Executor::new_with_options(
+        backend,
+        weights,
+        Lfm2ExecutionLimits {
+            max_logical_tokens: 8,
+        },
+        Lfm2ExecutionOptions {
+            lut2_mode: Lfm2Lut2Mode::DownOnly,
+            max_lut2_bytes: 64 << 20,
+        },
+    )
+    .expect("raw fallback executor");
+    assert_eq!(state.repack_calls.get(), 1);
+    assert_eq!(executor.skipped_lut2_roles().len(), 3);
+    assert!(
+        executor
+            .inspect_backend(|backend| backend.retirement.has_unresolved())
+            .expect("inspect")
+    );
+    for _ in 0..3 {
+        executor.poll_retired().expect("poll retirement");
+    }
+    assert!(
+        !executor
+            .inspect_backend(|backend| backend.retirement.has_unresolved())
+            .expect("inspect")
+    );
 }

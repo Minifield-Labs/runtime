@@ -30,12 +30,15 @@ pub const BOS_TOKEN_ID: u32 = 1;
 /// `max_merge_steps` charges every adjacent-pair rank lookup. The simple,
 /// deterministic merger intentionally refuses a pathological piece before it
 /// can consume unbounded quadratic work.
+/// `max_added_token_steps` charges each attempted trie byte edge, including a
+/// failed edge, across the entire encode call.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TokenizerLimits {
     pub max_asset_bytes: usize,
     pub max_input_bytes: usize,
     pub max_output_ids: usize,
     pub max_merge_steps: usize,
+    pub max_added_token_steps: usize,
     pub max_piece_bytes: usize,
 }
 
@@ -46,6 +49,7 @@ impl Default for TokenizerLimits {
             max_input_bytes: 4 * 1024 * 1024,
             max_output_ids: 4 * 1024 * 1024,
             max_merge_steps: 16 * 1024 * 1024,
+            max_added_token_steps: 16 * 1024 * 1024,
             max_piece_bytes: 64 * 1024,
         }
     }
@@ -76,6 +80,8 @@ pub enum TokenizerError {
     PieceLimit { actual: usize, limit: usize },
     #[error("BPE merge work exceeds caller limit {limit}")]
     MergeWorkLimit { limit: usize },
+    #[error("added-token matching work exceeds caller limit {limit}")]
+    AddedTokenWorkLimit { limit: usize },
     #[error("malformed tokenizer asset: {0}")]
     InvalidAsset(String),
     #[error("tokenizer asset JSON is invalid: {0}")]
@@ -215,6 +221,7 @@ impl Tokenizer {
         self.check_input(input)?;
         let mut output = Vec::new();
         let mut remaining_merge_work = self.limits.max_merge_steps;
+        let mut remaining_added_token_work = self.limits.max_added_token_steps;
         if options.add_special_tokens {
             self.push_id(&mut output, BOS_TOKEN_ID)?;
         }
@@ -222,7 +229,12 @@ impl Tokenizer {
         let mut ordinary_start = 0;
         let mut cursor = 0;
         while cursor < input.len() {
-            if let Some((end, id)) = self.added_trie.longest_match(input.as_bytes(), cursor) {
+            if let Some((end, id)) = self.added_trie.longest_match(
+                input.as_bytes(),
+                cursor,
+                &mut remaining_added_token_work,
+                self.limits.max_added_token_steps,
+            )? {
                 self.encode_ordinary(
                     &input[ordinary_start..cursor],
                     &mut output,
@@ -489,11 +501,23 @@ impl AddedTrie {
         Ok(())
     }
 
-    fn longest_match(&self, input: &[u8], start: usize) -> Option<(usize, u32)> {
+    fn longest_match(
+        &self,
+        input: &[u8],
+        start: usize,
+        remaining_work: &mut usize,
+        work_limit: usize,
+    ) -> Result<Option<(usize, u32)>, TokenizerError> {
+        if self.nodes.is_empty() {
+            return Ok(None);
+        }
         let mut node = 0;
         let mut best = None;
         for (offset, &byte) in input[start..].iter().enumerate() {
-            let Some(&next) = self.nodes.get(node)?.next.get(&byte) else {
+            *remaining_work = remaining_work
+                .checked_sub(1)
+                .ok_or(TokenizerError::AddedTokenWorkLimit { limit: work_limit })?;
+            let Some(&next) = self.nodes[node].next.get(&byte) else {
                 break;
             };
             node = next;
@@ -501,7 +525,7 @@ impl AddedTrie {
                 best = Some((start + offset + 1, id));
             }
         }
-        best
+        Ok(best)
     }
 }
 
@@ -551,6 +575,22 @@ mod tests {
             .unwrap_or_else(|error| panic!("synthetic tokenizer asset admission failed: {error}"))
     }
 
+    fn compact_asset_with_added_tokens(tokens: &[(u32, &str)]) -> Vec<u8> {
+        let mut asset: serde_json::Value = serde_json::from_slice(&compact_asset())
+            .unwrap_or_else(|error| panic!("synthetic JSON parse failed: {error}"));
+        let added_tokens = asset["added_tokens"]
+            .as_array_mut()
+            .unwrap_or_else(|| panic!("synthetic added_tokens is not an array"));
+        for (id, content) in tokens {
+            added_tokens.push(json!({
+                "id": id, "content": content, "single_word": false,
+                "lstrip": false, "rstrip": false, "normalized": false, "special": false
+            }));
+        }
+        serde_json::to_vec(&asset)
+            .unwrap_or_else(|error| panic!("synthetic JSON serialization failed: {error}"))
+    }
+
     #[test]
     fn bpe_added_tokens_and_explicit_bos_are_exact() {
         let tokenizer = compact_tokenizer();
@@ -576,6 +616,137 @@ mod tests {
             Ok("a<extra>pythonb".into())
         );
         assert_eq!(tokenizer.decode(&[0, 7, 8, 2], true), Ok("apythonb".into()));
+    }
+
+    #[test]
+    fn repeated_added_token_prefixes_stop_at_the_matching_budget() {
+        let input = "a".repeat(256);
+        let token = format!("{input}b");
+        let asset = compact_asset_with_added_tokens(&[(9, &token)]);
+        let limits = TokenizerLimits {
+            max_added_token_steps: 1024,
+            // Matching fails before ordinary text reaches BPE.
+            max_merge_steps: 0,
+            ..TokenizerLimits::default()
+        };
+        let tokenizer = Tokenizer::from_json_bytes(&asset, limits)
+            .unwrap_or_else(|error| panic!("synthetic asset admission failed: {error}"));
+        for _ in 0..2 {
+            assert_eq!(
+                tokenizer.encode(&input, EncodeOptions::default()),
+                Err(TokenizerError::AddedTokenWorkLimit { limit: 1024 })
+            );
+        }
+
+        let tokenizer = Tokenizer::from_json_bytes(&asset, TokenizerLimits::default())
+            .unwrap_or_else(|error| panic!("synthetic asset admission failed: {error}"));
+        assert_eq!(
+            tokenizer.encode(&input, EncodeOptions::default()),
+            Ok(vec![0; input.len()])
+        );
+        assert_eq!(
+            tokenizer.encode(&token, EncodeOptions::default()),
+            Ok(vec![9])
+        );
+    }
+
+    #[test]
+    fn added_token_budget_is_shared_across_matches_and_charges_failed_edges() {
+        let asset = compact_asset_with_added_tokens(&[(9, "aaaab")]);
+        let tokenizer = Tokenizer::from_json_bytes(
+            &asset,
+            TokenizerLimits {
+                max_added_token_steps: 6,
+                ..TokenizerLimits::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("synthetic asset admission failed: {error}"));
+        assert_eq!(
+            tokenizer.encode("aaaab", EncodeOptions::default()),
+            Ok(vec![9])
+        );
+        assert_eq!(
+            tokenizer.encode("aaaabaaaab", EncodeOptions::default()),
+            Err(TokenizerError::AddedTokenWorkLimit { limit: 6 })
+        );
+
+        let tokenizer = Tokenizer::from_json_bytes(
+            &compact_asset(),
+            TokenizerLimits {
+                max_added_token_steps: 0,
+                ..TokenizerLimits::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("synthetic asset admission failed: {error}"));
+        assert_eq!(tokenizer.encode("", EncodeOptions::default()), Ok(vec![]));
+        assert_eq!(
+            tokenizer.encode("a", EncodeOptions::default()),
+            Err(TokenizerError::AddedTokenWorkLimit { limit: 0 })
+        );
+    }
+
+    #[test]
+    fn added_token_exhaustion_never_returns_a_shorter_partial_match() {
+        let asset = compact_asset_with_added_tokens(&[(9, "aa"), (10, "aaaab")]);
+        let tokenizer = Tokenizer::from_json_bytes(
+            &asset,
+            TokenizerLimits {
+                max_added_token_steps: 2,
+                ..TokenizerLimits::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("synthetic asset admission failed: {error}"));
+        assert_eq!(
+            tokenizer.encode("aaaa", EncodeOptions::default()),
+            Err(TokenizerError::AddedTokenWorkLimit { limit: 2 })
+        );
+    }
+
+    #[test]
+    fn bounded_added_matching_preserves_unicode_and_longest_overlap_ids() {
+        let asset = compact_asset_with_added_tokens(&[
+            (9, "é"),
+            (10, "éa"),
+            (11, "éab"),
+            (12, "éé"),
+            (13, "aaa"),
+            (14, "aaab"),
+            (15, "🦀"),
+            (16, "🦀é"),
+        ]);
+        let default = Tokenizer::from_json_bytes(&asset, TokenizerLimits::default())
+            .unwrap_or_else(|error| panic!("synthetic asset admission failed: {error}"));
+        let bounded = Tokenizer::from_json_bytes(
+            &asset,
+            TokenizerLimits {
+                max_added_token_steps: 1000,
+                ..TokenizerLimits::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("synthetic asset admission failed: {error}"));
+        for (input, expected) in [
+            ("é", vec![9]),
+            ("éa", vec![10]),
+            ("éab", vec![11]),
+            ("éax", vec![10, 4]),
+            ("xéabééa", vec![4, 11, 12, 0]),
+            ("aaabaaax", vec![14, 13, 4]),
+            ("aéx", vec![0, 9, 4]),
+            ("é🦀é", vec![9, 16]),
+            ("🦀🦀é", vec![15, 16]),
+        ] {
+            assert_eq!(
+                default.encode(input, EncodeOptions::default()),
+                Ok(expected.clone()),
+                "{input:?}"
+            );
+            assert_eq!(
+                bounded.encode(input, EncodeOptions::default()),
+                Ok(expected.clone()),
+                "{input:?}"
+            );
+            assert_eq!(bounded.decode(&expected, false).as_deref(), Ok(input));
+        }
     }
 
     #[test]

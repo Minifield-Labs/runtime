@@ -47,7 +47,7 @@ case "$mode" in
         require npm
         node --input-type=module -e 'if (Number(process.versions.node.split(".")[0]) < 22) throw Error("Node 22 or newer is required")'
         cargo +1.89.0 fmt --all --check
-        cargo +1.89.0 test --workspace --locked
+        cargo +1.89.0 test --workspace --all-targets --locked
         cargo +1.89.0 clippy --workspace --all-targets --all-features --locked -- -D warnings
         RUSTDOCFLAGS="-D warnings" cargo +1.89.0 doc --workspace --all-features --no-deps --locked
         uv run --locked --project tools/qualification python scripts/check_contracts.py

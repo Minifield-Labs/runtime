@@ -228,24 +228,71 @@ fn samples(
     Ok((rows, base_seconds))
 }
 
-fn lut2_roles(weights: &Lfm2TypedWeights<WgpuBuffer>, mode: Lfm2Lut2Mode) -> Vec<Lfm2WeightRole> {
-    let mut roles = Vec::new();
-    for index in 0..weights.config().layers.len() {
-        let role = |role| Lfm2WeightRole::Layer { index, role };
-        let down = role(Lfm2LayerWeightRole::FfnW2);
-        if mode != Lfm2Lut2Mode::Off && weights.role_quant(down) == Lfm2WeightFormat::TernaryV1 {
-            roles.push(down);
+#[derive(Debug, Default)]
+struct Lut2Expectation {
+    roles: Vec<Lfm2WeightRole>,
+    dispatches: BTreeMap<&'static str, u64>,
+    submitted_rows: Vec<usize>,
+}
+
+fn lut2_expectation(
+    formats: &[[Lfm2WeightFormat; 3]],
+    mode: Lfm2Lut2Mode,
+    encoded: &[Vec<u32>],
+    cached: bool,
+    passes: usize,
+) -> HostResult<Lut2Expectation> {
+    let mut expected = Lut2Expectation::default();
+    let common = if cached { common_prefix(encoded) } else { 0 };
+    if cached {
+        expected.submitted_rows.push(common);
+    }
+    expected
+        .submitted_rows
+        .extend(encoded.iter().map(|ids| ids.len() - common));
+    // Match append_tokens: the fused FFN crossover is 96 rows. The final
+    // layer always reduces its FFN to 1 row, including cached-base prefill.
+    let tiles = expected
+        .submitted_rows
+        .iter()
+        .filter(|rows| **rows >= 96)
+        .count();
+    let executions = u64::try_from(tiles)?
+        .checked_mul(u64::try_from(passes)?)
+        .ok_or("expected LUT2 dispatch count overflows")?;
+    if executions == 0 || mode == Lfm2Lut2Mode::Off {
+        return Ok(expected);
+    }
+    let packed = |format| {
+        matches!(
+            format,
+            Lfm2WeightFormat::TernaryV1 | Lfm2WeightFormat::Nf4V1
+        )
+    };
+    for (index, [gate, up, down]) in formats.iter().copied().enumerate() {
+        if index + 1 == formats.len() || gate != up || !packed(gate) || !packed(down) {
+            continue;
         }
-        let gate = role(Lfm2LayerWeightRole::FfnW1);
-        let up = role(Lfm2LayerWeightRole::FfnW3);
-        if mode == Lfm2Lut2Mode::Auto
-            && weights.role_quant(gate) == Lfm2WeightFormat::TernaryV1
-            && weights.role_quant(up) == Lfm2WeightFormat::TernaryV1
-        {
-            roles.extend([gate, up]);
+        let mut add = |role, kernel| -> HostResult<()> {
+            expected.roles.push(Lfm2WeightRole::Layer { index, role });
+            let count = expected.dispatches.entry(kernel).or_default();
+            *count = count
+                .checked_add(executions)
+                .ok_or("expected LUT2 dispatch count overflows")?;
+            Ok(())
+        };
+        if down == Lfm2WeightFormat::TernaryV1 {
+            add(Lfm2LayerWeightRole::FfnW2, "packed_gemm_ternary_lut2")?;
+        }
+        if mode == Lfm2Lut2Mode::Auto && gate == Lfm2WeightFormat::TernaryV1 {
+            add(Lfm2LayerWeightRole::FfnW1, "packed_gemm_pair_swiglu_lut2")?;
+            expected.roles.push(Lfm2WeightRole::Layer {
+                index,
+                role: Lfm2LayerWeightRole::FfnW3,
+            });
         }
     }
-    roles
+    Ok(expected)
 }
 
 fn load(
@@ -292,7 +339,7 @@ fn load(
 
 fn diagnostics(
     classifier: &Lfm2Classifier<WgpuBackend>,
-    roles: &[Lfm2WeightRole],
+    expected: &Lut2Expectation,
 ) -> HostResult<Value> {
     let (counts, stats, adapter) = classifier.inspect_backend(|backend| {
         (
@@ -301,28 +348,14 @@ fn diagnostics(
             backend.adapter_info(),
         )
     })?;
-    let lut2_dispatches = counts
-        .iter()
-        .filter(|(name, _)| name.contains("lut2") && !name.contains("repack"))
-        .map(|(_, count)| *count)
-        .sum::<u64>();
-    let fallback = roles.iter().any(|role| !classifier.has_lut2_codes(*role))
-        || missing_lut2_dispatch(roles, &counts);
-    let effective = if fallback {
-        if lut2_dispatches > 0 {
-            "partial"
-        } else {
-            "raw_fallback"
-        }
-    } else if roles.is_empty() && classifier.lut2_mode() != Lfm2Lut2Mode::Off {
-        "not_applicable"
-    } else {
-        mode_name(classifier.lut2_mode())
-    };
+    let (fallback, effective) = lut2_status(classifier.lut2_mode(), expected, &counts, |role| {
+        classifier.has_lut2_codes(role)
+    });
     let memory = classifier.resource_report()?;
     Ok(json!({
         "requested_lut2_mode":mode_name(classifier.lut2_mode()),"effective_lut2_mode":effective,
         "lut2_fallback":fallback,"dispatch_counts":counts,
+        "expected_lut2_dispatch_counts":expected.dispatches,"submitted_token_rows":expected.submitted_rows,
         "skipped_lut2_roles":classifier.skipped_lut2_roles().iter().map(|role|format!("{role:?}")).collect::<Vec<_>>(),
         "memory_scope":"post_run_backend_accounted_bytes",
         "memory":{"resident_weight_bytes":memory.resident_weight_bytes,"cache_bytes":memory.cache_bytes,
@@ -339,21 +372,36 @@ fn diagnostics(
     }))
 }
 
-fn missing_lut2_dispatch(roles: &[Lfm2WeightRole], counts: &BTreeMap<&str, u64>) -> bool {
-    roles.iter().any(|role| {
-        let kernel = match role {
-            Lfm2WeightRole::Layer {
-                role: Lfm2LayerWeightRole::FfnW2,
-                ..
-            } => "packed_gemm_ternary_lut2",
-            Lfm2WeightRole::Layer {
-                role: Lfm2LayerWeightRole::FfnW1 | Lfm2LayerWeightRole::FfnW3,
-                ..
-            } => "packed_gemm_pair_swiglu_lut2",
-            _ => return false,
-        };
-        counts.get(kernel).copied().unwrap_or_default() == 0
-    })
+fn missing_lut2_dispatch(expected: &Lut2Expectation, counts: &BTreeMap<&str, u64>) -> bool {
+    expected
+        .dispatches
+        .iter()
+        .any(|(kernel, minimum)| counts.get(kernel).copied().unwrap_or_default() < *minimum)
+}
+
+fn lut2_status(
+    mode: Lfm2Lut2Mode,
+    expected: &Lut2Expectation,
+    counts: &BTreeMap<&str, u64>,
+    has_codes: impl Fn(Lfm2WeightRole) -> bool,
+) -> (bool, &'static str) {
+    let fallback = expected.roles.iter().any(|role| !has_codes(*role))
+        || missing_lut2_dispatch(expected, counts);
+    let dispatched = counts
+        .iter()
+        .any(|(name, count)| name.contains("lut2") && !name.contains("repack") && *count > 0);
+    let effective = if fallback {
+        if dispatched {
+            "partial"
+        } else {
+            "raw_fallback"
+        }
+    } else if expected.roles.is_empty() && mode != Lfm2Lut2Mode::Off {
+        "not_applicable"
+    } else {
+        mode_name(mode)
+    };
+    (fallback, effective)
 }
 
 fn qualify(opts: &Options) -> HostResult<Value> {
@@ -405,7 +453,21 @@ fn qualify(opts: &Options) -> HostResult<Value> {
         return Err("native GPU qualification rejects a software CPU adapter".into());
     }
     let typed = load(opts, &config, weights, &mut backend)?;
-    let roles = lut2_roles(&typed, opts.lut2);
+    let formats = (0..typed.config().layers.len())
+        .map(|index| {
+            [
+                Lfm2LayerWeightRole::FfnW1,
+                Lfm2LayerWeightRole::FfnW3,
+                Lfm2LayerWeightRole::FfnW2,
+            ]
+            .map(|role| typed.role_quant(Lfm2WeightRole::Layer { index, role }))
+        })
+        .collect::<Vec<_>>();
+    let passes = opts
+        .warmups
+        .checked_add(1)
+        .ok_or("warmup count overflows")?;
+    let expected = lut2_expectation(&formats, opts.lut2, &encoded, opts.cached, passes)?;
     let mut classifier = Lfm2Classifier::new_with_options(
         backend,
         typed,
@@ -424,7 +486,7 @@ fn qualify(opts: &Options) -> HostResult<Value> {
     }
     let warmup_seconds = warmup_started.elapsed().as_secs_f64();
     let (rows, base_prefill_seconds) = samples(&mut classifier, &encoded, opts)?;
-    let mut result = diagnostics(&classifier, &roles)?;
+    let mut result = diagnostics(&classifier, &expected)?;
     result["schema_version"] = json!(1);
     result["classes"] = json!(opts.classes);
     result["context"] = json!(opts.context);
@@ -455,27 +517,115 @@ fn main() -> HostResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{boolean, common_prefix, lut2_mode, missing_lut2_dispatch, options};
-    use minifield_executor_core::{Lfm2LayerWeightRole, Lfm2WeightRole};
+    use super::{boolean, common_prefix, lut2_expectation, lut2_mode, lut2_status, options};
+    use minifield_executor_core::{Lfm2Lut2Mode, Lfm2WeightFormat};
     use std::collections::BTreeMap;
 
     #[test]
     fn dispatch_evidence_checks_down_and_pair_separately() {
-        let roles = [
-            Lfm2WeightRole::Layer {
-                index: 0,
-                role: Lfm2LayerWeightRole::FfnW2,
-            },
-            Lfm2WeightRole::Layer {
-                index: 0,
-                role: Lfm2LayerWeightRole::FfnW1,
-            },
-        ];
+        let formats = [[Lfm2WeightFormat::TernaryV1; 3]; 2];
+        let expected = lut2_expectation(&formats, Lfm2Lut2Mode::Auto, &[vec![1; 96]], false, 1)
+            .unwrap_or_else(|error| panic!("{error}"));
         let mut counts = BTreeMap::from([("packed_gemm_ternary_lut2", 1)]);
-        assert!(missing_lut2_dispatch(&roles, &counts));
+        assert_eq!(
+            lut2_status(Lfm2Lut2Mode::Auto, &expected, &counts, |_| true),
+            (true, "partial")
+        );
         counts.insert("packed_gemm_pair_swiglu_lut2", 1);
-        assert!(!missing_lut2_dispatch(&roles, &counts));
-        assert!(!missing_lut2_dispatch(&[], &BTreeMap::new()));
+        assert_eq!(
+            lut2_status(Lfm2Lut2Mode::Auto, &expected, &counts, |_| true),
+            (false, "auto")
+        );
+        assert_eq!(
+            lut2_status(Lfm2Lut2Mode::Auto, &expected, &counts, |_| false),
+            (true, "partial")
+        );
+        assert_eq!(
+            lut2_status(Lfm2Lut2Mode::Auto, &expected, &BTreeMap::new(), |_| false),
+            (true, "raw_fallback")
+        );
+    }
+
+    #[test]
+    fn short_prompts_have_no_expected_lut2_tiles_even_when_codes_are_unavailable() {
+        let formats = [[Lfm2WeightFormat::TernaryV1; 3]; 3];
+        let expected = lut2_expectation(&formats, Lfm2Lut2Mode::Auto, &[vec![1; 95]], false, 2)
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(expected.submitted_rows, [95]);
+        assert!(expected.dispatches.is_empty());
+        assert_eq!(
+            lut2_status(Lfm2Lut2Mode::Auto, &expected, &BTreeMap::new(), |_| false),
+            (false, "not_applicable")
+        );
+    }
+
+    #[test]
+    fn cached_long_base_and_short_tails_expect_only_base_tiles() {
+        let formats = [[Lfm2WeightFormat::TernaryV1; 3]; 3];
+        let mut first = vec![1; 96];
+        first.push(2);
+        let mut second = vec![1; 96];
+        second.extend([3, 4]);
+        let expected = lut2_expectation(&formats, Lfm2Lut2Mode::Auto, &[first, second], true, 2)
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(expected.submitted_rows, [96, 1, 2]);
+        assert_eq!(expected.dispatches["packed_gemm_ternary_lut2"], 4);
+        assert_eq!(expected.dispatches["packed_gemm_pair_swiglu_lut2"], 4);
+        assert_eq!(expected.roles.len(), 6);
+        let counts = expected.dispatches.clone();
+        assert_eq!(
+            lut2_status(Lfm2Lut2Mode::Auto, &expected, &counts, |_| true),
+            (false, "auto")
+        );
+    }
+
+    #[test]
+    fn full_long_prompts_count_each_nonfinal_layer_and_repeated_pass() {
+        let formats = [[Lfm2WeightFormat::TernaryV1; 3]; 3];
+        let expected = lut2_expectation(
+            &formats,
+            Lfm2Lut2Mode::DownOnly,
+            &[vec![1; 96], vec![2; 128]],
+            false,
+            2,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(
+            expected.dispatches,
+            BTreeMap::from([("packed_gemm_ternary_lut2", 8)])
+        );
+        let counts = BTreeMap::from([("packed_gemm_ternary_lut2", 7)]);
+        assert_eq!(
+            lut2_status(Lfm2Lut2Mode::DownOnly, &expected, &counts, |_| true),
+            (true, "partial")
+        );
+    }
+
+    #[test]
+    fn single_layer_classifier_ffn_always_has_one_row() {
+        let formats = [[Lfm2WeightFormat::TernaryV1; 3]; 1];
+        for cached in [false, true] {
+            let expected =
+                lut2_expectation(&formats, Lfm2Lut2Mode::Auto, &[vec![1; 128]], cached, 1)
+                    .unwrap_or_else(|error| panic!("{error}"));
+            assert!(expected.dispatches.is_empty());
+            assert_eq!(
+                lut2_status(Lfm2Lut2Mode::Auto, &expected, &BTreeMap::new(), |_| true),
+                (false, "not_applicable")
+            );
+        }
+    }
+
+    #[test]
+    fn unfused_mixed_ffn_formats_do_not_expect_lut2() {
+        let formats = [[
+            Lfm2WeightFormat::Dense,
+            Lfm2WeightFormat::Dense,
+            Lfm2WeightFormat::TernaryV1,
+        ]; 2];
+        let expected = lut2_expectation(&formats, Lfm2Lut2Mode::Auto, &[vec![1; 128]], false, 1)
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert!(expected.dispatches.is_empty());
     }
 
     #[test]

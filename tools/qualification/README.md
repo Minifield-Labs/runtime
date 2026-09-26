@@ -73,6 +73,8 @@ Every process warms its loaded model before measuring. Initialization, warmup, c
 
 Kernel parity compares these variants against raw/full with identical artifacts. Comparisons between different quantized weight files belong to `quantization_quality`.
 
+LUT2 dispatch expectations follow the submitted token rows. Full inference submits each whole prompt; cached inference submits the common base and each tail separately. The runtime uses fused FFN tiles at 96 or more rows with compatible packed gate/up/down weights, and always runs the final layer's FFN at 1 row. A run with no eligible LUT2 tile reports `effective_lut2_mode: "not_applicable"` and `lut2_fallback: false`. Eligible tiles still require repacked codes and the expected down/pair dispatch counts, including warmup passes. Results expose `submitted_token_rows` and `expected_lut2_dispatch_counts` alongside actual counts.
+
 Set `reference_run` and `max_relative_slowdown` to enforce a latency regression bound, such as `1.10` for a maximum ratio of 1.10. That reference must contain the same artifacts and each matching variant. Check the saved adapter and platform before interpreting a comparison across machines.
 
 ## Recorded evidence and failures

@@ -37,11 +37,17 @@ The validated model loader rejects reserved codes and malformed artifacts. Backe
 
 The baseline gives each linear output a sequential reduction. Attention gives each query/head a disjoint score row and output row. Causal KV cache append and history update use ordered encoders; encoder attention and centered convolution isolate contiguous segments.
 
+This branch implements one cooperative canonical packed family with an 8×32×32 tile and 256 complete-group threads. It stages F32 input and decoded/scaled weights, while each output retains ascending-K scalar accumulation.
+
+Single and pair entry points cover the existing input/epilogue fusion modes and independently formatted pairs. Unsupported shapes or observed pipeline limits retain scalar dispatch.
+
+Rust/MSL compilation, portable checks and all 17 native hardware tests passed on the reference Apple device. Actual-model and performance qualification follow separately. See [the candidate report](../../docs/research/native-metal-packed-tile8-2026-09-30.md).
+
 Metal fast math is disabled. Rotary parameters reproduce the portable contract's explicit F64-to-F32 frequency/trig boundaries on the host, then normalization and rotation execute on Metal. Canonical ternary remains the native path; LUT2 repacking isn't advertised.
 
 ## Counters and resource reports
 
-`device_info()` reports the selected native device name and registry ID. `dispatch_counts()` returns the actual MSL entry points recorded, including `dense_linear`, `packed_linear`, `packed_pair`, `attention` and `centered_conv`.
+`device_info()` reports the selected native device name and registry ID. `dispatch_counts()` returns the actual MSL entry points recorded, including `dense_linear`, `packed_linear`, `packed_pair`, `attention` and `centered_conv`. The candidate adds `packed_linear_tile8` and `packed_pair_tile8` without renaming scalar counters; every packed operation still records one dispatch.
 
 `resource_report()` counts physical classified storage, including allocations retained by pending work. Pending bytes include readback staging and reserved capacity for the temporary byte vector and returned F32 vector. Those host vectors each obey the per-allocation cap, while their combined reservation obeys the total cap. `peak_accounted_bytes()` preserves the highest total. Driver memory, pipelines and general process allocations need separate measurements.
 
@@ -52,9 +58,12 @@ Metal fast math is disabled. Rotary parameters reproduce the portable contract's
 | `lib.rs` | Device/batch ownership, accounting, admission and public construction |
 | `bridge.rs` | Audited Objective-C calls and synchronized shared-storage access |
 | `operations.rs` | Finite inference operations and checked dispatch geometry |
+| `packed.rs` | Canonical format inference, fixed tile selection and complete groups |
+| `kernels.rs` | Finite typed native registry and stable counter names |
 | `encoder.rs` | Complete-sequence attention and centered convolution |
 | `completion.rs` | Pollable completions, readback snapshots and fence retirement |
 | `kernels.metal` | Independent MSL kernels with parameter layouts |
+| `shaders/packed_tile8.metal` | Candidate cooperative packed single/pair bodies |
 
 Unsafe code is denied throughout the crate and allowed only in `bridge.rs`. The workspace policy remains unchanged.
 
@@ -64,7 +73,11 @@ Unsafe code is denied throughout the crate and allowed only in `bridge.rs`. The 
 cargo +1.89.0 test --locked -p minifield-backend-metal --lib
 cargo +1.89.0 clippy --locked -p minifield-backend-metal --all-targets -- -D warnings
 cargo +1.89.0 check --locked -p minifield-backend-metal --target wasm32-unknown-unknown
-MINIFIELD_REQUIRE_GPU=1 cargo +1.89.0 test --locked -p minifield-backend-metal --test parity -- --ignored --test-threads=1
+MINIFIELD_REQUIRE_GPU=1 cargo +1.89.0 test --locked -p minifield-backend-metal --lib --test parity --test packed_tile8 -- --ignored --nocapture --test-threads=1
 ```
 
 Hardware tests are explicitly ignored by portable CI. The hardware command requires actual native Metal construction and shader compilation, and fails if either is unavailable. See [the foundation experiment](../../docs/research/runtime-native-metal-foundation-2026-09-29.md) for recorded evidence.
+
+The hardware gate includes `--lib`, `parity` and `packed_tile8`: 1 capability unit, 12 existing parity cases and 4 tile8 cases. The private unit retains two JSON records of actual compiled tile8 limits and requires their admission.
+
+Both reference-device pipelines report execution width 32 and a 1,024-thread limit; their static allocations are 5,248 and 9,472 bytes against the device's 32,768-byte capacity.

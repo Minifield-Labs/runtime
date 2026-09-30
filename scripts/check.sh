@@ -84,7 +84,7 @@ case "$mode" in
             exit 1
         }
         MINIFIELD_REQUIRE_GPU=1 cargo +1.89.0 test -p minifield-backend-metal \
-            --locked --test parity -- --ignored --test-threads=1
+            --locked --lib --test parity --test packed_tile8 -- --ignored --nocapture --test-threads=1
         ;;
     wasm)
         [[ $# -eq 0 ]] || usage

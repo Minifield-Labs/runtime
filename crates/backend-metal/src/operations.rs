@@ -1,7 +1,11 @@
 //! Checked finite operations. Shader indexing follows the admitted geometry.
 use crate::{
     Bucket, MetalBackend, MetalBuffer, MetalFence, MetalFenceRetirement, MetalReadback,
-    encode_words, p, product,
+    encode_words,
+    kernels::Kernel,
+    p,
+    packed::{Format, Mode},
+    product,
 };
 use minifield_engine_api::{
     AllocationClass, BackendCapabilities, BackendIdentity, BackendLease, DType, ExecutorError,
@@ -26,7 +30,7 @@ impl MetalBackend {
         Self::distinct(output, &[a, b])?;
         Self::shape(a).element_count()
     }
-    fn packed(&self, codes: &MetalBuffer, scales: &MetalBuffer) -> Result<(u64, u64, u32)> {
+    fn packed(&self, codes: &MetalBuffer, scales: &MetalBuffer) -> Result<(u64, u64, Format)> {
         self.check(codes, DType::U8)?;
         self.check(scales, DType::F32)?;
         let c = Self::shape(codes);
@@ -38,17 +42,7 @@ impl MetalBackend {
         }
         let width = product(s.dim(1)?, 128)?;
         let bytes = c.dim(1)?;
-        let format = if bytes == width / 4 {
-            0
-        } else if bytes == width / 2 {
-            1
-        } else if bytes == width {
-            2
-        } else {
-            return Err(ExecutorError::InvalidShape(
-                "Metal packed code width is invalid",
-            ));
-        };
+        let format = Format::from_code_width(bytes, width)?;
         Ok((c.dim(0)?, width, format))
     }
     fn packed_input(
@@ -57,7 +51,7 @@ impl MetalBackend {
         input: &MetalBuffer,
         codes: &MetalBuffer,
         scales: &MetalBuffer,
-    ) -> Result<(u64, u64, u64, u32)> {
+    ) -> Result<(u64, u64, u64, Format)> {
         let (rows, width, format) = self.packed(codes, scales)?;
         self.check(input, DType::F32)?;
         let shape = Self::shape(input);
@@ -136,7 +130,7 @@ impl MetalBackend {
             ));
         }
         self.device.dispatch(
-            "rms_norm",
+            Kernel::RmsNorm,
             &[output, input, weight],
             &[p(rows)?, p(width)?, epsilon.to_bits()],
             rows,
@@ -162,7 +156,7 @@ impl MetalBackend {
         let heads = u64::from(spec.query_heads().heads());
         let scores = self.new_scratch(Shape::new(&[product(tokens, heads)?, key_tokens])?)?;
         self.device.dispatch(
-            "attention",
+            Kernel::Attention,
             &[output, query, key, value, &scores, segments],
             &[
                 p(tokens)?,
@@ -349,7 +343,7 @@ impl InferenceOps for MetalBackend {
         Self::distinct(output, &[input])?;
         r.validate(Self::shape(input), Self::shape(output))?;
         self.device.dispatch(
-            "rect_copy",
+            Kernel::RectCopy,
             &[output, input],
             &[
                 p(r.rows())?,
@@ -392,7 +386,7 @@ impl InferenceOps for MetalBackend {
         let selectors = self.ids(&ids, o.dim(0)?, s.dim(0)?)?;
         Self::distinct(output, &[selectors.buffer()])?;
         self.device.dispatch(
-            "gather",
+            Kernel::Gather,
             &[output, table, selectors.buffer()],
             &[p(o.dim(0)?)?, p(s.dim(1)?)?, p(s.dim(0)?)?],
             o.element_count()?,
@@ -423,7 +417,7 @@ impl InferenceOps for MetalBackend {
         }
         let ids = self.stage_u32(columns)?;
         self.device.dispatch(
-            "columns",
+            Kernel::Columns,
             &[output, input, &ids],
             &[p(s.dim(0)?)?, p(count)?, p(s.dim(1)?)?],
             product(s.dim(0)?, count)?,
@@ -448,9 +442,9 @@ impl InferenceOps for MetalBackend {
         let selectors = self.ids(&ids, o.dim(0)?, rows)?;
         Self::distinct(output, &[selectors.buffer()])?;
         self.device.dispatch(
-            "packed_gather",
+            Kernel::PackedGather,
             &[output, codes, scales, selectors.buffer()],
-            &[p(o.dim(0)?)?, p(width)?, p(rows)?, format],
+            &[p(o.dim(0)?)?, p(width)?, p(rows)?, format.id()],
             o.element_count()?,
         )
     }
@@ -462,11 +456,11 @@ impl InferenceOps for MetalBackend {
         scales: &MetalBuffer,
     ) -> Result<()> {
         let (tokens, rows, width, format) = self.packed_input(output, input, codes, scales)?;
-        self.device.dispatch(
-            "packed_linear",
+        self.device.dispatch_packed(
+            Mode::Single,
+            [tokens, rows, width],
             &[output, input, codes, scales, input],
-            &[p(tokens)?, p(rows)?, p(width)?, format, 0],
-            product(tokens, rows)?,
+            &[p(tokens)?, p(rows)?, p(width)?, format.id(), 0],
         )
     }
     fn packed_linear_pair(
@@ -488,11 +482,18 @@ impl InferenceOps for MetalBackend {
         }
         Self::distinct(out_a, &[out_b, cb, sb])?;
         Self::distinct(out_b, &[ca, sa])?;
-        self.device.dispatch(
-            "packed_pair",
+        self.device.dispatch_packed(
+            Mode::Pair,
+            [tokens, rows, width],
             &[out_a, out_b, input, ca, sa, cb, sb],
-            &[p(tokens)?, p(rows)?, p(width)?, format_a, other.3, 0],
-            product(tokens, rows)?,
+            &[
+                p(tokens)?,
+                p(rows)?,
+                p(width)?,
+                format_a.id(),
+                other.3.id(),
+                0,
+            ],
         )
     }
     fn packed_swiglu_linear(
@@ -509,11 +510,11 @@ impl InferenceOps for MetalBackend {
             return Err(ExecutorError::InvalidShape("Metal SwiGLU inputs differ"));
         }
         Self::distinct(output, &[up])?;
-        self.device.dispatch(
-            "packed_linear",
+        self.device.dispatch_packed(
+            Mode::InputSwiGlu,
+            [tokens, rows, width],
             &[output, gate, codes, scales, up],
-            &[p(tokens)?, p(rows)?, p(width)?, format, 1],
-            product(tokens, rows)?,
+            &[p(tokens)?, p(rows)?, p(width)?, format.id(), 1],
         )
     }
     fn packed_swiglu_pair(
@@ -533,11 +534,18 @@ impl InferenceOps for MetalBackend {
             ));
         }
         Self::distinct(output, &[cb, sb])?;
-        self.device.dispatch(
-            "packed_pair",
+        self.device.dispatch_packed(
+            Mode::PairSwiGlu,
+            [tokens, rows, width],
             &[output, output, input, ca, sa, cb, sb],
-            &[p(tokens)?, p(rows)?, p(width)?, format_a, format_b, 1],
-            product(tokens, rows)?,
+            &[
+                p(tokens)?,
+                p(rows)?,
+                p(width)?,
+                format_a.id(),
+                format_b.id(),
+                1,
+            ],
         )
     }
     fn add_row_rms_norm(
@@ -620,7 +628,7 @@ impl InferenceOps for MetalBackend {
     fn add(&self, output: &mut MetalBuffer, left: &MetalBuffer, right: &MetalBuffer) -> Result<()> {
         let n = self.equal(output, left, right)?;
         self.device
-            .dispatch("elementwise", &[output, left, right], &[p(n)?, 0], n)
+            .dispatch(Kernel::Elementwise, &[output, left, right], &[p(n)?, 0], n)
     }
     fn multiply(
         &self,
@@ -630,7 +638,7 @@ impl InferenceOps for MetalBackend {
     ) -> Result<()> {
         let n = self.equal(output, left, right)?;
         self.device
-            .dispatch("elementwise", &[output, left, right], &[p(n)?, 1], n)
+            .dispatch(Kernel::Elementwise, &[output, left, right], &[p(n)?, 1], n)
     }
     fn linear(
         &self,
@@ -650,7 +658,7 @@ impl InferenceOps for MetalBackend {
         self.output(output, Shape::new(&[i.dim(0)?, w.dim(0)?])?)?;
         Self::distinct(output, &[input, weight])?;
         self.device.dispatch(
-            "dense_linear",
+            Kernel::DenseLinear,
             &[output, input, weight],
             &[p(i.dim(0)?)?, p(w.dim(0)?)?, p(i.dim(1)?)?],
             product(i.dim(0)?, w.dim(0)?)?,
@@ -747,7 +755,7 @@ impl InferenceOps for MetalBackend {
         }
         let staged = self.stage_f32(&table)?;
         self.device.dispatch(
-            "rotary",
+            Kernel::Rotary,
             &[output, input, &staged],
             &[
                 p(tokens)?,
@@ -821,7 +829,7 @@ impl InferenceOps for MetalBackend {
             RectCopy2d::new(0, 0, *cache_len, 0, tokens, width),
         )?;
         self.device.dispatch(
-            "attention",
+            Kernel::Attention,
             &[output, query, key_cache, value_cache, &scores, &segments],
             &[
                 p(tokens)?,
@@ -874,13 +882,13 @@ impl InferenceOps for MetalBackend {
         let mut snapshot = self.new_scratch(Self::shape(history))?;
         self.copy(&mut snapshot, history)?;
         self.device.dispatch(
-            "causal_conv",
+            Kernel::CausalConv,
             &[output, projection, kernel, &snapshot],
             &[p(s.dim(0)?)?, spec.hidden(), spec.width()],
             product(s.dim(0)?, hidden)?,
         )?;
         self.device.dispatch(
-            "conv_history",
+            Kernel::ConvHistory,
             &[history, projection, &snapshot],
             &[p(s.dim(0)?)?, spec.hidden(), spec.width() - 1],
             product(width - 1, hidden)?,
@@ -889,7 +897,7 @@ impl InferenceOps for MetalBackend {
     fn swiglu(&self, output: &mut MetalBuffer, gate: &MetalBuffer, up: &MetalBuffer) -> Result<()> {
         let n = self.equal(output, gate, up)?;
         self.device
-            .dispatch("elementwise", &[output, gate, up], &[p(n)?, 2], n)
+            .dispatch(Kernel::Elementwise, &[output, gate, up], &[p(n)?, 2], n)
     }
 }
 impl MetalBackend {
@@ -930,7 +938,7 @@ impl MetalBackend {
         };
         let staged = self.stage_u32(&words)?;
         self.device.dispatch(
-            "argmax_rows",
+            Kernel::ArgmaxRows,
             &[output, input, &staged],
             &[p(s.dim(0)?)?, p(s.dim(1)?)?, u32::from(mask.is_some())],
             s.dim(0)?,

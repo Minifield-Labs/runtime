@@ -2,11 +2,15 @@
 //! Shared allocations are initialized before encoding and read only after their
 //! snapshot-copy command buffer reaches Completed. No CPU write touches queued storage.
 
+use crate::{
+    kernels::Kernel,
+    packed::{Geometry, PipelineCaps},
+};
 use minifield_engine_api::{ExecutorError, Result};
 
 #[cfg(target_os = "macos")]
 mod native {
-    use super::{ExecutorError, Result};
+    use super::{ExecutorError, Geometry, Kernel, PipelineCaps, Result};
     use objc2::{rc::Retained, runtime::ProtocolObject};
     use objc2_foundation::NSString;
     use objc2_metal::{
@@ -24,7 +28,11 @@ mod native {
     pub struct Device {
         gpu: Retained<ProtocolObject<dyn MTLDevice>>,
         queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
-        pipelines: BTreeMap<&'static str, Retained<ProtocolObject<dyn MTLComputePipelineState>>>,
+        pipelines: BTreeMap<Kernel, Pipeline>,
+    }
+    struct Pipeline {
+        raw: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+        caps: PipelineCaps,
     }
     pub struct Buffer(pub Retained<ProtocolObject<dyn MTLBuffer>>);
     pub struct Command(pub Retained<ProtocolObject<dyn MTLCommandBuffer>>);
@@ -44,7 +52,7 @@ mod native {
             options.setFastMathEnabled(false);
             let library = device
                 .newLibraryWithSource_options_error(
-                    &NSString::from_str(include_str!("kernels.metal")),
+                    &NSString::from_str(&crate::kernels::library_source()),
                     Some(&options),
                 )
                 .map_err(|error| {
@@ -52,16 +60,28 @@ mod native {
                     ExecutorError::BackendFailure("Metal shader compilation failed")
                 })?;
             let mut pipelines = BTreeMap::new();
-            for &name in super::super::KERNEL_NAMES {
+            for kernel in Kernel::ALL {
                 let function = library
-                    .newFunctionWithName(&NSString::from_str(name))
+                    .newFunctionWithName(&NSString::from_str(kernel.name()))
                     .ok_or(ExecutorError::BackendFailure(
                         "Metal shader function missing",
                     ))?;
                 let pipeline = device
                     .newComputePipelineStateWithFunction_error(&function)
                     .map_err(|_| ExecutorError::BackendFailure("Metal pipeline creation failed"))?;
-                pipelines.insert(name, pipeline);
+                let caps = PipelineCaps {
+                    execution_width: pipeline.threadExecutionWidth(),
+                    max_threads: pipeline.maxTotalThreadsPerThreadgroup(),
+                    static_bytes: pipeline.staticThreadgroupMemoryLength(),
+                    device_threadgroup_bytes: device.maxThreadgroupMemoryLength(),
+                };
+                pipelines.insert(
+                    kernel,
+                    Pipeline {
+                        raw: pipeline,
+                        caps,
+                    },
+                );
             }
             Ok(Self {
                 gpu: device,
@@ -75,6 +95,24 @@ mod native {
                 self.gpu.registryID(),
                 self.gpu.maxBufferLength() as u64,
             )
+        }
+        pub fn pipeline_caps(&self, kernel: Kernel) -> Result<PipelineCaps> {
+            self.pipelines
+                .get(&kernel)
+                .map(|pipeline| pipeline.caps)
+                .ok_or(ExecutorError::BackendFailure("Metal pipeline missing"))
+        }
+        pub fn validate_dispatch(&self, kernel: Kernel, geometry: Geometry) -> Result<()> {
+            let caps = self.pipeline_caps(kernel)?;
+            match geometry {
+                Geometry::Linear(threads) if threads == 0 || caps.max_threads == 0 => {
+                    Err(ExecutorError::InvalidArgument("Metal linear grid is empty"))
+                }
+                Geometry::Tile8(_) if !caps.admits_tile8() => Err(ExecutorError::Unsupported(
+                    "Metal tile8 pipeline/grid is incompatible",
+                )),
+                _ => Ok(()),
+            }
         }
         pub fn allocate(&self, length: usize, initial: Option<&[u8]>) -> Result<Buffer> {
             let buffer = self
@@ -114,14 +152,14 @@ mod native {
         pub fn dispatch(
             &self,
             command: &Command,
-            name: &'static str,
+            kernel: Kernel,
             buffers: &[&Buffer],
             params: &[u32; 16],
-            threads: usize,
+            geometry: Geometry,
         ) -> Result<()> {
             let pipeline = self
                 .pipelines
-                .get(name)
+                .get(&kernel)
                 .ok_or(ExecutorError::BackendFailure("Metal pipeline missing"))?;
             let encoder =
                 command
@@ -130,7 +168,7 @@ mod native {
                     .ok_or(ExecutorError::BackendFailure(
                         "Metal compute encoder creation failed",
                     ))?;
-            encoder.setComputePipelineState(pipeline);
+            encoder.setComputePipelineState(&pipeline.raw);
             // SAFETY: the finite operation's checked geometry establishes every
             // shader access bound; bindings are <=7, params occupy slot8, and all
             // resources are retained by the batch plus Metal's retained-reference
@@ -140,18 +178,41 @@ mod native {
                     encoder.setBuffer_offset_atIndex(Some(&buffer.0), 0, index);
                 }
                 encoder.setBytes_length_atIndex(NonNull::from(params).cast(), 64, 8);
-                encoder.dispatchThreads_threadsPerThreadgroup(
-                    MTLSize {
-                        width: threads,
-                        height: 1,
-                        depth: 1,
-                    },
-                    MTLSize {
-                        width: pipeline.maxTotalThreadsPerThreadgroup().min(256),
-                        height: 1,
-                        depth: 1,
-                    },
-                );
+                match geometry {
+                    Geometry::Linear(threads) => {
+                        encoder.dispatchThreads_threadsPerThreadgroup(
+                            MTLSize {
+                                width: threads,
+                                height: 1,
+                                depth: 1,
+                            },
+                            MTLSize {
+                                width: pipeline.caps.max_threads.min(256),
+                                height: 1,
+                                depth: 1,
+                            },
+                        );
+                    }
+                    Geometry::Tile8(grid) => {
+                        let [columns, tokens, depth] = grid.groups();
+                        // SAFETY: the preflight admitted this exact pipeline's
+                        // execution width, fixed 256-thread capacity and actual
+                        // static storage. Full groups are essential: even tail
+                        // threads must reach both shared-memory barriers.
+                        encoder.dispatchThreadgroups_threadsPerThreadgroup(
+                            MTLSize {
+                                width: columns,
+                                height: tokens,
+                                depth,
+                            },
+                            MTLSize {
+                                width: crate::packed::THREADS,
+                                height: 1,
+                                depth: 1,
+                            },
+                        );
+                    }
+                }
             }
             encoder.endEncoding();
             Ok(())
@@ -227,7 +288,7 @@ pub use native::*;
 // Match the real native bridge signatures while rejecting construction on other targets.
 #[allow(clippy::unused_self, clippy::unnecessary_wraps)]
 mod unsupported {
-    use super::{ExecutorError, Result};
+    use super::{ExecutorError, Geometry, Kernel, PipelineCaps, Result};
     pub struct Device;
     pub struct Buffer;
     pub struct Command;
@@ -241,6 +302,12 @@ mod unsupported {
         pub fn info(&self) -> (String, u64, u64) {
             (String::new(), 0, 0)
         }
+        pub fn pipeline_caps(&self, _: Kernel) -> Result<PipelineCaps> {
+            unavailable()
+        }
+        pub fn validate_dispatch(&self, _: Kernel, _: Geometry) -> Result<()> {
+            unavailable()
+        }
         pub fn allocate(&self, _: usize, _: Option<&[u8]>) -> Result<Buffer> {
             unavailable()
         }
@@ -250,10 +317,10 @@ mod unsupported {
         pub fn dispatch(
             &self,
             _: &Command,
-            _: &'static str,
+            _: Kernel,
             _: &[&Buffer],
             _: &[u32; 16],
-            _: usize,
+            _: Geometry,
         ) -> Result<()> {
             unavailable()
         }

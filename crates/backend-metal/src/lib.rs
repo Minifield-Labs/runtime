@@ -11,38 +11,23 @@
 mod bridge;
 mod completion;
 mod encoder;
+mod kernels;
 mod operations;
+mod packed;
 
 pub use completion::{MetalFence, MetalFenceRetirement, MetalReadback};
+use kernels::Kernel;
 use minifield_engine_api::{
     AllocationClass, BackendCapabilities, BackendIdentity, BackendKind, BackendLease, BufferAccess,
     BufferDescriptor, DType, DTypeSet, ExecutorError, OperationKind, OperationSet, PrecisionPolicy,
     ResourceLimits, ResourceReport, Result, Shape, TensorLayout,
 };
+use packed::Geometry;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
     rc::Rc,
 };
-
-#[cfg(any(target_os = "macos", test))]
-const KERNEL_NAMES: &[&str] = &[
-    "elementwise",
-    "rect_copy",
-    "gather",
-    "columns",
-    "argmax_rows",
-    "dense_linear",
-    "packed_gather",
-    "packed_linear",
-    "packed_pair",
-    "rms_norm",
-    "rotary",
-    "attention",
-    "causal_conv",
-    "conv_history",
-    "centered_conv",
-];
 
 /// Actual native device identity, with no WebGPU adapter involved.
 #[derive(Clone, Debug)]
@@ -236,7 +221,7 @@ impl Device {
     }
     fn dispatch(
         &self,
-        name: &'static str,
+        kernel: Kernel,
         buffers: &[&MetalBuffer],
         words: &[u32],
         threads: u64,
@@ -244,26 +229,52 @@ impl Device {
         if threads == 0 {
             return Ok(());
         }
+        let threads = usize::try_from(threads)
+            .map_err(|_| ExecutorError::ResourceLimit("Metal grid exceeds address space"))?;
+        self.encode(kernel, buffers, words, Geometry::Linear(threads))
+    }
+    fn encode(
+        &self,
+        kernel: Kernel,
+        buffers: &[&MetalBuffer],
+        words: &[u32],
+        geometry: Geometry,
+    ) -> Result<()> {
         if words.len() > 16 || buffers.len() > 8 {
             return Err(ExecutorError::InvalidArgument(
                 "Metal binding limit exceeded",
             ));
         }
-        let threads = usize::try_from(threads)
-            .map_err(|_| ExecutorError::ResourceLimit("Metal grid exceeds address space"))?;
+        // No command, retention extension or counter change precedes preflight.
+        if !geometry.matches_kernel(kernel) {
+            return Err(ExecutorError::InvalidArgument(
+                "Metal kernel/grid kind differs",
+            ));
+        }
+        if let Geometry::Tile8(grid) = geometry
+            && grid.groups().contains(&0)
+        {
+            return Err(ExecutorError::InvalidArgument("Metal tile8 grid is empty"));
+        }
+        self.raw.validate_dispatch(kernel, geometry)?;
+        let name = kernel.name();
+        let next_count = self
+            .counts
+            .borrow()
+            .get(name)
+            .copied()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or(ExecutorError::Overflow("Metal dispatch count overflows"))?;
         let mut params = [0_u32; 16];
         params[..words.len()].copy_from_slice(words);
         let retained: Vec<_> = buffers.iter().map(|b| Rc::clone(&b.allocation)).collect();
         let raw: Vec<_> = retained.iter().map(|a| &a.raw).collect();
         self.record(
-            |command| self.raw.dispatch(command, name, &raw, &params, threads),
+            |command| self.raw.dispatch(command, kernel, &raw, &params, geometry),
             &retained,
         )?;
-        let mut counts = self.counts.borrow_mut();
-        let count = counts.entry(name).or_default();
-        *count = count
-            .checked_add(1)
-            .ok_or(ExecutorError::Overflow("Metal dispatch count overflows"))?;
+        self.counts.borrow_mut().insert(name, next_count);
         Ok(())
     }
 }
@@ -546,15 +557,6 @@ mod tests {
         assert!(product(u64::MAX, 2).is_err());
         assert!(p(u64::from(u32::MAX) + 1).is_err());
         assert_eq!(product(0, u64::MAX).expect("empty"), 0);
-    }
-    #[test]
-    fn registry_names_are_unique_and_have_shader_definitions() {
-        let source = include_str!("kernels.metal");
-        let names: std::collections::BTreeSet<_> = KERNEL_NAMES.iter().copied().collect();
-        assert_eq!(names.len(), KERNEL_NAMES.len());
-        for name in KERNEL_NAMES {
-            assert!(source.contains(&format!("kernel void {name}(")), "{name}");
-        }
     }
     #[test]
     fn readback_reservation_applies_per_buffer_and_aggregate_caps() {

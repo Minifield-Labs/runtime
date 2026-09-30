@@ -1,5 +1,5 @@
 //! Complete-sequence attention and centered convolution on native Metal.
-use crate::{MetalBackend, MetalBuffer, p, product};
+use crate::{MetalBackend, MetalBuffer, kernels::Kernel, p, product};
 use minifield_engine_api::{
     DType, EncoderOps, EncoderSegments, ExecutorError, GatedShortConvSpec, GqaSpec, Result, Shape,
 };
@@ -69,7 +69,7 @@ impl EncoderOps for MetalBackend {
         Self::distinct(output, &[projection, kernel])?;
         let staged = self.stage_u32(segments.ids())?;
         self.device.dispatch(
-            "centered_conv",
+            Kernel::CenteredConv,
             &[output, projection, kernel, &staged],
             &[p(s.dim(0)?)?, spec.hidden(), spec.width()],
             product(s.dim(0)?, h)?,

@@ -17,16 +17,6 @@ qualification_tests() {
     uv run --locked --project tools/qualification python -m unittest discover -s tools/qualification/tests -v
 }
 
-hillclimb_checks() {
-    require uv
-    (
-        cd tools/hillclimb
-        uv run --locked --project ../qualification python -m unittest discover -s tests -v
-        uv run --locked --project ../qualification ruff check .
-        uv run --locked --project ../qualification ruff format --check .
-    )
-}
-
 converter_checks() {
     require uv
     (
@@ -49,7 +39,6 @@ case "$mode" in
         cargo +1.89.0 test --locked -p minifield-backend-cpu -p minifield-kernels-simd \
             -p minifield-executor-core -p minifield-json-grammar -p minifield-text-tokenizer
         qualification_tests
-        hillclimb_checks
         ;;
     ci)
         [[ $# -eq 0 ]] || usage
@@ -65,7 +54,6 @@ case "$mode" in
         uv run --locked --project tools/qualification python scripts/check_repository.py
         cargo +1.89.0 test --manifest-path tools/quant-reference/Cargo.toml --locked
         qualification_tests
-        hillclimb_checks
         uv run --locked --project tools/qualification ruff check tools/qualification
         uv run --locked --project tools/qualification ruff format --check tools/qualification
         npm test

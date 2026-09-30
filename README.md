@@ -23,7 +23,7 @@ printf 'Hello' | cargo run --release --locked -p minifield-infer -- --model-dir 
 
 The directory must contain `config.json`, `model.safetensors`, and `tokenizer/tokenizer.json`. The CLI consumes the prompt exactly as supplied. Callers own chat templates and product policy.
 
-Use [frozen hill-climbing campaigns](tools/hillclimb/README.md) and the [evaluation host](crates/evaluation-host/README.md) for complete classifier/pointer predictions and independent native Metal/WGPU comparisons. Use [bundle qualification](tools/qualification/README.md) for GPU classification and matched quantization benchmarks, [the browser harness](web/README.md) for WASM execution, and [offline converters](tools/converters/README.md) for packaging or explicitly requested quantization.
+Use the [evaluation host](crates/evaluation-host/README.md) for complete classifier/pointer predictions and independent native Metal/WGPU comparisons. Use [bundle qualification](tools/qualification/README.md) for GPU classification and matched quantization benchmarks, [the browser harness](web/README.md) for WASM execution, and [offline converters](tools/converters/README.md) for packaging or explicitly requested quantization.
 
 ## Repository map
 
@@ -44,7 +44,6 @@ Use [frozen hill-climbing campaigns](tools/hillclimb/README.md) and the [evaluat
 | `web` | WASM bindings and browser development harness |
 | `tools/converters` | Independent Python conversion package |
 | `tools/qualification` | Native bundle correctness and timing reports |
-| `tools/hillclimb` | Hash-bound campaign builds, correctness, pairing, and promotion |
 | `tools/quant-reference` | Separate MFQ8/Q4 compatibility reference |
 | `contracts`, `examples` | Pinned contracts and compact synthetic fixtures |
 | `docs/research` | Historical plans and research proposals |

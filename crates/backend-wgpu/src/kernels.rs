@@ -231,6 +231,8 @@ const NF4_SWIGLU_HEADER: &str = include_str!("shaders/nf4_swiglu_header.wgsl");
 /// Kernel identifiers in lazy-pipeline-cache order.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Kernel {
+    EncoderGqa,
+    EncoderConv,
     Fill,
     Binary,
     Copy2d,
@@ -290,6 +292,8 @@ pub enum Kernel {
 
 impl Kernel {
     pub const ALL: &[Self] = &[
+        Self::EncoderGqa,
+        Self::EncoderConv,
         Self::Fill,
         Self::Binary,
         Self::Copy2d,
@@ -353,6 +357,8 @@ impl Kernel {
     /// declare the same positions read-only.
     pub const fn read_only_mask(self) -> u32 {
         match self {
+            Self::EncoderGqa => 0b0001_1110,
+            Self::EncoderConv => 0b1110,
             Self::Gemv => 0b11100, // x, w, w4
             Self::PackedGemv
             | Self::PackedGemvNf4
@@ -401,6 +407,8 @@ impl Kernel {
     #[allow(clippy::too_many_lines)] // Registry maps each finite operation to its shader body.
     pub fn source(self, staging: crate::Nf4Staging) -> String {
         let body = match self {
+            Self::EncoderGqa => include_str!("shaders/encoder_gqa.wgsl"),
+            Self::EncoderConv => include_str!("shaders/encoder_conv.wgsl"),
             Self::PackedGatherInt8 => include_str!("shaders/packed_gather_int8.wgsl"),
             Self::PackedGemmPairSwigluInt8 => include_str!("shaders/int8_pair_swiglu_header.wgsl"),
             Self::PackedSwigluGemmInt8 => include_str!("shaders/int8_swiglu_header.wgsl"),
@@ -594,6 +602,7 @@ impl Kernel {
     /// Storage-buffer bindings after the uniform params binding.
     pub const fn storage_bindings(self) -> u32 {
         match self {
+            Self::EncoderGqa => 6,
             Self::Fill => 1,
             Self::ArgmaxFinal | Self::Copy2d | Self::RepackTernaryLut2 => 2,
             Self::Argmax
@@ -606,7 +615,8 @@ impl Kernel {
             | Self::Rotary
             | Self::ConvGate
             | Self::SwiGlu => 3,
-            Self::Gemv
+            Self::EncoderConv
+            | Self::Gemv
             | Self::Conv
             | Self::PackedGather
             | Self::PackedGatherNf4
@@ -652,6 +662,8 @@ impl Kernel {
 
     pub const fn name(self) -> &'static str {
         match self {
+            Self::EncoderGqa => "encoder_gqa",
+            Self::EncoderConv => "encoder_conv",
             Self::Fill => "fill",
             Self::Binary => "binary",
             Self::Copy2d => "copy2d",

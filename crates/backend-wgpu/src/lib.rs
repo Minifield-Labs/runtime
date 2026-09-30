@@ -25,6 +25,7 @@ mod attention_convolution;
 mod completion;
 mod dense;
 mod dispatch;
+mod encoder;
 mod normalization;
 mod packed;
 mod sampling;

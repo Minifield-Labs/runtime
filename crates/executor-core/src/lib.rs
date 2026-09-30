@@ -10,12 +10,15 @@
 pub mod lfm2;
 pub mod loader;
 pub use lfm2::{
-    AppendChoiceTask, ChoiceLogitsTask, LayerKind, Lfm2Classifier, Lfm2Config, Lfm2ExecutionLimits,
-    Lfm2ExecutionOptions, Lfm2Executor, Lfm2LayerWeightRole, Lfm2LoadRequest, Lfm2Lut2Mode,
-    Lfm2Prefix, Lfm2ResolvedWeight, Lfm2StorageDType, Lfm2TypedWeights, Lfm2WeightFormat,
-    Lfm2WeightLoadTask, Lfm2WeightPlan, Lfm2WeightRole, LogitsTask, NumericalMode,
-    PrefillChoiceTask, PrefixTask, ScoreTask, detect_lfm2_weight_format, parse_lfm2_config,
-    parse_lfm2_tensor_quantization,
+    AppendChoiceTask, ChoiceLogitsTask, EncoderConfig, EncoderInput, EncoderLimits,
+    EncoderLoadRequest, EncoderTypedWeights, EncoderWeightLoadTask, EncoderWeightPlan, LayerKind,
+    Lfm2Classifier, Lfm2Config, Lfm2ExecutionLimits, Lfm2ExecutionOptions, Lfm2Executor,
+    Lfm2LayerWeightRole, Lfm2LoadRequest, Lfm2Lut2Mode, Lfm2PointerEncoder, Lfm2Prefix,
+    Lfm2ResolvedWeight, Lfm2StorageDType, Lfm2TypedWeights, Lfm2WeightFormat, Lfm2WeightLoadTask,
+    Lfm2WeightPlan, Lfm2WeightRole, LogitsTask, NumericalMode, PointerAnswer, PointerOutput,
+    PointerQuestion, PointerQuestionKind, PointerTask, PointerWeightRole, PrefillChoiceTask,
+    PrefixTask, ScoreTask, decode_pointer, detect_lfm2_weight_format, parse_encoder_config,
+    parse_lfm2_config, parse_lfm2_tensor_quantization,
 };
 pub use loader::{
     LoadRequest, LoaderError, LoaderLimits, LoaderPoll, LoaderResourceReport, LoaderStage,

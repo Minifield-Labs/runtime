@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 usage() {
-    printf '%s\n' 'usage: scripts/check.sh quick|ci|gpu|wasm|browser [ARGS...]|qualify PROFILE|bench PROFILE' >&2
+    printf '%s\n' 'usage: scripts/check.sh quick|ci|gpu|gpu-metal|wasm|browser [ARGS...]|qualify PROFILE|bench PROFILE' >&2
     exit 2
 }
 
@@ -76,6 +76,15 @@ case "$mode" in
         MINIFIELD_REQUIRE_GPU=1 cargo +1.89.0 test -p minifield-backend-wgpu \
             --features experimental-kernels --locked --lib --test lowbits --test parity --test int8 --test encoder \
             -- --test-threads=1
+        ;;
+    gpu-metal)
+        [[ $# -eq 0 ]] || usage
+        [[ "$(uname -s)" == "Darwin" ]] || {
+            printf '%s\n' 'Native Metal qualification requires macOS.' >&2
+            exit 1
+        }
+        MINIFIELD_REQUIRE_GPU=1 cargo +1.89.0 test -p minifield-backend-metal \
+            --locked --test parity -- --ignored --test-threads=1
         ;;
     wasm)
         [[ $# -eq 0 ]] || usage

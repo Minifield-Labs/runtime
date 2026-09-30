@@ -444,6 +444,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "minifield-backend-metal"
+version = "0.1.0"
+dependencies = [
+ "minifield-backend-cpu",
+ "minifield-engine-api",
+ "objc2",
+ "objc2-foundation",
+ "objc2-metal",
+]
+
+[[package]]
 name = "minifield-backend-wgpu"
 version = "0.1.0"
 dependencies = [

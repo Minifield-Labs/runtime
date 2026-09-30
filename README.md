@@ -1,6 +1,6 @@
 # Minifield Runtime
 
-Local LFM2 inference in Rust, with CPU and WebGPU backends. The runtime loads dense or packed weights, tokenizes input, runs generation or classification, and supports reusable prefixes and constrained decoding.
+Local LFM2 inference in Rust, with CPU, WebGPU, and independent native Metal backends. The runtime loads dense or packed weights, tokenizes input, runs generation or classification, and supports reusable prefixes and constrained decoding.
 
 This is an early implementation with tested numerical paths and explicit limits. Hardware support and model quality require evidence for the actual bundle and device. Trained weights and a finished product integration aren't included.
 
@@ -31,7 +31,8 @@ Use [bundle qualification](tools/qualification/README.md) for GPU classification
 | --- | --- |
 | `crates/engine-api` | Finite operation, tensor, ownership, completion, and resource contracts |
 | `crates/backend-cpu` | Scalar reference implementation and packed arithmetic |
-| `crates/backend-wgpu` | GPU storage, dispatch, shaders, completion, and diagnostics |
+| `crates/backend-wgpu` | WebGPU storage, WGSL dispatch, completion, and diagnostics |
+| `crates/backend-metal` | Independent native Metal storage, MSL dispatch, and completion |
 | `crates/kernels-simd` | Isolated portable SIMD kernel work |
 | `crates/executor-core` | Bounded loader, LFM2 execution, classification, and prefix state |
 | `crates/text-tokenizer` | Bounded BPE assets, tokenization, and incremental decoding |
@@ -48,11 +49,11 @@ Use [bundle qualification](tools/qualification/README.md) for GPU classification
 
 ## Supported execution
 
-The active model is LFM2 with the configuration subset validated by the loader. Dense F32/BF16/F16 assets execute as F32. Packed `minifield.ternary.v1`, `minifield.nf4.v1`, and signed `minifield.int8.v1` matrices use group-128 scales; mixed formats resolve per weight role. CPU and WebGPU implement the same `InferenceOps` contract.
+The active model is LFM2 with the configuration subset validated by the loader. Dense F32/BF16/F16 assets execute as F32. Packed `minifield.ternary.v1`, `minifield.nf4.v1`, and signed `minifield.int8.v1` matrices use group-128 scales; mixed formats resolve per weight role. CPU, WebGPU, and native Metal implement the same `InferenceOps` contract. The complete-sequence pointer encoder uses `EncoderOps` for bidirectional attention and centered convolution.
 
 The model file specifies weight representation. The runtime chooses compatible kernels from the backend, tensor shape, and explicit memory policy. Backend-private repacks stay in memory. Experimental kernels require a Cargo feature and typed selection. See [architecture](docs/architecture.md).
 
-Native Metal and browser WebGPU are exercised on a reference Apple device. Other GPU families need their own qualification. Dedicated CUDA and Metal backends, general model imports, and mobile/browser compatibility matrices remain future work.
+Native Metal and WGPU-through-Metal are independently exercised on a reference Apple device. Run `scripts/check.sh gpu` for WGPU and `scripts/check.sh gpu-metal` for native Metal. Other GPU families, browser compatibility, and actual model bundles need their own qualification. Dedicated CUDA, general model imports, and mobile compatibility matrices remain future work.
 
 ## Boundaries
 

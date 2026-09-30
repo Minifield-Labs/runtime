@@ -2,6 +2,7 @@
 members = [
     "crates/engine-api",
     "crates/backend-wgpu",
+    "crates/backend-metal",
     "crates/backend-cpu",
     "crates/kernels-simd",
     "crates/executor-core",

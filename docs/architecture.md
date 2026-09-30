@@ -12,13 +12,13 @@ native host / browser bindings / qualification
          model executor + loader
                  |
               engine-api
-              /        \
-     backend-cpu      backend-wgpu
+          /       |        \
+ backend-cpu backend-wgpu backend-metal
 
 offline converters -> versioned files -> loader
 ```
 
-The executor is generic over `InferenceOps`. Backend crates implement that finite contract; the core never imports a concrete backend. A host constructs CPU or WebGPU, then the same loader and model executor run against it. `decoding-protocol` is a separate schema/framing component for callers.
+The executor is generic over `InferenceOps`. Backend crates implement that finite contract; the core never imports a concrete backend. A host constructs CPU, WebGPU, or independent native Metal, then the same loader and model executor run against it. `decoding-protocol` is a separate schema/framing component for callers.
 
 This is the strategy boundary. Keep model equations, stored encodings, platform capabilities, and individual kernels separate. A new kernel shouldn't require a new model implementation or a larger model file.
 
@@ -26,7 +26,7 @@ This is the strategy boundary. Keep model equations, stored encodings, platform 
 | --- | --- | --- |
 | Architecture and tensor roles | Validated config and inventory | Model loader/executor |
 | Dense, ternary, NF4, or signed INT8 representation | Tensor descriptors and format metadata | Loader/encoding contract |
-| CPU or WebGPU implementation | Host platform and explicit backend construction | Host |
+| CPU, WebGPU, or native Metal implementation | Host platform and explicit backend construction | Host |
 | Kernel and optional repack | Encoding, shape, capabilities, resource policy | Backend and executor |
 
 The host currently selects a backend explicitly. Within it, dispatch selects compatible implementations. There is no calibrated cross-device autotuner or universal claim that one kernel is fastest.
@@ -72,7 +72,7 @@ Input capacity, selector width, and constraint masks are checked before recordin
 
 `engine-api` separates errors, tensors, capabilities, resources/completion, operations, assets, and tokens. CPU/GPU modules follow operation families. The executor separates construction, storage, execution, dispatch, prefix tasks, readback, and scoring.
 
-GPU shader bodies live in `crates/backend-wgpu/src/shaders`. `kernels.rs` is the registry. Research shaders live under `shaders/experimental`, exposed through the explicit `experimental-kernels` feature and experimental API. Default execution stays on qualified production paths.
+WebGPU shader bodies live in `crates/backend-wgpu/src/shaders`. Native Metal owns its MSL kernels in `crates/backend-metal/src/kernels.metal` and its audited Objective-C bridge in `bridge.rs`. Both implement the same typed operations; each owns its buffers, command submission, and kernel dispatch. `kernels.rs` is the registry. Research shaders live under `shaders/experimental`, exposed through the explicit `experimental-kernels` feature and experimental API. Default execution stays on qualified production paths.
 
 Split modules when ownership or invariants become hard to inspect. A file-length target alone doesn't justify more abstraction.
 

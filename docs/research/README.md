@@ -9,6 +9,5 @@ These documents preserve context. Proposals, paths, and status claims may descri
 - [Constrained decoding research](../constrained-decoding-research.md)
 - [Wafer inference reading](../wafer-inference-experiments.md)
 - [xn optimization reference](../xn-optimization-reference.md)
-- [Tinygrad GPU performance research, September 29, 2026](tinygrad-gpu-performance-2026-09-29.md)
 
 Measured [FFN experiments](../ffn-prefill-experiments.md) remain at their stable path. Generated run output and retired prototype snapshots live outside Git.

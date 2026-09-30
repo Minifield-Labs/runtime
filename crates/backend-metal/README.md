@@ -41,8 +41,6 @@ This branch implements one cooperative canonical packed family with an 8×32×32
 
 Single and pair entry points cover the existing input/epilogue fusion modes and independently formatted pairs. Unsupported shapes or observed pipeline limits retain scalar dispatch.
 
-Rust/MSL compilation, portable checks and all 17 native hardware tests passed on the reference Apple device. Actual-model and performance qualification follow separately. See [the candidate report](../../docs/research/native-metal-packed-tile8-2026-09-30.md).
-
 Metal fast math is disabled. Rotary parameters reproduce the portable contract's explicit F64-to-F32 frequency/trig boundaries on the host, then normalization and rotation execute on Metal. Canonical ternary remains the native path; LUT2 repacking isn't advertised.
 
 ## Counters and resource reports
@@ -76,7 +74,7 @@ cargo +1.89.0 check --locked -p minifield-backend-metal --target wasm32-unknown-
 MINIFIELD_REQUIRE_GPU=1 cargo +1.89.0 test --locked -p minifield-backend-metal --lib --test parity --test packed_tile8 -- --ignored --nocapture --test-threads=1
 ```
 
-Hardware tests are explicitly ignored by portable CI. The hardware command requires actual native Metal construction and shader compilation, and fails if either is unavailable. See [the foundation experiment](../../docs/research/runtime-native-metal-foundation-2026-09-29.md) for recorded evidence.
+Hardware tests are explicitly ignored by portable CI. The hardware command requires actual native Metal construction and shader compilation, and fails if either is unavailable.
 
 The hardware gate includes `--lib`, `parity` and `packed_tile8`: 1 capability unit, 12 existing parity cases and 4 tile8 cases. The private unit retains two JSON records of actual compiled tile8 limits and requires their admission.
 

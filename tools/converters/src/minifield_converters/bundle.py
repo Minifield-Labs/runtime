@@ -62,7 +62,7 @@ def validate_weights(
         if scheme is not None and is_quantized_role(name, shape):
             if shape[1] % 128:
                 raise ConversionError(f"packed columns must divide group128: {name}")
-            width = 4 if scheme == "ternary" else 2
+            width = {"ternary": 4, "nf4": 2, "int8": 1}[scheme]
             expected[name + ".codes"] = ("U8", (shape[0], shape[1] // width))
             expected[name + ".scales"] = ("F16", (shape[0], shape[1] // 128))
         else:
@@ -133,7 +133,7 @@ def convert_bundle(
         )
     source_inventory = validate_weights(artifact, config, classes)
     if scheme is not None:
-        if scheme not in FORMATS:
+        if scheme not in ("ternary", "nf4"):
             raise ConversionError("quantization scheme must be ternary or nf4")
         if not source_model or not source_revision:
             raise ConversionError(

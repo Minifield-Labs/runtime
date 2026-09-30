@@ -2,6 +2,7 @@
 
 import math
 import struct
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -180,3 +181,57 @@ def write_tensors(
         stream.write(data)
         for _, tensor in sorted(tensors.items()):
             stream.write(tensor.data)
+
+
+def write_tensor_stream(
+    path: Path,
+    inventory: dict[str, tuple[str, tuple[int, ...]]],
+    tensors: Iterable[tuple[str, Tensor]],
+    metadata: dict[str, str],
+) -> None:
+    """Write a declared inventory while retaining only the current tensor pair.
+
+    The caller supplies sorted physical names. Checking them against the header
+    catches accidental omissions and keeps offsets independent of generator state.
+    """
+    header = {"__metadata__": metadata}
+    cursor = 0
+    names = sorted(inventory)
+    for name in names:
+        dtype, shape = inventory[name]
+        if (
+            dtype not in WIDTHS
+            or not 1 <= len(shape) <= 3
+            or any(type(dimension) is not int or dimension <= 0 for dimension in shape)
+        ):
+            raise ConversionError(f"invalid streamed tensor descriptor: {name}")
+        size = math.prod(shape) * WIDTHS[dtype]
+        header[name] = {
+            "dtype": dtype,
+            "shape": list(shape),
+            "data_offsets": [cursor, cursor + size],
+        }
+        cursor += size
+    data = json_bytes(header).rstrip(b"\n")
+    data += b" " * (-len(data) % 8)
+    if len(data) > MAX_HEADER_BYTES or cursor + len(data) + 8 > MAX_WEIGHTS_BYTES:
+        raise ConversionError("output safetensors exceeds container limits")
+    iterator = iter(tensors)
+    with path.open("xb") as stream:
+        stream.write(struct.pack("<Q", len(data)))
+        stream.write(data)
+        for expected in names:
+            item = next(iterator, None)
+            if item is None or item[0] != expected:
+                raise ConversionError("streamed tensor inventory differs from header")
+            name, tensor = item
+            dtype, shape = inventory[name]
+            if (
+                tensor.dtype != dtype
+                or tensor.shape != shape
+                or len(tensor.data) != math.prod(shape) * WIDTHS[dtype]
+            ):
+                raise ConversionError(f"streamed tensor shape/dtype differs: {name}")
+            stream.write(tensor.data)
+        if next(iterator, None) is not None:
+            raise ConversionError("streamed tensor inventory has extra entries")

@@ -9,6 +9,14 @@ from . import __version__
 from .bundle import convert_bundle, validate_bundle
 from .errors import ConversionError
 from .fixture import write_fixture
+from .jsonio import read_json
+from .paths import MANIFEST
+from .preparation import SCHEMA as PREPARED_SCHEMA
+from .preparation import (
+    package_mixed_bundle,
+    prepare_checkpoint,
+    validate_prepared_bundle,
+)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -44,6 +52,34 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument(
         "--classes", type=int, help="generate an independent dense classifier head"
     )
+    command = commands.add_parser(
+        "prepare-checkpoint", help="extract FP32 masters with protected-role precision"
+    )
+    command.add_argument("checkpoint", type=Path)
+    command.add_argument("output", type=Path)
+    command.add_argument("--config", type=Path, required=True)
+    command.add_argument("--tokenizer", type=Path, required=True)
+    command.add_argument(
+        "--precision", choices=("fp16", "int8", "nf4", "ternary"), required=True
+    )
+    command.add_argument(
+        "--mode", choices=("classifier", "pointer-encoder"), required=True
+    )
+    command.add_argument("--classes", type=int)
+    command.add_argument("--pointer-width", type=int)
+    command.add_argument("--source-model", required=True)
+    command.add_argument("--source-revision", required=True)
+    command.add_argument("--expected-tokenizer-sha256")
+    command = commands.add_parser(
+        "package-mixed-qat", help="copy a mixed QAT artifact byte-for-byte"
+    )
+    command.add_argument("weights", type=Path)
+    command.add_argument("output", type=Path)
+    command.add_argument("--config", type=Path, required=True)
+    command.add_argument("--tokenizer", type=Path, required=True)
+    command.add_argument("--classes", type=int, required=True)
+    command.add_argument("--source-model", required=True)
+    command.add_argument("--source-revision", required=True)
     return result
 
 
@@ -59,7 +95,37 @@ def main(argv: list[str] | None = None) -> int:
             print("synthetic source fixture written")
             return 0
         if arguments.command == "validate":
-            manifest = validate_bundle(arguments.bundle)
+            raw = read_json(arguments.bundle / MANIFEST)
+            validate = (
+                validate_prepared_bundle
+                if isinstance(raw, dict) and raw.get("schema") == PREPARED_SCHEMA
+                else validate_bundle
+            )
+            manifest = validate(arguments.bundle)
+        elif arguments.command == "prepare-checkpoint":
+            manifest = prepare_checkpoint(
+                arguments.checkpoint,
+                arguments.config,
+                arguments.tokenizer,
+                arguments.output,
+                precision=arguments.precision,
+                mode=arguments.mode,
+                classes=arguments.classes,
+                pointer_width=arguments.pointer_width,
+                source_model=arguments.source_model,
+                source_revision=arguments.source_revision,
+                expected_tokenizer_sha256=arguments.expected_tokenizer_sha256,
+            )
+        elif arguments.command == "package-mixed-qat":
+            manifest = package_mixed_bundle(
+                arguments.weights,
+                arguments.config,
+                arguments.tokenizer,
+                arguments.output,
+                classes=arguments.classes,
+                source_model=arguments.source_model,
+                source_revision=arguments.source_revision,
+            )
         else:
             manifest = convert_bundle(
                 arguments.source,

@@ -483,6 +483,21 @@ name = "minifield-engine-api"
 version = "0.1.0"
 
 [[package]]
+name = "minifield-evaluation"
+version = "0.1.0"
+dependencies = [
+ "minifield-backend-cpu",
+ "minifield-backend-metal",
+ "minifield-backend-wgpu",
+ "minifield-engine-api",
+ "minifield-executor-core",
+ "minifield-text-tokenizer",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "minifield-executor-core"
 version = "0.1.0"
 dependencies = [

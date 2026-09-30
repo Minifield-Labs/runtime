@@ -492,7 +492,7 @@ class CampaignTests(unittest.TestCase):
         script = self.root / "slow.py"
         script.write_text("import time\nprint('started', flush=True)\ntime.sleep(20)\n")
         with self.assertRaises(ProcessDeadline) as raised:
-            execute([sys.executable, str(script)], self.root, 0.1)
+            execute([sys.executable, str(script)], self.root, 1.0)
         self.assertEqual(raised.exception.stdout.strip(), "started")
 
     def test_full_controller_deadline_retains_partial_logs(self):
@@ -501,7 +501,9 @@ class CampaignTests(unittest.TestCase):
             addition=("import time\nprint('partial', flush=True)\ntime.sleep(20)"),
         )
         candidate = self.fixture.host("candidate")
-        self.fixture.manifest["cells"][0]["deadline_seconds"] = 0.5
+        # Allow interpreter startup under concurrent compilation; the 20-second
+        # fixture still exceeds the deadline. Production criteria are untouched.
+        self.fixture.manifest["cells"][0]["deadline_seconds"] = 3.0
         write_json(self.fixture.manifest_path, self.fixture.manifest)
         self.fixture.lock_path.unlink()
         self.fixture.lock = self.fixture.freeze(self.fixture.lock_path)

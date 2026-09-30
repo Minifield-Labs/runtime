@@ -4,8 +4,6 @@
 use super::*;
 use std::time::{Duration, Instant};
 
-mod int8_word_loader;
-
 #[test]
 fn every_registered_shader_validates_without_a_device() {
     for &kernel in Kernel::ALL {

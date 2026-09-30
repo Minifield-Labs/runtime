@@ -83,25 +83,61 @@ try {
     try { port = Number((await readFile(resolve(profile, "DevToolsActivePort"), "utf8")).split("\n")[0]); } catch { await delay(50); }
   }
   const url = `http://127.0.0.1:${server.address().port}/web/qualification.html`;
-  const page = await (await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`, { method: "PUT", signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) })).json();
+  const page = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT", signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) })).json();
   socket = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((done, fail) => {
     const timer = setTimeout(() => fail(new Error("Chrome debugger connection timed out")), Math.max(1, deadline - Date.now()));
     socket.addEventListener("open", () => { clearTimeout(timer); done(); }, { once: true });
     socket.addEventListener("error", error => { clearTimeout(timer); fail(error); }, { once: true });
   });
+  let commandId = 0;
   const call = (method, params) => new Promise((done, fail) => {
+    const id = ++commandId;
     const timeout = setTimeout(() => fail(new Error(`Browser qualification exceeded ${options.timeout}s`)), Math.max(1, deadline - Date.now()));
     const message = event => {
       const result = JSON.parse(event.data);
-      if (result.id !== 1) return;
+      if (result.id !== id) return;
       clearTimeout(timeout);
       socket.removeEventListener("message", message);
       result.error ? fail(new Error(JSON.stringify(result.error))) : done(result.result);
     };
     socket.addEventListener("message", message);
-    socket.send(JSON.stringify({ id: 1, method, params }));
+    socket.send(JSON.stringify({ id, method, params }));
   });
+  await call("Page.enable", {});
+  await call("Page.setLifecycleEventsEnabled", { enabled: true });
+  // Attach before navigating: evaluating the initial blank context while the
+  // qualification document loads can destroy the awaited evaluation promise.
+  // Match frame and loader IDs so a late about:blank load cannot release us.
+  let loadTimer;
+  let onLoad;
+  let navigation;
+  let finishLoad;
+  const completedLoads = new Set();
+  const loadKey = ({ frameId, loaderId }) => JSON.stringify([frameId, loaderId]);
+  const loaded = new Promise((done, fail) => {
+    finishLoad = done;
+    loadTimer = setTimeout(() => fail(new Error("Qualification page navigation timed out")), Math.max(1, deadline - Date.now()));
+    onLoad = event => {
+      const message = JSON.parse(event.data);
+      if (message.method !== "Page.lifecycleEvent" || message.params.name !== "load") return;
+      completedLoads.add(loadKey(message.params));
+      if (navigation && completedLoads.has(loadKey(navigation))) done();
+    };
+    socket.addEventListener("message", onLoad);
+  });
+  try {
+    const navigate = call("Page.navigate", { url }).then(result => {
+      if (result.errorText) throw new Error(`Qualification page navigation failed: ${result.errorText}`);
+      if (!result.loaderId) throw new Error("Qualification page navigation returned no document loader");
+      navigation = result;
+      if (completedLoads.has(loadKey(navigation))) finishLoad();
+    });
+    await Promise.all([navigate, loaded]);
+  } finally {
+    clearTimeout(loadTimer);
+    socket.removeEventListener("message", onLoad);
+  }
   const evaluated = await call("Runtime.evaluate", {
     expression: "(async () => { for (let i=0; i<2000 && !globalThis.__minifieldQualification; i++) await new Promise(r=>setTimeout(r,50)); if (!globalThis.__minifieldQualification) throw new Error('Qualification module did not load'); return await globalThis.__minifieldQualification; })()",
     awaitPromise: true, returnByValue: true,
@@ -139,6 +175,9 @@ try {
     await writeFile(resolve(options.out), JSON.stringify(report, null, 2) + "\n");
   }
   console.log(JSON.stringify({ passed: true, prompts: prompts.length, maxAbs, nativeComparison: report.nativeComparison, browser: report.browser, adapter: report.adapter }));
+} catch (error) {
+  if (stderr) console.error(`Chrome stderr:\n${stderr}`);
+  throw error;
 } finally {
   socket?.close();
   child.kill("SIGTERM");

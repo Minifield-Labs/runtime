@@ -8,9 +8,9 @@ const PAIR: bool = false;
 @group(0) @binding(6) var<storage, read> gate4: array<vec4<f32>>;
 @group(0) @binding(7) var<storage, read> up4: array<vec4<f32>>;
 fn input_value(i: u32) -> f32 { let g = gate[i]; return (g / (1.0 + exp(-g))) * up[i]; }
-fn weight_a4(row: u32, col: u32, k: u32) -> vec4<f32> {
-    let word = codes[row * (k / 4u) + col / 4u];
-    return int8_decode_word(word, scales[row * (k / 128u) + col / 128u]);
+fn weight_a(row: u32, col: u32, k: u32) -> f32 {
+    let word = codes[row * (k / 16u) + col / 16u];
+    return f32(i32((word >> ((col % 16u) * 2u)) & 3u) - 1) * scales[row * (k / 128u) + col / 128u];
 }
-fn weight_b4(row: u32, col: u32, k: u32) -> vec4<f32> { return vec4<f32>(0.0); }
+fn weight_b(row: u32, col: u32, k: u32) -> f32 { return 0.0; }
 fn store_output(i: u32, a: f32, b: f32) { dst[i] = a; }

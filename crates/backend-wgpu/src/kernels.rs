@@ -511,8 +511,24 @@ impl Kernel {
                     .replace("__STGW__", stg_w);
                 return ["enable f16;\n", WGSL_INDEX, lut, body, &tile].concat();
             }
-            let tile = include_str!("shaders/nf4_prefill.wgsl");
-            return [WGSL_INDEX, lut, body, tile].concat();
+            let int8 = matches!(
+                self,
+                Self::PackedGemmInt8
+                    | Self::PackedGemmPairInt8
+                    | Self::PackedSwigluGemmInt8
+                    | Self::PackedGemmPairSwigluInt8
+            );
+            let (decoder, loader) = if int8 {
+                (
+                    include_str!("shaders/int8_decode_word.wgsl"),
+                    include_str!("shaders/packed_tile_int8_word_loader.wgsl"),
+                )
+            } else {
+                ("", include_str!("shaders/packed_tile_scalar_loader.wgsl"))
+            };
+            let tile = include_str!("shaders/packed_prefill.wgsl")
+                .replace("__WEIGHT_TILE_LOADER__\n", loader);
+            return [WGSL_INDEX, lut, decoder, body, &tile].concat();
         }
         // Low-bit arithmetic experiments selected by MINI_LOWBITS_EXPERIMENT.
         // Scale-control variants reuse the control template with an unscaled

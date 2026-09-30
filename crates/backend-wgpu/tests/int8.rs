@@ -77,9 +77,9 @@ fn signed_bytes_match_independent_dense_math() {
             for row in 0..output_width {
                 let expected = (0..inner)
                     .map(|i| {
-                        activations[t * inner + i]
-                            * f32::from(i8::from_ne_bytes([codes[row * inner + i]]))
-                            * scales[row * 2 + i / 128]
+                        let weight = f32::from(i8::from_ne_bytes([codes[row * inner + i]]))
+                            * scales[row * 2 + i / 128];
+                        activations[t * inner + i] * weight
                     })
                     .sum::<f32>();
                 assert!(

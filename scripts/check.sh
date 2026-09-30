@@ -74,7 +74,7 @@ case "$mode" in
     gpu)
         [[ $# -eq 0 ]] || usage
         MINIFIELD_REQUIRE_GPU=1 cargo +1.89.0 test -p minifield-backend-wgpu \
-            --features experimental-kernels --locked --lib --test lowbits --test parity --test int8 --test encoder \
+            --features experimental-kernels --locked --lib --test lowbits --test parity --test int8 --test int8_word_loader --test encoder \
             -- --test-threads=1
         ;;
     gpu-metal)

@@ -48,7 +48,7 @@ Use [bundle qualification](tools/qualification/README.md) for GPU classification
 
 ## Supported execution
 
-The active model is LFM2 with the configuration subset validated by the loader. Dense F32/BF16 assets execute as F32. Packed `minifield.ternary.v1` and `minifield.nf4.v1` matrices use group-128 scales; mixed formats resolve per weight role. CPU and WebGPU implement the same `InferenceOps` contract.
+The active model is LFM2 with the configuration subset validated by the loader. Dense F32/BF16/F16 assets execute as F32. Packed `minifield.ternary.v1`, `minifield.nf4.v1`, and signed `minifield.int8.v1` matrices use group-128 scales; mixed formats resolve per weight role. CPU and WebGPU implement the same `InferenceOps` contract.
 
 The model file specifies weight representation. The runtime chooses compatible kernels from the backend, tensor shape, and explicit memory policy. Backend-private repacks stay in memory. Experimental kernels require a Cargo feature and typed selection. See [architecture](docs/architecture.md).
 

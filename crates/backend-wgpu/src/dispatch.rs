@@ -38,6 +38,10 @@ impl InferenceOps for WgpuBackend {
         WgpuBackend::resource_report(self)
     }
 
+    fn peak_accounted_bytes(&self) -> Result<u64> {
+        Ok(WgpuBackend::peak_accounted_bytes(self))
+    }
+
     fn advance_generation(&mut self) -> Result<()> {
         WgpuBackend::advance_generation(self)
     }

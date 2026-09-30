@@ -91,6 +91,8 @@ pub enum PackedWeightFormat {
     /// `minifield.nf4.v1`: two 4-bit NF4 level indices per byte (low nibble
     /// first), `w = NF4[code] * scale`.
     Nf4V1,
+    /// Signed two's-complement byte codes with group-128 scales.
+    Int8V1,
 }
 
 impl PackedWeightFormat {
@@ -101,6 +103,7 @@ impl PackedWeightFormat {
         match self {
             Self::TernaryV1 => 4,
             Self::Nf4V1 => 2,
+            Self::Int8V1 => 1,
         }
     }
 }
@@ -177,6 +180,31 @@ fn nf4_group_dot(codes: &[u8; 64], input: &[f32; 128]) -> f32 {
         hi += NF4_LEVELS[usize::from(byte >> 4)] * input[2 * index + 1];
     }
     lo + hi
+}
+
+/// Dot product of signed byte weights, with one scale per 128 values.
+/// The caller admits codes in [-127,127] and validates stream dimensions.
+///
+/// # Panics
+/// Panics when stream dimensions differ from the group-128 contract.
+#[must_use]
+pub fn int8_row_dot(codes: &[u8], scales: &[f32], input: &[f32]) -> f32 {
+    assert!(input.len().is_multiple_of(128));
+    assert_eq!(codes.len(), input.len());
+    assert_eq!(scales.len(), input.len() / 128);
+    let mut total = 0.0_f32;
+    for ((codes, input), scale) in codes
+        .chunks_exact(128)
+        .zip(input.chunks_exact(128))
+        .zip(scales)
+    {
+        let mut dot = 0.0_f32;
+        for (code, activation) in codes.iter().zip(input) {
+            dot += f32::from(i8::from_ne_bytes([*code])) * activation;
+        }
+        total += dot * scale;
+    }
+    total
 }
 
 #[cfg(test)]

@@ -343,6 +343,12 @@ impl<T> CpuCompletion<T> {
                 state.pending_result_bytes.checked_add(result_bytes).ok_or(
                     ExecutorError::Overflow("completion result bytes overflow u64"),
                 )?;
+            state.peak_accounted_bytes = state.peak_accounted_bytes.max(
+                state
+                    .live_bytes
+                    .checked_add(state.pending_result_bytes)
+                    .ok_or(ExecutorError::Overflow("CPU peak bytes overflow u64"))?,
+            );
         }
         Ok(Self {
             tracker: Some(tracker),

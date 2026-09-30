@@ -25,7 +25,7 @@ This is the strategy boundary. Keep model equations, stored encodings, platform 
 | Decision | Source | Owner |
 | --- | --- | --- |
 | Architecture and tensor roles | Validated config and inventory | Model loader/executor |
-| Dense, ternary, or NF4 representation | Tensor descriptors and format metadata | Loader/encoding contract |
+| Dense, ternary, NF4, or signed INT8 representation | Tensor descriptors and format metadata | Loader/encoding contract |
 | CPU or WebGPU implementation | Host platform and explicit backend construction | Host |
 | Kernel and optional repack | Encoding, shape, capabilities, resource policy | Backend and executor |
 
@@ -35,7 +35,7 @@ Keep the existing trait and typed enums until a real extension needs another int
 
 ## Stored formats and internal layouts
 
-Dense F32/BF16 assets become F32 backend values. Packed ternary and NF4 store U8 code streams with F16 group-128 scales. Ternary uses 2 bits per code; NF4 uses 4. Reserved ternary codes, invalid shapes/scales, unknown formats, and incompatible inventories reject during admission.
+Dense F32/BF16/F16 assets become F32 backend values. Packed ternary, NF4, and signed INT8 store U8 code streams with F16 group-128 scales. Ternary uses 2 bits per code; NF4 uses 4; INT8 uses one two's-complement byte. Reserved ternary codes and signed INT8 -128, invalid shapes/scales, unknown formats, and incompatible inventories reject during admission.
 
 Known safetensors `format=pt` and absent format metadata admit dense assets. Custom product markers aren't inferred as dense. Such exports need explicit offline normalization into a supported format.
 
@@ -64,7 +64,7 @@ Every buffer belongs to one backend identity and generation. Cross-backend or st
 
 WebGPU accounts physical buffer classes, alignment padding, pooled allocations, readback staging, retained results, and fixed host/device uniform storage. A dropped allocation remains charged while pending work or a pool owns it. Safe completed pools may be evicted under budget pressure.
 
-Resource reports classify logical live weights/caches and place physical overhead in scratch. Their total describes backend-accounted storage at that moment. Driver memory, pipelines, process RSS, and an overall process peak need separate instrumentation.
+Resource reports classify logical live weights/caches and place physical overhead in scratch. Their total describes backend-accounted storage at that moment. `peak_accounted_bytes` retains the highest classified total, including completion-owned results. CPU internal mathematical vectors, driver memory, pipelines, and process RSS need separate instrumentation.
 
 Input capacity, selector width, and constraint masks are checked before recording work where possible. Invalid caller input returns an error while preserving the usable executor. A backend failure after partial recording may quarantine it.
 

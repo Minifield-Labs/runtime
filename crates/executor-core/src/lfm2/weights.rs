@@ -35,6 +35,9 @@ pub enum Lfm2WeightFormat {
     /// low nibble first) plus a `<tensor>.scales` F16 [rows, k/128] tensor.
     /// Norm and convolution-kernel roles stay dense.
     Nf4V1,
+    /// Signed byte codes U8 [rows, k] in two's-complement order, with
+    /// F16 [rows, k/128] scales. The value -128 is reserved.
+    Int8V1,
     /// `minifield.mixed.v1`: per-tensor quantization declared in the
     /// `tensor_quantization` metadata map. Listed tensors carry their named
     /// scheme (`ternary-v1`, `nf4-v1`); unlisted matmul roles stay dense.
@@ -47,7 +50,7 @@ impl Lfm2WeightFormat {
     /// [`Lfm2WeightPlan::role_quant`].
     #[must_use]
     pub const fn is_packed(self) -> bool {
-        matches!(self, Self::TernaryV1 | Self::Nf4V1)
+        matches!(self, Self::TernaryV1 | Self::Nf4V1 | Self::Int8V1)
     }
 }
 
@@ -65,6 +68,7 @@ pub fn detect_lfm2_weight_format(asset: &[u8]) -> Result<Lfm2WeightFormat> {
             "pt" => Ok(Lfm2WeightFormat::Dense),
             "minifield.ternary.v1" => Ok(Lfm2WeightFormat::TernaryV1),
             "minifield.nf4.v1" => Ok(Lfm2WeightFormat::Nf4V1),
+            "minifield.int8.v1" => Ok(Lfm2WeightFormat::Int8V1),
             "minifield.mixed.v1" => Ok(Lfm2WeightFormat::MixedV1),
             _ => Err(ExecutorError::Unsupported(
                 "unrecognized LFM2 weight format",
@@ -108,10 +112,11 @@ pub fn parse_lfm2_tensor_quantization(
             let level = match level.as_str() {
                 Some("ternary-v1") => Lfm2WeightFormat::TernaryV1,
                 Some("nf4-v1") => Lfm2WeightFormat::Nf4V1,
+                Some("int8-v1") => Lfm2WeightFormat::Int8V1,
                 Some("dense" | "bf16" | "f16" | "f32") => Lfm2WeightFormat::Dense,
                 _ => {
                     return Err(ExecutorError::InvalidArgument(
-                        "tensor_quantization level must be ternary-v1, nf4-v1, or a dense dtype",
+                        "tensor_quantization level must be ternary-v1, nf4-v1, int8-v1, or a dense dtype",
                     ));
                 }
             };
@@ -227,6 +232,7 @@ impl Lfm2WeightPlan {
         let source_dtype = match config.weight_storage_dtype {
             Lfm2StorageDType::F32 => StorageDType::F32,
             Lfm2StorageDType::BF16 => StorageDType::BF16,
+            Lfm2StorageDType::F16 => StorageDType::F16,
         };
         let hidden = u64::from(config.hidden_size);
         let intermediate = u64::from(config.effective_intermediate_size);
@@ -502,6 +508,7 @@ impl Lfm2WeightPlan {
         let dtype = match result.config.weight_storage_dtype {
             Lfm2StorageDType::F32 => StorageDType::F32,
             Lfm2StorageDType::BF16 => StorageDType::BF16,
+            Lfm2StorageDType::F16 => StorageDType::F16,
         };
         push(
             &mut result.plan.requirements,
@@ -594,7 +601,7 @@ impl Lfm2WeightPlan {
 
     /// Base requirement name for a role, without checking whether that role
     /// exists in this plan's stored format.
-    fn role_base_name(&self, role: Lfm2WeightRole) -> Result<String> {
+    pub(crate) fn role_base_name(&self, role: Lfm2WeightRole) -> Result<String> {
         let name = match role {
             Lfm2WeightRole::TokenEmbedding => "token_embedding".to_owned(),
             Lfm2WeightRole::TiedLmHead => "tied_lm_head".to_owned(),
@@ -733,6 +740,7 @@ fn push_matmul(
         }
         Lfm2WeightFormat::TernaryV1 => 4,
         Lfm2WeightFormat::Nf4V1 => 2,
+        Lfm2WeightFormat::Int8V1 => 1,
         Lfm2WeightFormat::MixedV1 => {
             return Err(ExecutorError::InvalidArgument(
                 "mixed.v1 must resolve to a per-tensor scheme",
@@ -758,7 +766,11 @@ fn push_matmul(
         &format!("{tensor_name}.codes"),
         StorageDType::U8,
         &[rows, columns / weights_per_byte],
-        WeightLayout::Identity,
+        if quant == Lfm2WeightFormat::Int8V1 {
+            WeightLayout::SignedInt8Codes
+        } else {
+            WeightLayout::Identity
+        },
         tied_codes.as_deref(),
     )?;
     push(

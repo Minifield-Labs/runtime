@@ -1,6 +1,6 @@
 # WebGPU backend
 
-`InferenceOps` over wgpu 30, with F32 arithmetic, canonical ternary/NF4 packed weights, and optional ternary LUT2 repacks. The same backend runs natively and through browser WebGPU.
+`InferenceOps` over wgpu 30, with F32 arithmetic, canonical ternary/NF4/signed-INT8 packed weights, and optional ternary LUT2 repacks. The same backend runs natively and through browser WebGPU.
 
 ## Layout
 
@@ -20,7 +20,9 @@ Uniform parameters use a bounded host/device ring. Ring wrap submits recorded wo
 
 Construct with `WgpuOptions` for diagnostics or experimental NF4 staging precision. Default staging is F32. F16 modes need the experimental feature and adapter SHADER_F16 support. Core code doesn't parse environment variables.
 
-`dispatch_counts`, `stats`, `adapter_info`, and `resource_report` provide inspectable evidence. Physical size classes, padding, pools, staging, retained result buffers, and fixed uniforms remain charged while owned. Logical weights/caches are classified separately; extra physical storage is reported as scratch. GPU driver/pipeline allocations and process RSS aren't measured by this report.
+`dispatch_counts`, `stats`, `adapter_info`, `resource_report`, and `peak_accounted_bytes` provide inspectable evidence. Physical size classes, padding, pools, staging, retained result buffers, and fixed uniforms remain charged while owned. Logical weights/caches are classified separately; extra physical storage is reported as scratch. GPU driver/pipeline allocations and process RSS aren't measured by this report.
+
+INT8 uses its own decode headers with the shared F32 GEMM template at every row count. Its group-128 scales and signed byte layout are explicit, and experimental F16 staging doesn't change this arithmetic path.
 
 Raw packed APIs accept canonical codes only. LUT2/PN4 buffers have separate layout tags. Small-row paths retain canonical weights, while qualified shapes can use the explicitly admitted repack. The executor's duplicate-weight budget controls repack admission.
 

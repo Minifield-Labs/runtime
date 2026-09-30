@@ -450,6 +450,7 @@ dependencies = [
  "minifield-backend-cpu",
  "minifield-engine-api",
  "minifield-executor-core",
+ "naga",
  "pollster",
  "portable-atomic",
  "sha2",

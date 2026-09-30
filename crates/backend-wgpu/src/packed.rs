@@ -11,7 +11,7 @@ impl WgpuBackend {
     /// stream format). `scales` is always `[rows, k/128]`, so `k` comes from
     /// the scales width; the codes width then selects the decode
     /// unambiguously: `k/4` bytes is `minifield.ternary.v1`, `k/2` bytes is
-    /// `minifield.nf4.v1`.
+    /// `minifield.nf4.v1`, and `k` bytes is signed `minifield.int8.v1`.
     pub(super) fn check_packed_operands(
         &self,
         codes: &WgpuBuffer,
@@ -48,9 +48,11 @@ impl WgpuBackend {
             PackedStreamFormat::TernaryV1
         } else if code_width == inner / 2 {
             PackedStreamFormat::Nf4V1
+        } else if code_width == inner {
+            PackedStreamFormat::Int8V1
         } else {
             return Err(ExecutorError::InvalidShape(
-                "packed code width is neither inner/4 (ternary) nor inner/2 (nf4)",
+                "packed code width must be inner/4 (ternary), inner/2 (nf4), or inner (int8)",
             ));
         };
         if scales_shape.dim(0)? != codes_shape.dim(0)? {
@@ -62,9 +64,9 @@ impl WgpuBackend {
     }
 
     /// Packed linear: input [m, k] times the dequantized weight [n, k]
-    /// carried as packed codes and per-128-group scales (`minifield.ternary.v1`
-    /// or `minifield.nf4.v1`, inferred from the codes width). One workgroup
-    /// reduces each output element.
+    /// carried as canonical ternary, NF4, or signed INT8 codes and group-128
+    /// scales. Dispatch selects GEMV or a shared-memory GEMM tile.
+    #[allow(clippy::too_many_lines)] // Keep admission and the 3 dispatch parameter layouts together.
     pub fn packed_linear(
         &self,
         output: &mut WgpuBuffer,
@@ -111,11 +113,12 @@ impl WgpuBackend {
         // dimension is 4-aligned; the kernel flag falls back to scalar reads.
         let vec_ok = u32::from(inner % 4 == 0);
         // Multi-token tiles amortize each decode across the input tile;
-        // m == 1 keeps the single-token kernel. Ternary shares the same
-        // 64x32 K16 GEMM template through its own decode header.
-        if rows >= 96 {
+        // ternary/NF4 keep their qualified short-row kernels below 96 rows.
+        // INT8 uses the 64x32 K16 GEMM baseline for every row count.
+        if rows >= 96 || format == PackedStreamFormat::Int8V1 {
             let kernel = match format {
                 PackedStreamFormat::Nf4V1 => Kernel::PackedGemmNf4,
+                PackedStreamFormat::Int8V1 => Kernel::PackedGemmInt8,
                 PackedStreamFormat::TernaryV1 => Kernel::PackedGemmTernary,
             };
             let columns = output_width.div_ceil(32);
@@ -159,6 +162,11 @@ impl WgpuBackend {
         let kernel = match format {
             PackedStreamFormat::TernaryV1 => Kernel::PackedGemv,
             PackedStreamFormat::Nf4V1 => Kernel::PackedGemvNf4,
+            PackedStreamFormat::Int8V1 => {
+                return Err(ExecutorError::BackendFailure(
+                    "signed INT8 must dispatch through its GEMM parameter layout",
+                ));
+            }
         };
         self.device.dispatch(
             kernel,
@@ -177,7 +185,7 @@ impl WgpuBackend {
         )
     }
 
-    /// Packed gather: dequantize the selected weight rows (ternary or NF4,
+    /// Packed gather: dequantize selected ternary, NF4, or signed INT8 rows (format
     /// inferred from the codes width) into an f32 [ids, k] output.
     #[allow(clippy::needless_pass_by_value)]
     pub fn packed_gather_rows(
@@ -204,6 +212,7 @@ impl WgpuBackend {
         let kernel = match format {
             PackedStreamFormat::TernaryV1 => Kernel::PackedGather,
             PackedStreamFormat::Nf4V1 => Kernel::PackedGatherNf4,
+            PackedStreamFormat::Int8V1 => Kernel::PackedGatherInt8,
         };
         let result = self.device.dispatch(
             kernel,
@@ -222,7 +231,7 @@ impl WgpuBackend {
         result
     }
 
-    /// Paired packed ternary linear over one shared input: workgroup (i, j)
+    /// Paired packed linear over one shared input: workgroup (i, j)
     /// computes both output elements, halving dispatches for projection pairs
     /// that share an activation (K/V, gate/up).
     #[allow(clippy::too_many_arguments)]
@@ -289,9 +298,10 @@ impl WgpuBackend {
         // `x4` rebinds the activation as vec4 for 128-bit loads when the inner
         // dimension is 4-aligned; the kernel flag falls back to scalar reads.
         let vec_ok = u32::from(inner % 4 == 0);
-        if rows >= 96 {
+        if rows >= 96 || format == PackedStreamFormat::Int8V1 {
             let kernel = match format {
                 PackedStreamFormat::Nf4V1 => Kernel::PackedGemmPairNf4,
+                PackedStreamFormat::Int8V1 => Kernel::PackedGemmPairInt8,
                 PackedStreamFormat::TernaryV1 => Kernel::PackedGemmPairTernary,
             };
             let columns = output_width.div_ceil(32);
@@ -337,6 +347,11 @@ impl WgpuBackend {
         let kernel = match format {
             PackedStreamFormat::TernaryV1 => Kernel::PackedGemvPair,
             PackedStreamFormat::Nf4V1 => Kernel::PackedGemvPairNf4,
+            PackedStreamFormat::Int8V1 => {
+                return Err(ExecutorError::BackendFailure(
+                    "signed INT8 must dispatch through its GEMM parameter layout",
+                ));
+            }
         };
         self.device.dispatch(
             kernel,
@@ -355,9 +370,10 @@ impl WgpuBackend {
         )
     }
 
-    /// Packed linear over an on-the-fly `SiLU(gate) * up` activation (ternary
-    /// or NF4, inferred from the codes width): the down projection consumes
+    /// Packed linear over an on-the-fly `SiLU(gate) * up` activation:
+    /// ternary, NF4, and signed INT8 decode from codes width. The down projection consumes
     /// the activation without a materialized intermediate tensor.
+    #[allow(clippy::too_many_lines)] // Keep admission and finite dispatch choices together.
     pub fn packed_swiglu_linear(
         &self,
         output: &mut WgpuBuffer,
@@ -404,9 +420,10 @@ impl WgpuBackend {
         // `gate4`/`up4` rebind the operands as vec4 when the inner dimension is
         // 4-aligned; the kernel flag falls back to scalar reads.
         let vec_ok = u32::from(inner % 4 == 0);
-        if rows >= 96 {
+        if rows >= 96 || format == PackedStreamFormat::Int8V1 {
             let kernel = match format {
                 PackedStreamFormat::Nf4V1 => Kernel::PackedSwigluGemmNf4,
+                PackedStreamFormat::Int8V1 => Kernel::PackedSwigluGemmInt8,
                 PackedStreamFormat::TernaryV1 => Kernel::PackedSwigluGemmTernary,
             };
             let columns = output_width.div_ceil(32);
@@ -452,6 +469,11 @@ impl WgpuBackend {
         let kernel = match format {
             PackedStreamFormat::TernaryV1 => Kernel::PackedSwigluGemv,
             PackedStreamFormat::Nf4V1 => Kernel::PackedSwigluGemvNf4,
+            PackedStreamFormat::Int8V1 => {
+                return Err(ExecutorError::BackendFailure(
+                    "signed INT8 must dispatch through its GEMM parameter layout",
+                ));
+            }
         };
         self.device.dispatch(
             kernel,
@@ -525,6 +547,7 @@ impl WgpuBackend {
         let kernel = match format {
             PackedStreamFormat::TernaryV1 => Kernel::PackedGemmPairSwiglu,
             PackedStreamFormat::Nf4V1 => Kernel::PackedGemmPairSwigluNf4,
+            PackedStreamFormat::Int8V1 => Kernel::PackedGemmPairSwigluInt8,
         };
         let columns = output_width.div_ceil(32);
         let groups = rows

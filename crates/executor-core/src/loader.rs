@@ -106,6 +106,8 @@ impl StorageDType {
 pub enum WeightLayout {
     /// Stored row-major dimensions are already the backend operator dimensions.
     Identity,
+    /// Canonical signed byte stream. Shapes stay unchanged; -128 is reserved.
+    SignedInt8Codes,
     /// Stored convolution `[hidden, 1, width]` becomes packed operator `[hidden, width]`.
     ConvHiddenSingletonWidth,
 }
@@ -114,6 +116,14 @@ impl WeightLayout {
     fn output_shape(self, source: Shape) -> Result<Shape> {
         match self {
             Self::Identity => Ok(source),
+            Self::SignedInt8Codes => {
+                if source.rank() != 2 || source.dim(1)? == 0 || source.dim(1)? % 128 != 0 {
+                    return Err(ExecutorError::InvalidShape(
+                        "INT8 codes require rank two and a nonzero group-128 width",
+                    ));
+                }
+                Ok(source)
+            }
             Self::ConvHiddenSingletonWidth => {
                 if source.rank() != 3 || source.dim(1)? != 1 {
                     return Err(ExecutorError::InvalidShape(
@@ -178,6 +188,13 @@ impl WeightPlan {
             {
                 return Err(ExecutorError::InvalidArgument(
                     "weight role name or rank exceeds configured loader limit",
+                ));
+            }
+            if requirement.layout == WeightLayout::SignedInt8Codes
+                && requirement.storage_dtype != StorageDType::U8
+            {
+                return Err(ExecutorError::InvalidDType(
+                    "signed INT8 code layout requires U8 storage",
                 ));
             }
             let _ = requirement.layout.output_shape(requirement.source_shape)?;
@@ -1055,6 +1072,14 @@ where
                     self.report.decoded_f32_bytes = decoded_bytes;
                     self.hasher.update(bytes.as_slice());
                     let (operator_shape, buffer) = if tensor.storage_dtype == StorageDType::U8 {
+                        if requirement.layout == WeightLayout::SignedInt8Codes
+                            && bytes.as_slice().contains(&128)
+                        {
+                            return Err(LoaderError {
+                                stage: LoaderStage::TensorDecode,
+                                cause: ExecutorError::InvalidArgument("INT8 -128 code is reserved"),
+                            });
+                        }
                         let operator_shape = requirement
                             .layout
                             .output_shape(tensor.source_shape)

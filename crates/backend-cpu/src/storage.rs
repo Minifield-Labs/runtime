@@ -59,6 +59,7 @@ pub(super) struct Tracker {
     pub(super) limits: ResourceLimits,
     pub(super) next_allocation: u64,
     pub(super) live_bytes: u64,
+    pub(super) peak_accounted_bytes: u64,
     pub(super) live_by_class: ClassBytes,
     pub(super) pending_retained_bytes: u64,
     pub(super) pending_retained_by_class: ClassBytes,
@@ -189,6 +190,7 @@ impl CpuBackend {
             limits,
             next_allocation: 1,
             live_bytes: 0,
+            peak_accounted_bytes: 0,
             live_by_class: ClassBytes::default(),
             pending_retained_bytes: 0,
             pending_retained_by_class: ClassBytes::default(),
@@ -218,6 +220,11 @@ impl CpuBackend {
     #[must_use]
     pub const fn capabilities(&self) -> BackendCapabilities {
         self.capabilities
+    }
+
+    #[must_use]
+    pub fn peak_accounted_bytes(&self) -> u64 {
+        self.tracker.borrow().peak_accounted_bytes
     }
 
     #[must_use]
@@ -442,6 +449,9 @@ impl CpuBackend {
         tracker
             .live_by_class
             .checked_add(class, layout.byte_extent())?;
+        tracker.peak_accounted_bytes = tracker
+            .peak_accounted_bytes
+            .max(tracker_owned_bytes(&tracker)?);
         let descriptor = BufferDescriptor {
             backend: tracker.identity,
             allocation,
@@ -526,6 +536,9 @@ impl CpuBackend {
         tracker
             .live_by_class
             .checked_add(class, layout.byte_extent())?;
+        tracker.peak_accounted_bytes = tracker
+            .peak_accounted_bytes
+            .max(tracker_owned_bytes(&tracker)?);
         let descriptor = BufferDescriptor {
             backend: tracker.identity,
             allocation,

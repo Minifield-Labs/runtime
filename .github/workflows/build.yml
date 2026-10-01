@@ -157,6 +157,14 @@ jobs:
           : "${AWS_ACCESS_KEY_ID:?Set the R2_ACCESS_KEY_ID repository secret}"
           : "${AWS_SECRET_ACCESS_KEY:?Set the R2_SECRET_ACCESS_KEY repository secret}"
           aws --version
+      - name: Choose release version
+        id: release
+        run: |
+          version="$(TZ=America/Toronto date +%Y.%m.%d).$GITHUB_RUN_NUMBER"
+          if [ "$GITHUB_RUN_ATTEMPT" -gt 1 ]; then
+            version="$version-r$GITHUB_RUN_ATTEMPT"
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
       - name: Download this build's runtime packages
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -164,6 +172,8 @@ jobs:
           path: artifacts
           merge-multiple: true
       - name: Prepare CDN assets and package checksums
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           mkdir -p extracted cloudflare
           tar -xzf artifacts/minifield-web-wasm32-unknown-unknown.tar.gz \
@@ -171,13 +181,16 @@ jobs:
           test "$(cat extracted/REVISION)" = "$GITHUB_SHA"
           cp -R extracted/pkg/. cloudflare/
           cp extracted/LICENSE extracted/THIRD_PARTY.md extracted/REVISION cloudflare/
+          printf '%s\n' "$RELEASE_VERSION" > cloudflare/VERSION
           test -s cloudflare/minifield_web_demo.js
           test -s cloudflare/minifield_web_demo_bg.wasm
           (cd artifacts && sha256sum ./*.tar.gz > SHA256SUMS)
       - name: Upload assets and packages to Cloudflare
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           endpoint="https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com"
-          prefix="minifield-runtime/releases/$GITHUB_SHA/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          prefix="minifield-runtime/releases/$RELEASE_VERSION"
           destination="s3://$R2_BUCKET/$prefix"
           cache_control='public,max-age=31536000,immutable'
           aws s3 cp cloudflare/ "$destination/" --recursive --exclude '*.wasm' \

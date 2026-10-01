@@ -15,7 +15,9 @@ scripts/check.sh ci
 
 `ci` runs portable tests, lints, contracts, JavaScript, and converter checks. GPU and browser qualification require actual hardware. See [the development procedure](docs/procedure.md).
 
-The [build workflow](.github/workflows/build.yml) builds release runtime libraries on Linux, macOS, and Windows for x64 and ARM64 after changes land on `main`. It publishes the browser JS/WASM files and all target packages to the Cloudflare R2 bucket `minifield-cdn` under `minifield-runtime/releases/<commit>/<run>-<attempt>/`, with archive checksums, licenses, and the source revision.
+The [build workflow](.github/workflows/build.yml) builds release runtime libraries on Linux, macOS, and Windows for x64 and ARM64 after changes land on `main`. It publishes the browser JS/WASM files and all target packages to the Cloudflare R2 bucket `minifield-cdn` under `minifield-runtime/releases/<version>/`, with archive checksums, licenses, and the source revision.
+
+Versions use `YYYY.MM.DD.<build-number>`, for example `2026.09.30.42`, using the America/Toronto date and GitHub's increasing workflow run number. Reruns append `-r2`, `-r3`, and so on. Each release includes `VERSION` and `REVISION` files.
 
 The Actions summary contains the release location; temporary Actions copies expire after 7 days. The workflow can also be run manually; Cloudflare publishing runs only for `main`.
 

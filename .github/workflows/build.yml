@@ -3,6 +3,9 @@ name: Build runtime
 on:
   push:
     branches: [main]
+  pull_request:
+    paths:
+      - .github/workflows/build.yml
   workflow_dispatch:
 
 permissions:
@@ -108,11 +111,11 @@ jobs:
           test -n "$version"
           archive="wasm-bindgen-$version-x86_64-unknown-linux-musl.tar.gz"
           release="https://github.com/wasm-bindgen/wasm-bindgen/releases/download/$version"
-          mkdir -p "$RUNNER_TEMP/wasm-bindgen"
-          curl --fail --location --retry 3 "$release/$archive" -o "$RUNNER_TEMP/$archive"
+          mkdir -p "$RUNNER_TEMP/wasm-bindgen" "$RUNNER_TEMP/gh-release"
+          curl --fail --location --retry 3 "$release/$archive" -o "$RUNNER_TEMP/gh-release/$archive"
           curl --fail --location --retry 3 "$release/$archive.sha256sum" -o "$RUNNER_TEMP/$archive.sha256sum"
           (cd "$RUNNER_TEMP" && sha256sum --check "$archive.sha256sum")
-          tar -xzf "$RUNNER_TEMP/$archive" --strip-components=1 -C "$RUNNER_TEMP/wasm-bindgen"
+          tar -xzf "$RUNNER_TEMP/gh-release/$archive" --strip-components=1 -C "$RUNNER_TEMP/wasm-bindgen"
           echo "$RUNNER_TEMP/wasm-bindgen" >> "$GITHUB_PATH"
       - name: Generate browser bindings and package
         run: |

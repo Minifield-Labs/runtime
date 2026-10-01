@@ -1,0 +1,132 @@
+name: Build runtime
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-build-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+  CARGO_PROFILE_RELEASE_STRIP: symbols
+
+jobs:
+  native:
+    name: Native (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            executable-suffix: ""
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            executable-suffix: ""
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            executable-suffix: ""
+          - target: aarch64-apple-darwin
+            runner: macos-15
+            executable-suffix: ""
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+            executable-suffix: .exe
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            executable-suffix: .exe
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build runtime libraries and native CLI
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: >-
+          cargo build --locked --release --target "$BUILD_TARGET"
+          --workspace --exclude minifield-web-demo --exclude minifield-evaluation
+      - name: Package native CLI
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          EXECUTABLE_SUFFIX: ${{ matrix.executable-suffix }}
+        run: |
+          package="minifield-infer-$BUILD_TARGET"
+          mkdir -p "dist/$package"
+          cp "target/$BUILD_TARGET/release/minifield-infer$EXECUTABLE_SUFFIX" "dist/$package/"
+          cp LICENSE THIRD_PARTY.md "dist/$package/"
+          printf '%s\n' "$GITHUB_SHA" > "dist/$package/REVISION"
+          tar -czf "dist/$package.tar.gz" -C dist "$package"
+      - name: Upload native CLI
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: minifield-infer-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  wasm:
+    name: Browser (wasm32-unknown-unknown)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # wasm-bindgen needs symbol names while generating the JavaScript bindings.
+      CARGO_PROFILE_RELEASE_STRIP: debuginfo
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Build browser runtime
+        run: >-
+          cargo build --locked --release --target wasm32-unknown-unknown
+          -p minifield-web-demo
+      - name: Install matching wasm-bindgen CLI
+        run: |
+          version=$(sed -nE 's/^wasm-bindgen = "=([^"]+)"/\1/p' web/Cargo.toml)
+          test -n "$version"
+          archive="wasm-bindgen-$version-x86_64-unknown-linux-musl.tar.gz"
+          release="https://github.com/wasm-bindgen/wasm-bindgen/releases/download/$version"
+          mkdir -p "$RUNNER_TEMP/wasm-bindgen"
+          curl --fail --location --retry 3 "$release/$archive" -o "$RUNNER_TEMP/$archive"
+          curl --fail --location --retry 3 "$release/$archive.sha256sum" -o "$RUNNER_TEMP/$archive.sha256sum"
+          (cd "$RUNNER_TEMP" && sha256sum --check "$archive.sha256sum")
+          tar -xzf "$RUNNER_TEMP/$archive" --strip-components=1 -C "$RUNNER_TEMP/wasm-bindgen"
+          echo "$RUNNER_TEMP/wasm-bindgen" >> "$GITHUB_PATH"
+      - name: Generate browser bindings and package
+        run: |
+          package=minifield-web-wasm32-unknown-unknown
+          wasm-bindgen --target web --out-dir "dist/$package/pkg" \
+            target/wasm32-unknown-unknown/release/minifield_web_demo.wasm
+          cp LICENSE THIRD_PARTY.md "dist/$package/"
+          printf '%s\n' "$GITHUB_SHA" > "dist/$package/REVISION"
+          tar -czf "dist/$package.tar.gz" -C dist "$package"
+      - name: Upload browser runtime
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: minifield-web-wasm32-unknown-unknown
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

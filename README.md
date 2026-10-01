@@ -15,6 +15,8 @@ scripts/check.sh ci
 
 `ci` runs portable tests, lints, contracts, JavaScript, and converter checks. GPU and browser qualification require actual hardware. See [the development procedure](docs/procedure.md).
 
+The [build workflow](.github/workflows/build.yml) builds release runtime libraries on Linux, macOS, and Windows for x64 and ARM64 after changes land on `main`. Downloadable artifacts contain the native CPU CLI or the browser WASM runtime with JavaScript bindings, plus licenses and the source revision. Artifacts expire after 7 days; the workflow can also be run manually from Actions.
+
 Run a local language-model bundle on the CPU:
 
 ```sh

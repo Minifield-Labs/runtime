@@ -9,6 +9,7 @@ members = [
     "crates/text-tokenizer",
     "crates/text-generation",
     "crates/infer-cli",
+    "crates/runtime-telemetry",
     "crates/evaluation-host",
     "crates/json-grammar",
     "crates/decoding-protocol",

@@ -23,6 +23,7 @@ jobs:
           version: "0.11.30"
       - name: Install locked check dependencies
         run: |
+          npm ci
           uv sync --locked --project tools/qualification
           uv sync --locked --project tools/converters
       - name: Locked workspace, contracts, JavaScript, and Python checks

@@ -2,7 +2,10 @@
 
 use std::io::{self, Write};
 
-use minifield_infer::{parse_args, run_with_io};
+use minifield_infer::{parse_args, run_with_reporter};
+
+#[cfg(not(target_arch = "wasm32"))]
+mod telemetry;
 
 fn main() -> std::process::ExitCode {
     match run() {
@@ -19,6 +22,14 @@ fn run() -> Result<(), minifield_infer::CliError> {
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut output = stdout.lock();
-    let _ = run_with_io(&options, stdin.lock(), &mut output)?;
+    let mut record = None;
+    let result = run_with_reporter(&options, stdin.lock(), &mut output, |value| {
+        record = Some(value);
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(record) = record {
+        telemetry::report(record);
+    }
+    result?;
     Ok(())
 }

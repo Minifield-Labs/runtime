@@ -83,8 +83,7 @@ case "$mode" in
         [[ $# -ge 1 ]] || usage
         require node
         require wasm-bindgen
-        cargo +1.89.0 build --release --locked -p minifield-web-demo --target wasm32-unknown-unknown
-        wasm-bindgen target/wasm32-unknown-unknown/release/minifield_web_demo.wasm --target web --out-dir web/pkg
+        node scripts/build_web.mjs
         node scripts/check_browser.mjs "$@"
         ;;
     qualify|bench)

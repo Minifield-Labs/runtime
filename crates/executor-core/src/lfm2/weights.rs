@@ -528,6 +528,12 @@ impl Lfm2WeightPlan {
         &self.config
     }
 
+    /// Explicit classifier width, or no classifier head for language models.
+    #[must_use]
+    pub const fn classes(&self) -> Option<u32> {
+        self.classes
+    }
+
     #[must_use]
     pub const fn format(&self) -> Lfm2WeightFormat {
         self.format

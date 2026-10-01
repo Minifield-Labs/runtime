@@ -5,13 +5,17 @@ The browser harness loads LFM2 assets, performs generation/classification in Rus
 ## Build and run
 
 ```sh
-cargo build --target wasm32-unknown-unknown -p minifield-web-demo --release --locked
+npm ci
 cargo install wasm-bindgen-cli --version 0.2.127 --locked
-wasm-bindgen --target web --out-dir web/pkg target/wasm32-unknown-unknown/release/minifield_web_demo.wasm
+npm run build:web
 python3 -m http.server 8642 --bind 127.0.0.1
 ```
 
 The CLI version must match `web/Cargo.toml`. `web/pkg/` is ignored generated output.
+Deploy `minifield_web_demo.js` and `minifield_web_demo_bg.wasm` together. The JavaScript
+includes telemetry and has no external module imports. For blob URL imports in a
+Worker, pass WASM bytes to `init({ module_or_path: bytes })`. TypeScript definitions
+and `assets.json` are optional build metadata.
 
 Put a local bundle at `models/demo/`, or open `http://localhost:8642/web/index.html?bundle=../models/your-model`. The bundle contains `config.json`, `model.safetensors`, and `tokenizer/tokenizer.json`. Serve only a directory whose contents you're willing to expose locally.
 
@@ -34,6 +38,12 @@ Compilation uses `scripts/check.sh wasm`. JavaScript helper checks use `npm test
 The runner uses official [Chrome headless](https://developer.chrome.com/docs/automation-and-testing/headless) and [DevTools Runtime](https://chromedevtools.github.io/devtools-protocol/tot/Runtime/) interfaces.
 
 ## Binding behavior
+
+Each inference call reports a content-free terminal record. Configure origin/environment or
+disable delivery with `configure_telemetry`; flush before terminating a Worker with
+`flush_telemetry`. See [runtime telemetry](../docs/runtime-telemetry.md) for the complete record
+and deployment settings. Build with `npm run build:web` and distribute the paired
+JavaScript and WASM files from `web/pkg/`.
 
 - Async backend creation and cooperative completion polling keep the browser event loop active. `__minifieldYield` uses a queued MessageChannel scheduler; every concurrent waiter resolves.
 - `load` and `generate` run bounded greedy language-model inference with incremental token callbacks.

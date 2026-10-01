@@ -171,7 +171,14 @@ where
     E: TokenExecutor,
     C: Cancellation,
 {
-    generate_impl(executor, tokenizer, request, None, cancellation)
+    generate_impl(
+        executor,
+        tokenizer,
+        request,
+        None,
+        cancellation,
+        &mut |_, _| {},
+    )
 }
 
 /// `generate` under a per-step token constraint: before each sampled step the
@@ -194,7 +201,36 @@ where
     E: TokenExecutor,
     C: Cancellation,
 {
-    generate_impl(executor, tokenizer, request, Some(constraint), cancellation)
+    generate_impl(
+        executor,
+        tokenizer,
+        request,
+        Some(constraint),
+        cancellation,
+        &mut |_, _| {},
+    )
+}
+
+/// Content-free progress boundaries for host measurements.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GenerationProgress {
+    Tokenized(usize),
+    Prefilled,
+    TokenEmitted,
+}
+
+/// Generate with count/timing hooks. The observer receives no prompt or output content.
+///
+/// # Errors
+/// Returns the same errors as [`generate`].
+pub fn generate_observed<E: TokenExecutor, C: Cancellation>(
+    executor: &mut E,
+    tokenizer: &Tokenizer,
+    request: &GenerationRequest<'_>,
+    cancellation: &mut C,
+    observer: &mut impl FnMut(GenerationProgress, &E),
+) -> Result<GenerationResult, GenerationError> {
+    generate_impl(executor, tokenizer, request, None, cancellation, observer)
 }
 
 fn generate_impl<E, C>(
@@ -203,6 +239,7 @@ fn generate_impl<E, C>(
     request: &GenerationRequest<'_>,
     mut constraint: Option<&mut dyn DecodeConstraint>,
     cancellation: &mut C,
+    observer: &mut impl FnMut(GenerationProgress, &E),
 ) -> Result<GenerationResult, GenerationError>
 where
     E: TokenExecutor,
@@ -219,6 +256,7 @@ where
             add_special_tokens: request.add_bos,
         },
     )?;
+    observer(GenerationProgress::Tokenized(input_ids.len()), executor);
     ensure_context(input_ids.len(), request.max_context_tokens)?;
     if request.max_output_tokens == 0 {
         return Ok(GenerationResult {
@@ -236,6 +274,7 @@ where
         None => executor.prefill(TokenChunk::all(&input_ids))?,
     };
     let mut prefix = complete(&mut prefill, cancellation)?;
+    observer(GenerationProgress::Prefilled, executor);
     let mut generated_ids = Vec::new();
     let mut decoded = tokenizer.streaming_decoder(request.skip_special_tokens);
     let mut text = String::new();
@@ -283,6 +322,7 @@ where
         prefix = candidate_prefix;
         decoded = candidate_decoder;
         generated_ids.push(next_id);
+        observer(GenerationProgress::TokenEmitted, executor);
         text.push_str(&decoded_fragment);
 
         if generated_ids.len() == request.max_output_tokens {

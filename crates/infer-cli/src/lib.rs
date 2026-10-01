@@ -18,8 +18,10 @@ use minifield_executor_core::{
     Lfm2ExecutionLimits, Lfm2Executor, Lfm2LoadRequest, Lfm2WeightLoadTask, LoaderLimits,
     LoaderPoll,
 };
+use minifield_runtime_telemetry::{Measurement, Mode, Model};
 use minifield_text_generation::{
-    GenerationPolicy, GenerationRequest, GenerationResult, NeverCancel, generate,
+    GenerationPolicy, GenerationProgress, GenerationRequest, GenerationResult, NeverCancel,
+    StopReason, generate_observed,
 };
 use minifield_text_tokenizer::{Tokenizer, TokenizerLimits};
 use sha2::{Digest, Sha256};
@@ -291,6 +293,20 @@ pub fn run_with_io(
     input: impl Read,
     output: &mut impl Write,
 ) -> Result<GenerationResult, CliError> {
+    run_with_reporter(options, input, output, |_| {})
+}
+
+/// Run one inference and pass its content-free terminal record to the host.
+/// Model loading failures are outside the inference boundary. The callback runs before stdout I/O.
+///
+/// # Errors
+/// Returns the same errors as [`run_with_io`].
+pub fn run_with_reporter(
+    options: &CliOptions,
+    input: impl Read,
+    output: &mut impl Write,
+    mut report: impl FnMut(serde_json::Value),
+) -> Result<GenerationResult, CliError> {
     let prompt = read_prompt(input, options.max_prompt_bytes)?;
     let tokenizer_bytes = read_file(
         &options.model_dir.join("tokenizer").join("tokenizer.json"),
@@ -308,7 +324,12 @@ pub fn run_with_io(
         "model.safetensors",
     )?;
     let tokenizer = Tokenizer::from_json_bytes(&tokenizer_bytes, TokenizerLimits::default())?;
-    let mut executor = load_cpu_executor(options, &config_bytes, weight_bytes)?;
+    let (mut executor, model) = load_cpu_executor(
+        options,
+        &config_bytes,
+        weight_bytes,
+        digest(&tokenizer_bytes),
+    )?;
     let mut cancellation = NeverCancel;
     let request = GenerationRequest {
         prompt: &prompt,
@@ -319,7 +340,27 @@ pub fn run_with_io(
         skip_special_tokens: true,
         policy: GenerationPolicy::Greedy,
     };
-    let result = generate(&mut executor, &tokenizer, &request, &mut cancellation)?;
+    let mut measurement = Measurement::new(Mode::Autoregressive, executor.inference_work());
+    measurement.max_output_tokens = request.max_output_tokens;
+    let result = generate_observed(
+        &mut executor,
+        &tokenizer,
+        &request,
+        &mut cancellation,
+        &mut |progress, executor| match progress {
+            GenerationProgress::Tokenized(count) => measurement.tokenized(count),
+            GenerationProgress::Prefilled => measurement.prefilled(executor.inference_work()),
+            GenerationProgress::TokenEmitted => measurement.emitted(),
+        },
+    );
+    if let Ok(result) = &result {
+        measurement.stop_reason = match result.stop_reason {
+            StopReason::MaxOutputTokens => "output_limit",
+            StopReason::StopToken(_) => "end_token",
+        };
+    }
+    report(measurement.finish(&model, executor.inference_work(), result.is_ok(), "cpu"));
+    let result = result?;
     output
         .write_all(result.text.as_bytes())
         .map_err(|source| CliError::Io {
@@ -420,14 +461,17 @@ fn load_cpu_executor(
     options: &CliOptions,
     config_bytes: &[u8],
     weight_bytes: Vec<u8>,
-) -> Result<Lfm2Executor<CpuBackend>, CliError> {
+    tokenizer_hash: [u8; 32],
+) -> Result<(Lfm2Executor<CpuBackend>, Model), CliError> {
+    let config_hash = digest(config_bytes);
+    let weight_hash = digest(&weight_bytes);
     let weight_length = u64::try_from(weight_bytes.len())
         .map_err(|_| CliError::Limit("model.safetensors length does not fit u64".into()))?;
     let request = Lfm2LoadRequest::new(
         config_bytes.to_owned(),
-        digest(config_bytes),
+        config_hash,
         weight_length,
-        digest(&weight_bytes),
+        weight_hash,
         LoaderLimits {
             max_asset_bytes: options.max_asset_bytes,
             max_header_bytes: MAX_CONFIG_BYTES,
@@ -438,6 +482,11 @@ fn load_cpu_executor(
             max_rank: 4,
         },
     )?;
+    let model = Model::from_plan(
+        request.plan(),
+        &std::collections::HashMap::new(),
+        [config_hash, weight_hash, tokenizer_hash],
+    );
     let mut backend = CpuBackend::new(
         CPU_BACKEND_OWNER,
         ResourceLimits {
@@ -449,7 +498,7 @@ fn load_cpu_executor(
     let mut provider = MemoryAssetProvider::new(weight_bytes, options.max_asset_bytes);
     let mut task = Lfm2WeightLoadTask::begin(request)?;
     let weights = drive_loader(&mut task, &mut provider, &mut backend)?;
-    Lfm2Executor::new(
+    let executor = Lfm2Executor::new(
         backend,
         weights,
         Lfm2ExecutionLimits {
@@ -458,7 +507,8 @@ fn load_cpu_executor(
             })?,
         },
     )
-    .map_err(CliError::from)
+    .map_err(CliError::from)?;
+    Ok((executor, model))
 }
 
 fn loader_retained_host_bound(max_asset_bytes: u64) -> Result<u64, CliError> {

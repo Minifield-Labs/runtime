@@ -18,6 +18,8 @@ mod constrained;
 mod generation;
 mod interop;
 mod loading;
+mod telemetry;
+pub use telemetry::{configure_telemetry, flush_telemetry};
 
 pub use loading::{load, load_classifier};
 
@@ -27,6 +29,7 @@ const STOP_TOKEN_IDS: [TokenId; 1] = [7];
 /// Loaded executor plus tokenizer, ready for repeated `generate` calls.
 #[wasm_bindgen]
 pub struct WebDemo {
+    telemetry: telemetry::BrowserTelemetry,
     executor: Lfm2Executor<WgpuBackend>,
     tokenizer: Tokenizer,
     /// Prefilled KV snapshot for the tool-call prompt's fixed system block,
@@ -38,6 +41,8 @@ pub struct WebDemo {
 /// Independent classifier; prompts already contain their exact chat template.
 #[wasm_bindgen]
 pub struct WebClassifier {
+    telemetry: telemetry::BrowserTelemetry,
+    classes: u32,
     classifier: Lfm2Classifier<WgpuBackend>,
     tokenizer: Tokenizer,
     max_logical_tokens: u64,

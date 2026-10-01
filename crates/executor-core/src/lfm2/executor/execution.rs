@@ -573,6 +573,14 @@ pub(super) fn append_tokens<B: InferenceOps>(
     push_scratch::<B>(scratch, [x.buffer, u.buffer]);
     state.history.extend_from_slice(tokens);
     state.length = length;
+    let mut work = context.work.get();
+    work.record(
+        config,
+        rows,
+        base,
+        produce_logits.then(|| context.weights.output_width()),
+    );
+    context.work.set(work);
     Ok(())
 }
 

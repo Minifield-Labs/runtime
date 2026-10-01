@@ -83,6 +83,7 @@ impl<B: InferenceOps> Lfm2Executor<B> {
         let lut2 = repack_lut2(&mut backend, &weights, &*retirement, options)?;
         Ok(Self {
             context: Rc::new(ModelContext {
+                work: Cell::new(crate::InferenceWork::default()),
                 backend: Rc::new(RefCell::new(backend)),
                 retirement,
                 weights: Rc::new(weights),
@@ -103,6 +104,12 @@ impl<B: InferenceOps> Lfm2Executor<B> {
     #[must_use]
     pub fn limits(&self) -> Lfm2ExecutionLimits {
         self.context.limits
+    }
+
+    /// Content-free counters for all recorded forward passes on this model instance.
+    #[must_use]
+    pub fn inference_work(&self) -> crate::InferenceWork {
+        self.context.work.get()
     }
     pub fn poll_retired(&self) -> Result<()> {
         self.context.backend.borrow().poll_retired_fences()?;
@@ -263,6 +270,12 @@ pub struct Lfm2Classifier<B: InferenceOps> {
 }
 
 impl<B: InferenceOps> Lfm2Classifier<B> {
+    /// Includes shared-base creation, full classification, and cached-tail passes.
+    #[must_use]
+    pub fn inference_work(&self) -> crate::InferenceWork {
+        self.executor.inference_work()
+    }
+
     pub fn new(
         backend: B,
         weights: Lfm2TypedWeights<B::Buffer>,

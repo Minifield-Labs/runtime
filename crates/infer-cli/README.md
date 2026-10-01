@@ -17,6 +17,11 @@ limits bound prompt reads, asset reads, loader staging, backend allocations, and
 EOS ID 7 is the only implicit artifact stop; other special IDs are ordinary generated IDs unless
 the caller changes the generic library stop list.
 
+The binary reports content-free inference statistics after flushing stdout. Set
+`MINIFIELD_TELEMETRY=0` to disable delivery. The library's `run_with_io` makes no network
+requests; `run_with_reporter` provides a terminal record to an embedding host's callback.
+See [runtime telemetry](../../docs/runtime-telemetry.md) for all environment settings and fields.
+
 Run compact checks with:
 
 ```text

@@ -15,6 +15,54 @@ const CONFIG: &[u8] = include_bytes!("fixtures/numerical-lfm-001-config.json");
 const WEIGHTS: &[u8] = include_bytes!("fixtures/numerical-lfm-001-weights.safetensors");
 const CLASSES: [usize; 3] = [2, 5, 7];
 
+#[test]
+fn work_counts_cached_and_full_passes_with_the_actual_head_width() {
+    let (backend, weights) = load(classifier_weights(), Some(3));
+    let mut classifier = Lfm2Classifier::new(
+        backend,
+        weights,
+        Lfm2ExecutionLimits {
+            max_logical_tokens: 32,
+        },
+    )
+    .expect("classifier");
+    let initial = classifier.inference_work();
+    assert_eq!(initial, minifield_executor_core::InferenceWork::default());
+    let base = ready(
+        classifier
+            .prefill_base(TokenChunk::all(&[1, 2, 3]))
+            .expect("prefill"),
+    );
+    let warm = classifier.inference_work().since(initial);
+    assert_eq!(warm.forward_passes, 1);
+    assert_eq!(warm.token_positions_processed, 3);
+    // H=16, I=32, one conv + one attention block; final FFN executes one row.
+    assert_eq!(warm.estimated_flops, 23_712);
+    let before = classifier.inference_work();
+    ready(
+        classifier
+            .classify_tail(&base, TokenChunk::all(&[4, 5]))
+            .expect("tail"),
+    );
+    let tail = classifier.inference_work().since(before);
+    assert_eq!(tail.forward_passes, 1);
+    assert_eq!(tail.token_positions_processed, 2);
+    assert_eq!(tail.estimated_flops, 17_248);
+    let before = classifier.inference_work();
+    ready(
+        classifier
+            .classify(TokenChunk::all(&[1, 2, 3]))
+            .expect("full"),
+    );
+    assert_eq!(
+        classifier.inference_work().since(before).estimated_flops,
+        23_808
+    );
+    let before = classifier.inference_work();
+    assert!(classifier.classify(TokenChunk::all(&[])).is_err());
+    assert_eq!(classifier.inference_work(), before);
+}
+
 fn classifier_weights() -> Vec<u8> {
     classifier_weights_for(&CLASSES)
 }

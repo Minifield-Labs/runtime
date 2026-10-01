@@ -5,6 +5,7 @@ use minifield_backend_wgpu::WgpuBackend;
 use minifield_engine_api::{DecodeConstraint, TokenChunk, TokenExecutor, TokenId};
 use minifield_executor_core::Lfm2Prefix;
 use minifield_json_grammar::AssistantCallEnforcer;
+use minifield_runtime_telemetry::{Measurement, Mode};
 use minifield_text_tokenizer::{EncodeOptions, MODEL_VOCAB_SIZE};
 use wasm_bindgen::{JsValue, prelude::wasm_bindgen};
 
@@ -62,78 +63,102 @@ impl WebDemo {
         max_tokens: u32,
         on_token: Function,
     ) -> Result<JsValue, JsValue> {
-        let mut input_ids = self
-            .tokenizer
-            .encode(
-                &system,
-                EncodeOptions {
-                    add_special_tokens: true,
-                },
-            )
-            .map_err(js_error)?;
-        let system_ids = input_ids.clone();
-        input_ids.extend(
-            self.tokenizer
+        let mut measurement =
+            Measurement::new(Mode::Autoregressive, self.executor.inference_work());
+        measurement.max_output_tokens = max_tokens as usize;
+        measurement.constraint = "tool_call";
+        let result = async {
+            let mut input_ids = self
+                .tokenizer
                 .encode(
-                    &rest,
+                    &system,
                     EncodeOptions {
-                        add_special_tokens: false,
+                        add_special_tokens: true,
                     },
                 )
-                .map_err(js_error)?,
-        );
-        let max_tokens = usize::try_from(MAX_LOGICAL_TOKENS)
-            .unwrap_or(usize::MAX)
-            .saturating_sub(input_ids.len())
-            .min(usize::try_from(max_tokens).unwrap_or(usize::MAX));
-        if max_tokens == 0 {
-            return Err(JsValue::from_str("prompt fills the context budget"));
-        }
-        let mut enforcer = self.assistant_enforcer(&names)?;
-
-        let mut prefix = self
-            .constrained_prefix(&system, &system_ids, &input_ids, &mut enforcer)
-            .await?;
-
-        let mut decoder = self.tokenizer.streaming_decoder(false);
-        let mut text = String::new();
-        let mut generated = 0_usize;
-        let mut stopped = false;
-
-        loop {
-            let next = self
-                .executor
-                .sampled_token(&prefix)
-                .map_err(js_error)?
-                .ok_or_else(|| JsValue::from_str("executor published no greedy sample"))?;
-            if STOP_TOKEN_IDS.contains(&next) {
-                stopped = true;
-                break;
-            }
-            let fragment = decoder.push(&[next]).map_err(js_error)?;
-            text.push_str(&fragment);
-            generated += 1;
-            enforcer.advance(next);
-            let _ = on_token.call2(
-                &JsValue::NULL,
-                &JsValue::from_str(&fragment),
-                &JsValue::from_f64(f64::from(next)),
-            );
-            if enforcer.complete() {
-                stopped = true;
-                break;
-            }
-            if generated >= max_tokens {
-                break;
-            }
-            let mut append = self
-                .executor
-                .append_argmax_masked(prefix, enforcer.allowed())
                 .map_err(js_error)?;
-            prefix = pump(&mut append).await?;
+            let system_ids = input_ids.clone();
+            input_ids.extend(
+                self.tokenizer
+                    .encode(
+                        &rest,
+                        EncodeOptions {
+                            add_special_tokens: false,
+                        },
+                    )
+                    .map_err(js_error)?,
+            );
+            measurement.tokenized(input_ids.len());
+            let max_tokens = usize::try_from(MAX_LOGICAL_TOKENS)
+                .unwrap_or(usize::MAX)
+                .saturating_sub(input_ids.len())
+                .min(usize::try_from(max_tokens).unwrap_or(usize::MAX));
+            if max_tokens < measurement.max_output_tokens {
+                measurement.stop_reason = "context_limit";
+            }
+            if max_tokens == 0 {
+                return Err(JsValue::from_str("prompt fills the context budget"));
+            }
+            let mut enforcer = self.assistant_enforcer(&names)?;
+
+            let mut prefix = self
+                .constrained_prefix(
+                    &system,
+                    &system_ids,
+                    &input_ids,
+                    &mut enforcer,
+                    &mut measurement,
+                )
+                .await?;
+            measurement.prefilled(self.executor.inference_work());
+
+            let mut decoder = self.tokenizer.streaming_decoder(false);
+            let mut text = String::new();
+            let mut generated = 0_usize;
+            let mut stopped = false;
+
+            loop {
+                let next = self
+                    .executor
+                    .sampled_token(&prefix)
+                    .map_err(js_error)?
+                    .ok_or_else(|| JsValue::from_str("executor published no greedy sample"))?;
+                if STOP_TOKEN_IDS.contains(&next) {
+                    stopped = true;
+                    measurement.stop_reason = "end_token";
+                    break;
+                }
+                let fragment = decoder.push(&[next]).map_err(js_error)?;
+                text.push_str(&fragment);
+                generated += 1;
+                measurement.emitted();
+                enforcer.advance(next);
+                let _ = on_token.call2(
+                    &JsValue::NULL,
+                    &JsValue::from_str(&fragment),
+                    &JsValue::from_f64(f64::from(next)),
+                );
+                if enforcer.complete() {
+                    stopped = true;
+                    measurement.stop_reason = "constraint_complete";
+                    break;
+                }
+                if generated >= max_tokens {
+                    break;
+                }
+                let mut append = self
+                    .executor
+                    .append_argmax_masked(prefix, enforcer.allowed())
+                    .map_err(js_error)?;
+                prefix = pump(&mut append).await?;
+            }
+            text.push_str(&decoder.finish().map_err(js_error)?);
+            stats(&text, generated, stopped)
         }
-        text.push_str(&decoder.finish().map_err(js_error)?);
-        stats(&text, generated, stopped)
+        .await;
+        self.telemetry
+            .finish(measurement, self.executor.inference_work(), result.is_ok());
+        result
     }
 }
 
@@ -173,6 +198,7 @@ impl WebDemo {
         system_ids: &[TokenId],
         input_ids: &[TokenId],
         enforcer: &mut AssistantCallEnforcer,
+        measurement: &mut Measurement,
     ) -> Result<Lfm2Prefix<WgpuBackend>, JsValue> {
         let rest_ids = input_ids
             .get(system_ids.len()..)
@@ -193,9 +219,11 @@ impl WebDemo {
                         .map_err(js_error)?;
                     let base = pump(&mut prefill).await?;
                     self.tool_prefix = Some((system.to_owned(), base.clone()));
+                    measurement.cache_rebuilds += 1;
                     base
                 }
             };
+            measurement.cache_reused += base.logical_length();
             let mut append = self
                 .executor
                 .append_known(&base, TokenChunk::all(rest_ids))
@@ -216,6 +244,7 @@ impl WebDemo {
             if legal {
                 staged
             } else {
+                measurement.fallback_used = true;
                 let mut prefill = self
                     .executor
                     .prefill_masked(TokenChunk::all(input_ids), mask)

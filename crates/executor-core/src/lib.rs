@@ -20,6 +20,7 @@ pub use lfm2::{
     PrefixTask, ScoreTask, decode_pointer, detect_lfm2_weight_format, parse_encoder_config,
     parse_lfm2_config, parse_lfm2_tensor_quantization,
 };
+pub use lfm2::{FLOPS_ESTIMATOR_VERSION, InferenceWork};
 pub use loader::{
     LoadRequest, LoaderError, LoaderLimits, LoaderPoll, LoaderResourceReport, LoaderStage,
     ParsedAsset, ParsedTensor, StorageDType, TypedWeights, WeightLayout, WeightLoadTask,

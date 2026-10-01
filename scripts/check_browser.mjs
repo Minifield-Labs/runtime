@@ -13,14 +13,15 @@ import { setTimeout as delay } from "node:timers/promises";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const argv = process.argv.slice(2);
-const options = { classes: 8, timeout: 180, atol: 0.000025, rtol: 0.00001 };
+const options = { classes: 8, timeout: 180, atol: 0.000025, rtol: 0.00001, module: "http" };
 for (let i = 0; i < argv.length; i += 2) {
   const key = argv[i].replace(/^--/, "");
-  if (!["bundle", "prompts", "classes", "expected", "out", "chrome", "timeout", "atol", "rtol"].includes(key) || argv[i + 1] === undefined) {
+  if (!["bundle", "generation-bundle", "prompts", "classes", "expected", "out", "chrome", "timeout", "atol", "rtol", "module"].includes(key) || argv[i + 1] === undefined) {
     throw new Error("Usage: node scripts/check_browser.mjs --bundle DIR --prompts FILE [--classes N] [--expected NATIVE_JSON] [--out JSON] [--chrome EXECUTABLE]");
   }
   options[key] = ["classes", "timeout", "atol", "rtol"].includes(key) ? Number(argv[i + 1]) : argv[i + 1];
 }
+if (!["http", "blob"].includes(options.module)) throw new Error("--module must be http or blob");
 if (!options.bundle || !options.prompts || !Number.isInteger(options.classes) || options.classes < 1 || !Number.isFinite(options.timeout) || options.timeout <= 0) {
   throw new Error("Bundle, nonempty prompts, positive classes, and a finite positive timeout are required");
 }
@@ -39,17 +40,41 @@ const assets = new Map([
   ["/assets/model.safetensors", resolve(bundle, "model.safetensors")],
   ["/assets/tokenizer.json", tokenizer],
 ]);
+if (options["generation-bundle"]) {
+  const generation = resolve(options["generation-bundle"]);
+  for (const [name, path] of [["config.json", "config.json"], ["model.safetensors", "model.safetensors"], ["tokenizer.json", "tokenizer/tokenizer.json"]]) {
+    assets.set(`/generation-assets/${name}`, resolve(generation, path));
+  }
+}
 for (const path of [...assets.values(), resolve(root, "web/pkg/minifield_web_demo_bg.wasm")]) await access(path);
 const hashes = {};
-for (const [url, path] of assets) hashes[url.split("/").at(-1)] = createHash("sha256").update(await readFile(path)).digest("hex");
+for (const [url, path] of assets) hashes[url.startsWith("/generation-assets/") ? `generation-${url.split("/").at(-1)}` : url.split("/").at(-1)] = createHash("sha256").update(await readFile(path)).digest("hex");
 hashes.prompts = createHash("sha256").update(await readFile(resolve(options.prompts))).digest("hex");
 hashes.wasm = createHash("sha256").update(await readFile(resolve(root, "web/pkg/minifield_web_demo_bg.wasm"))).digest("hex");
+const telemetryRecords = [];
 const server = createServer(async (request, response) => {
   try {
     const path = new URL(request.url, "http://localhost").pathname;
+    if (path === "/telemetry-unavailable") { response.writeHead(503); response.end(); return; }
+    if (path === "/telemetry-test" && request.method === "POST") {
+      const chunks = [];
+      let size = 0;
+      for await (const chunk of request) {
+        size += chunk.length;
+        if (size > 48 * 1024) throw new Error("Oversized telemetry batch");
+        chunks.push(chunk);
+      }
+      const records = Buffer.concat(chunks).toString().trim().split("\n").map(line => JSON.parse(line));
+      telemetryRecords.push(...records);
+      response.end();
+      return;
+    }
+    if (path === "/telemetry-test" && request.method === "GET") {
+      response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify(telemetryRecords)); return;
+    }
     if (path === "/qualification-profile.json") {
       response.setHeader("Content-Type", "application/json");
-      response.end(JSON.stringify({ prompts, classes: options.classes }));
+      response.end(JSON.stringify({ prompts, classes: options.classes, generation: Boolean(options["generation-bundle"]), module: options.module }));
       return;
     }
     let file = assets.get(path);

@@ -501,11 +501,16 @@ fn tiny_input() -> EncoderInput {
     }
 }
 
-fn reference_hidden(token: u32) -> [f32; 4] {
-    reference_hidden_with_eps(token, 0.00001, 0.00001)
+fn reference_hidden_with_eps(token: u32, block_epsilon: f32, final_epsilon: f32) -> [f32; 4] {
+    reference_hidden_with_layers(token, block_epsilon, final_epsilon, 2)
 }
 
-fn reference_hidden_with_eps(token: u32, block_epsilon: f32, final_epsilon: f32) -> [f32; 4] {
+fn reference_hidden_with_layers(
+    token: u32,
+    block_epsilon: f32,
+    final_epsilon: f32,
+    layers: usize,
+) -> [f32; 4] {
     let mut hidden = [0.0; 4];
     for (index, value) in hidden.iter_mut().enumerate() {
         #[allow(clippy::cast_precision_loss)]
@@ -519,7 +524,7 @@ fn reference_hidden_with_eps(token: u32, block_epsilon: f32, final_epsilon: f32)
             .recip();
         input.map(|value| value * inverse)
     };
-    for _ in 0..2 {
+    for _ in 0..layers {
         let normalized = normalize(hidden, block_epsilon);
         for (value, normalized) in hidden.iter_mut().zip(normalized) {
             *value += (normalized / (1.0 + (-normalized).exp())) * normalized;
@@ -562,47 +567,74 @@ fn encoder_preserves_distinct_block_and_final_normalization_epsilons() {
 
 #[test]
 fn encoder_loader_and_pointer_heads_keep_all_final_ffn_tokens() {
-    let (backend, weights) = tiny_weights();
-    let encoder = Lfm2PointerEncoder::new(
-        Rc::clone(&backend),
-        weights,
-        EncoderLimits {
-            max_tokens: 8,
-            max_questions: 4,
-        },
-    )
-    .expect("encoder");
-    let before = backend
-        .borrow()
-        .resource_report()
-        .total_owned_bytes()
-        .expect("resources");
-    let output = ready(encoder.begin_predict(tiny_input()).expect("task"));
-    let query = reference_hidden(1);
-    let keys = [reference_hidden(1), reference_hidden(2)];
-    for (column, key) in keys.iter().enumerate() {
-        let expected = (query[0] * key[0] + query[1] * key[1]) / 2.0_f32.sqrt();
-        assert!(
-            (output.start[column] - expected).abs() < 0.000_001,
-            "{column}: {} != {expected}",
-            output.start[column]
+    let mut workspace_bytes = None;
+    for layers in [2, 6] {
+        let mut config: serde_json::Value = serde_json::from_slice(&tiny_config()).expect("config");
+        config["num_hidden_layers"] = serde_json::json!(layers);
+        config["layer_types"] = serde_json::json!(
+            ["conv", "full_attention"]
+                .into_iter()
+                .cycle()
+                .take(layers)
+                .collect::<Vec<_>>()
         );
-        assert!((output.end[column] - expected).abs() < 0.000_001);
-    }
-    assert_eq!(output.start[2], 0.0);
-    assert_eq!(output.end[2], 0.0);
-    assert_eq!(
-        backend
+        let (backend, weights) =
+            tiny_weights_with_config(serde_json::to_vec(&config).expect("config bytes"));
+        let encoder = Lfm2PointerEncoder::new(
+            Rc::clone(&backend),
+            weights,
+            EncoderLimits {
+                max_tokens: 8,
+                max_questions: 4,
+            },
+        )
+        .expect("encoder");
+        let before = backend
             .borrow()
             .resource_report()
             .total_owned_bytes()
-            .expect("resources"),
-        before
-    );
-    assert_eq!(
-        ready(encoder.begin_predict(tiny_input()).expect("repeat task")),
-        output
-    );
+            .expect("resources");
+        let mut task = encoder.begin_predict(tiny_input()).expect("task");
+        assert!(matches!(task.poll_step(), CompletionPoll::Pending));
+        let retained = backend
+            .borrow()
+            .resource_report()
+            .total_owned_bytes()
+            .expect("resources")
+            - before;
+        if let Some(expected) = workspace_bytes {
+            assert_eq!(retained, expected, "scratch storage grew with layer count");
+        } else {
+            workspace_bytes = Some(retained);
+        }
+        let output = ready(task);
+        let query = reference_hidden_with_layers(1, 0.00001, 0.00001, layers);
+        let keys =
+            [1, 2].map(|token| reference_hidden_with_layers(token, 0.00001, 0.00001, layers));
+        for (column, key) in keys.iter().enumerate() {
+            let expected = (query[0] * key[0] + query[1] * key[1]) / 2.0_f32.sqrt();
+            assert!(
+                (output.start[column] - expected).abs() < 0.000_001,
+                "{column}: {} != {expected}",
+                output.start[column]
+            );
+            assert!((output.end[column] - expected).abs() < 0.000_001);
+        }
+        assert_eq!(output.start[2], 0.0);
+        assert_eq!(output.end[2], 0.0);
+        assert_eq!(
+            backend
+                .borrow()
+                .resource_report()
+                .total_owned_bytes()
+                .expect("resources"),
+            before
+        );
+        assert_eq!(
+            ready(encoder.begin_predict(tiny_input()).expect("repeat task")),
+            output
+        );
+    }
 }
 
 #[test]

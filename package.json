@@ -7,6 +7,10 @@
     "node": ">=22"
   },
   "scripts": {
+    "build:web": "node scripts/build_web.mjs",
     "test": "node --test web/tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.3"
   }
 }

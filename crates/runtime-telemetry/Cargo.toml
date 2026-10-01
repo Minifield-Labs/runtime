@@ -1,0 +1,22 @@
+[package]
+name = "minifield-runtime-telemetry"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Content-free runtime inference records and host-side measurement"
+
+[dependencies]
+minifield-executor-core = { path = "../executor-core" }
+serde = { version = "=1.0.219", features = ["derive"] }
+serde_json = "=1.0.140"
+sha2 = "=0.10.9"
+uuid = { version = "=1.18.0", features = ["v7", "js"] }
+web-time = "=1.1.0"
+
+[build-dependencies]
+sha2 = "=0.10.9"
+
+[lints]
+workspace = true

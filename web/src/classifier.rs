@@ -1,6 +1,7 @@
 //! Fresh and shared-prefix classifier bindings.
 
 use minifield_engine_api::{ExecutorError, TokenChunk, TokenId};
+use minifield_runtime_telemetry::{Measurement, Mode};
 use minifield_text_tokenizer::EncodeOptions;
 use wasm_bindgen::{JsValue, prelude::wasm_bindgen};
 
@@ -13,20 +14,32 @@ use super::{
 impl WebClassifier {
     /// Fresh prompt state each call. The caller masks any reserved class.
     pub async fn classify(&mut self, prompt: String) -> Result<Vec<f32>, JsValue> {
-        let ids = self
-            .tokenizer
-            .encode(
-                &prompt,
-                EncodeOptions {
-                    add_special_tokens: false,
-                },
-            )
-            .map_err(js_error)?;
-        let mut task = self
-            .classifier
-            .classify(TokenChunk::all(&ids))
-            .map_err(js_error)?;
-        pump(&mut task).await
+        let mut measurement = Measurement::new(Mode::SingleStep, self.classifier.inference_work());
+        measurement.alternatives = Some(self.classes as usize);
+        let result = async {
+            let ids = self
+                .tokenizer
+                .encode(
+                    &prompt,
+                    EncodeOptions {
+                        add_special_tokens: false,
+                    },
+                )
+                .map_err(js_error)?;
+            measurement.tokenized(ids.len());
+            let mut task = self
+                .classifier
+                .classify(TokenChunk::all(&ids))
+                .map_err(js_error)?;
+            pump(&mut task).await
+        }
+        .await;
+        self.telemetry.finish(
+            measurement,
+            self.classifier.inference_work(),
+            result.is_ok(),
+        );
+        result
     }
 
     /// Classify with shared-prefix reuse: the token head common to every
@@ -34,75 +47,90 @@ impl WebClassifier {
     /// decision branches from that base by appending only its own tail.
     /// Falls back to a full prefill when a prompt does not share the head.
     pub async fn classify_cached(&mut self, prompt: String) -> Result<Vec<f32>, JsValue> {
-        let ids = self
-            .tokenizer
-            .encode(
-                &prompt,
-                EncodeOptions {
-                    add_special_tokens: false,
-                },
-            )
-            .map_err(js_error)?;
+        let mut measurement = Measurement::new(Mode::SingleStep, self.classifier.inference_work());
+        measurement.alternatives = Some(self.classes as usize);
+        let result = async {
+            let ids = self
+                .tokenizer
+                .encode(
+                    &prompt,
+                    EncodeOptions {
+                        add_special_tokens: false,
+                    },
+                )
+                .map_err(js_error)?;
 
-        validate_cached_input(&ids, self.max_logical_tokens).map_err(js_error)?;
+            measurement.tokenized(ids.len());
+            validate_cached_input(&ids, self.max_logical_tokens).map_err(js_error)?;
 
-        match &self.anchor_ids {
-            None => {
-                self.anchor_ids = Some(ids.clone());
-                self.shared_head = Some(ids.len());
-            }
-            Some(anchor) => {
-                let mut head = self
-                    .shared_head
-                    .unwrap_or(0)
-                    .min(ids.len())
-                    .min(anchor.len());
-                while head > 0 && ids[..head] != anchor[..head] {
-                    head -= 1;
+            match &self.anchor_ids {
+                None => {
+                    self.anchor_ids = Some(ids.clone());
+                    self.shared_head = Some(ids.len());
                 }
-                self.shared_head = Some(head);
+                Some(anchor) => {
+                    let mut head = self
+                        .shared_head
+                        .unwrap_or(0)
+                        .min(ids.len())
+                        .min(anchor.len());
+                    while head > 0 && ids[..head] != anchor[..head] {
+                        head -= 1;
+                    }
+                    self.shared_head = Some(head);
+                }
             }
-        }
 
-        let head = self.shared_head.unwrap_or(0);
-        let base_fits = match &self.base {
-            Some(base) => checked_tail(&ids, base.token_history(), base.logical_length())
-                .map_err(js_error)?
-                .is_some(),
-            None => false,
-        };
-        if !base_fits && head >= 16 {
-            let anchor_head = self
-                .anchor_ids
-                .as_ref()
-                .and_then(|anchor| anchor.get(..head))
-                .ok_or_else(|| {
-                    JsValue::from_str("classifier cache anchor is missing or too short")
-                })?
-                .to_vec();
+            let head = self.shared_head.unwrap_or(0);
+            let base_fits = match &self.base {
+                Some(base) => checked_tail(&ids, base.token_history(), base.logical_length())
+                    .map_err(js_error)?
+                    .is_some(),
+                None => false,
+            };
+            if !base_fits && head >= 16 {
+                let anchor_head = self
+                    .anchor_ids
+                    .as_ref()
+                    .and_then(|anchor| anchor.get(..head))
+                    .ok_or_else(|| {
+                        JsValue::from_str("classifier cache anchor is missing or too short")
+                    })?
+                    .to_vec();
+                let mut task = self
+                    .classifier
+                    .prefill_base(TokenChunk::all(&anchor_head))
+                    .map_err(js_error)?;
+                self.base = Some(pump(&mut task).await?);
+                measurement.cache_rebuilds += 1;
+            }
+
+            if let Some(base) = self.base.clone()
+                && let Some(tail) = checked_tail(&ids, base.token_history(), base.logical_length())
+                    .map_err(js_error)?
+            {
+                measurement.cache_reused += base.logical_length();
+                let mut task = self
+                    .classifier
+                    .classify_tail(&base, TokenChunk::all(tail))
+                    .map_err(js_error)?;
+                return pump(&mut task).await;
+            }
+
+            measurement.fallback_used = self.base.is_some();
             let mut task = self
                 .classifier
-                .prefill_base(TokenChunk::all(&anchor_head))
+                .classify(TokenChunk::all(&ids))
                 .map_err(js_error)?;
-            self.base = Some(pump(&mut task).await?);
+            pump(&mut task).await
         }
-
-        if let Some(base) = self.base.clone()
-            && let Some(tail) =
-                checked_tail(&ids, base.token_history(), base.logical_length()).map_err(js_error)?
-        {
-            let mut task = self
-                .classifier
-                .classify_tail(&base, TokenChunk::all(tail))
-                .map_err(js_error)?;
-            return pump(&mut task).await;
-        }
-
-        let mut task = self
-            .classifier
-            .classify(TokenChunk::all(&ids))
-            .map_err(js_error)?;
-        pump(&mut task).await
+        .await;
+        self.telemetry.finish(
+            measurement,
+            self.classifier.inference_work(),
+            result.is_ok(),
+        );
+        result
     }
 }
 

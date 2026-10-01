@@ -9,6 +9,7 @@ This is an early implementation with tested numerical paths and explicit limits.
 The repository pins Rust 1.89.0, including rustfmt, Clippy, and the WASM target. Portable checks also use Python 3.11+, uv, and Node.js 22+.
 
 ```sh
+npm ci
 scripts/check.sh quick
 scripts/check.sh ci
 ```
@@ -40,6 +41,7 @@ Use the [evaluation host](crates/evaluation-host/README.md) for complete classif
 | `crates/json-grammar` | Byte-level decoding constraints and token masks |
 | `crates/decoding-protocol` | Schema validation, framing, and deterministic teacher traces |
 | `crates/infer-cli` | Native plaintext host |
+| `crates/runtime-telemetry` | Content-free inference records and work measurement |
 | `crates/evaluation-host` | Frozen-request native classifier/pointer measurement host |
 | `web` | WASM bindings and browser development harness |
 | `tools/converters` | Independent Python conversion package |
@@ -57,6 +59,10 @@ The model file specifies weight representation. The runtime chooses compatible k
 Native Metal and WGPU-through-Metal are independently exercised on a reference Apple device. Run `scripts/check.sh gpu` for WGPU and `scripts/check.sh gpu-metal` for native Metal. Other GPU families, browser compatibility, and actual model bundles need their own qualification. Dedicated CUDA, general model imports, and mobile compatibility matrices remain future work.
 
 ## Boundaries
+
+Browser bindings and the native CLI report completed inference statistics to the configured
+VictoriaLogs endpoint. See [runtime telemetry](docs/runtime-telemetry.md) for the complete
+record, deployment opt-out, custom endpoints, and native library integration.
 
 Runtime owns inference and its evidence. Applications own authorization, tool execution, UI, and product sessions. Training owns optimizer state, QAT, evaluation datasets, and release metadata. Converters operate offline; Rust builds never invoke Python.
 

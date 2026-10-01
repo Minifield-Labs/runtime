@@ -1,5 +1,6 @@
 //! Bundle loading into the browser's WebGPU backend.
 
+use super::telemetry::BrowserTelemetry;
 use minifield_backend_wgpu::WgpuBackend;
 use minifield_engine_api::{MemoryAssetProvider, ResourceLimits};
 use minifield_executor_core::{
@@ -7,6 +8,7 @@ use minifield_executor_core::{
     Lfm2WeightLoadTask, LoaderLimits, LoaderPoll, detect_lfm2_weight_format,
     parse_lfm2_tensor_quantization,
 };
+use minifield_runtime_telemetry::Model;
 use minifield_text_tokenizer::{Tokenizer, TokenizerLimits};
 use sha2::{Digest, Sha256};
 use wasm_bindgen::{JsValue, prelude::wasm_bindgen};
@@ -23,7 +25,9 @@ pub async fn load(
     weights: Vec<u8>,
     tokenizer: Vec<u8>,
 ) -> Result<WebDemo, JsValue> {
-    let (backend, typed) = load_weights(config, weights, None).await?;
+    let (backend, typed, model) =
+        load_weights(config, weights, Sha256::digest(&tokenizer).into(), None).await?;
+    let telemetry = BrowserTelemetry::new(model, &backend);
     let executor = Lfm2Executor::new(
         backend,
         typed,
@@ -35,6 +39,7 @@ pub async fn load(
     let tokenizer =
         Tokenizer::from_json_bytes(&tokenizer, TokenizerLimits::default()).map_err(js_error)?;
     Ok(WebDemo {
+        telemetry,
         executor,
         tokenizer,
         tool_prefix: None,
@@ -44,11 +49,13 @@ pub async fn load(
 async fn load_weights(
     config: Vec<u8>,
     weights: Vec<u8>,
+    tokenizer_hash: [u8; 32],
     classes: Option<u32>,
 ) -> Result<
     (
         WgpuBackend,
         Lfm2TypedWeights<minifield_backend_wgpu::WgpuBuffer>,
+        Model,
     ),
     JsValue,
 > {
@@ -72,13 +79,15 @@ async fn load_weights(
         max_rank: 4,
     };
     let format = detect_lfm2_weight_format(&weights).map_err(js_debug)?;
+    let config_hash = Sha256::digest(&config).into();
+    let weight_hash = Sha256::digest(&weights).into();
     let quantization = parse_lfm2_tensor_quantization(&weights).map_err(js_debug)?;
     let request = match classes {
         Some(classes) => Lfm2LoadRequest::new_classifier_with_quantization(
             config.clone(),
-            Sha256::digest(&config).into(),
+            config_hash,
             weights_len,
-            Sha256::digest(&weights).into(),
+            weight_hash,
             loader_limits,
             classes,
             format,
@@ -86,15 +95,20 @@ async fn load_weights(
         ),
         None => Lfm2LoadRequest::new_with_quantization(
             config.clone(),
-            Sha256::digest(&config).into(),
+            config_hash,
             weights_len,
-            Sha256::digest(&weights).into(),
+            weight_hash,
             loader_limits,
             format,
             &quantization,
         ),
     }
     .map_err(js_debug)?;
+    let model = Model::from_plan(
+        request.plan(),
+        &quantization,
+        [config_hash, weight_hash, tokenizer_hash],
+    );
     let mut provider = MemoryAssetProvider::new(weights, weights_len);
     let mut task = Lfm2WeightLoadTask::begin(request).map_err(js_debug)?;
     let typed = loop {
@@ -103,7 +117,7 @@ async fn load_weights(
             LoaderPoll::Ready(result) => break result.map_err(js_debug)?,
         }
     };
-    Ok((backend, typed))
+    Ok((backend, typed, model))
 }
 
 #[wasm_bindgen]
@@ -113,14 +127,19 @@ pub async fn load_classifier(
     tokenizer: Vec<u8>,
     classes: u32,
 ) -> Result<WebClassifier, JsValue> {
+    let tokenizer_hash = Sha256::digest(&tokenizer).into();
     let tokenizer =
         Tokenizer::from_json_bytes(&tokenizer, TokenizerLimits::default()).map_err(js_error)?;
-    let (backend, typed) = load_weights(config, weights, Some(classes)).await?;
+    let (backend, typed, model) =
+        load_weights(config, weights, tokenizer_hash, Some(classes)).await?;
+    let telemetry = BrowserTelemetry::new(model, &backend);
     let limits = Lfm2ExecutionLimits {
         max_logical_tokens: MAX_LOGICAL_TOKENS,
     };
     let classifier = Lfm2Classifier::new(backend, typed, limits).map_err(js_error)?;
     Ok(WebClassifier {
+        telemetry,
+        classes,
         classifier,
         tokenizer,
         max_logical_tokens: limits.max_logical_tokens,

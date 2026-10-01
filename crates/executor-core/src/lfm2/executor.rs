@@ -78,6 +78,7 @@ impl Lfm2ExecutionLimits {
 }
 
 struct ModelContext<B: InferenceOps> {
+    work: Cell<super::InferenceWork>,
     backend: Rc<RefCell<B>>,
     retirement: Rc<B::FenceRetirement>,
     weights: Rc<Lfm2TypedWeights<B::Buffer>>,

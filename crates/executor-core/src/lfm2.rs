@@ -2,6 +2,8 @@ pub mod config;
 pub mod encoder;
 pub mod executor;
 pub mod weights;
+pub mod work;
+pub use work::{FLOPS_ESTIMATOR_VERSION, InferenceWork};
 
 pub use config::{LayerKind, Lfm2Config, Lfm2StorageDType, NumericalMode, parse_lfm2_config};
 pub use encoder::{

@@ -1,4 +1,4 @@
-import init, { load_classifier } from "./pkg/minifield_web_demo.js";
+import { qualifyTelemetry } from "./telemetry-qualification.mjs";
 import { createYieldScheduler } from "./yield.mjs";
 
 const scheduler = createYieldScheduler();
@@ -19,7 +19,20 @@ async function qualify() {
     ["vendor", "architecture", "device", "description"].map(key => [key, info?.[key] ?? "unknown"]),
   );
   const profile = await (await fetch("/qualification-profile.json")).json();
-  await init();
+  let runtime;
+  if (profile.module === "blob") {
+    const [script, wasm] = await Promise.all([bytes("/web/pkg/minifield_web_demo.js"), bytes("/web/pkg/minifield_web_demo_bg.wasm")]);
+    const url = URL.createObjectURL(new Blob([script], { type: "text/javascript" }));
+    try {
+      runtime = await import(url);
+      await runtime.default({ module_or_path: wasm });
+    } finally { URL.revokeObjectURL(url); }
+  } else {
+    runtime = await import("./pkg/minifield_web_demo.js");
+    await runtime.default();
+  }
+  const { load_classifier, configure_telemetry, flush_telemetry } = runtime;
+  configure_telemetry({ endpoint: `http://localhost:${location.port}/telemetry-test`, environment: "test", integrationId: "browser-qualification" });
   const assets = await Promise.all(["config.json", "model.safetensors", "tokenizer.json"].map(name => bytes(`/assets/${name}`)));
   const started = performance.now();
   const classifier = await load_classifier(...assets, profile.classes);
@@ -44,7 +57,9 @@ async function qualify() {
     try { await classifier.classify(""); } catch { emptyRejected = true; }
     if (!emptyRejected) throw new Error("Empty classifier input was accepted");
     const recovery = Array.from(await classifier.classify(profile.prompts[0]));
-    return { browser: navigator.userAgent, adapter: adapterInfo, initializationSeconds, full, cached, recovery, emptyRejected };
+    await flush_telemetry();
+    const telemetry = await qualifyTelemetry(classifier, profile, runtime);
+    return { browser: navigator.userAgent, adapter: adapterInfo, moduleSource: profile.module, initializationSeconds, full, cached, recovery, emptyRejected, telemetry };
   } finally {
     classifier.free();
     scheduler.close();

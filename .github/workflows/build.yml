@@ -101,6 +101,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.89.0
         with:
           targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install locked browser build dependencies
+        run: npm ci
       - name: Build browser runtime
         run: >-
           cargo build --locked --release --target wasm32-unknown-unknown
@@ -120,8 +125,9 @@ jobs:
       - name: Generate browser bindings and package
         run: |
           package=minifield-web-wasm32-unknown-unknown
-          wasm-bindgen --target web --out-dir "dist/$package/pkg" \
-            target/wasm32-unknown-unknown/release/minifield_web_demo.wasm
+          npm run build:web
+          mkdir -p "dist/$package/pkg"
+          cp -R web/pkg/. "dist/$package/pkg/"
           cp LICENSE THIRD_PARTY.md "dist/$package/"
           printf '%s\n' "$GITHUB_SHA" > "dist/$package/REVISION"
           tar -czf "dist/$package.tar.gz" -C dist "$package"

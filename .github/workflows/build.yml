@@ -130,3 +130,70 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
+
+  cloudflare:
+    name: Publish runtime to Cloudflare R2
+    needs: [native, wasm]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      R2_BUCKET: minifield-cdn
+      R2_PUBLIC_URL: ${{ vars.CLOUDFLARE_R2_PUBLIC_URL }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+    steps:
+      - name: Check Cloudflare configuration
+        run: |
+          : "${CLOUDFLARE_ACCOUNT_ID:?Set the CLOUDFLARE_ACCOUNT_ID repository variable}"
+          : "${AWS_ACCESS_KEY_ID:?Set the R2_ACCESS_KEY_ID repository secret}"
+          : "${AWS_SECRET_ACCESS_KEY:?Set the R2_SECRET_ACCESS_KEY repository secret}"
+          aws --version
+      - name: Download this build's runtime packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: minifield-*
+          path: artifacts
+          merge-multiple: true
+      - name: Prepare CDN assets and package checksums
+        run: |
+          mkdir -p extracted cloudflare
+          tar -xzf artifacts/minifield-web-wasm32-unknown-unknown.tar.gz \
+            --strip-components=1 -C extracted
+          test "$(cat extracted/REVISION)" = "$GITHUB_SHA"
+          cp -R extracted/pkg/. cloudflare/
+          cp extracted/LICENSE extracted/THIRD_PARTY.md extracted/REVISION cloudflare/
+          test -s cloudflare/minifield_web_demo.js
+          test -s cloudflare/minifield_web_demo_bg.wasm
+          (cd artifacts && sha256sum ./*.tar.gz > SHA256SUMS)
+      - name: Upload assets and packages to Cloudflare
+        run: |
+          endpoint="https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com"
+          prefix="minifield-runtime/releases/$GITHUB_SHA/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          destination="s3://$R2_BUCKET/$prefix"
+          cache_control='public,max-age=31536000,immutable'
+          aws s3 cp cloudflare/ "$destination/" --recursive --exclude '*.wasm' \
+            --endpoint-url "$endpoint" --cache-control "$cache_control" --only-show-errors
+          aws s3 cp cloudflare/minifield_web_demo_bg.wasm "$destination/minifield_web_demo_bg.wasm" \
+            --endpoint-url "$endpoint" --content-type application/wasm \
+            --cache-control "$cache_control" --only-show-errors
+          aws s3 cp artifacts/ "$destination/downloads/" --recursive --exclude '*' --include '*.tar.gz' \
+            --endpoint-url "$endpoint" --content-type application/gzip \
+            --cache-control "$cache_control" --only-show-errors
+          aws s3 cp artifacts/SHA256SUMS "$destination/downloads/SHA256SUMS" \
+            --endpoint-url "$endpoint" --content-type text/plain \
+            --cache-control "$cache_control" --only-show-errors
+          printf 'Cloudflare R2 release: `%s/`\n' "$destination" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$R2_PUBLIC_URL" ]; then
+            public_url="${R2_PUBLIC_URL%/}/$prefix"
+            printf '\nRuntime JS: %s/minifield_web_demo.js\n\nRuntime WASM: %s/minifield_web_demo_bg.wasm\n\nPackages and checksums: %s/downloads/\n' \
+              "$public_url" "$public_url" "$public_url" >> "$GITHUB_STEP_SUMMARY"
+          fi

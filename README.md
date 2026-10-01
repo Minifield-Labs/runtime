@@ -15,7 +15,13 @@ scripts/check.sh ci
 
 `ci` runs portable tests, lints, contracts, JavaScript, and converter checks. GPU and browser qualification require actual hardware. See [the development procedure](docs/procedure.md).
 
-The [build workflow](.github/workflows/build.yml) builds release runtime libraries on Linux, macOS, and Windows for x64 and ARM64 after changes land on `main`. Downloadable artifacts contain the native CPU CLI or the browser WASM runtime with JavaScript bindings, plus licenses and the source revision. Artifacts expire after 7 days; the workflow can also be run manually from Actions.
+The [build workflow](.github/workflows/build.yml) builds release runtime libraries on Linux, macOS, and Windows for x64 and ARM64 after changes land on `main`. It publishes the browser JS/WASM files and all target packages to the Cloudflare R2 bucket `minifield-cdn` under `minifield-runtime/releases/<commit>/<run>-<attempt>/`, with archive checksums, licenses, and the source revision.
+
+The Actions summary contains the release location; temporary Actions copies expire after 7 days. The workflow can also be run manually; Cloudflare publishing runs only for `main`.
+
+Configure repository variable `CLOUDFLARE_ACCOUNT_ID`, plus secrets `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` for an R2 key with object read/write access to `minifield-cdn`. Set `CLOUDFLARE_R2_PUBLIC_URL` to the bucket's public HTTPS origin to include CDN links in the Actions summary.
+
+The bucket's public domain and CORS policy must allow our sites to import the JS and fetch WASM. Keep lifecycle expiry disabled for `minifield-runtime/releases/` so published versions stay available.
 
 Run a local language-model bundle on the CPU:
 

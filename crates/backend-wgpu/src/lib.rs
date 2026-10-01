@@ -25,6 +25,7 @@ mod attention_convolution;
 mod completion;
 mod dense;
 mod dispatch;
+mod encoder;
 mod normalization;
 mod packed;
 mod sampling;
@@ -128,6 +129,8 @@ enum PackedStreamFormat {
     /// `minifield.nf4.v1`: two 4-bit codebook indices per byte (low nibble
     /// first), `k/2` code bytes per row, `w = NF4[code] * scale`.
     Nf4V1,
+    /// Signed byte codes, one weight per byte, group-128 scales.
+    Int8V1,
 }
 
 /// Physical packing of a byte buffer. Repacked codes cannot enter raw kernels.
@@ -329,6 +332,11 @@ impl WgpuBackend {
     }
 
     #[must_use]
+    pub fn peak_accounted_bytes(&self) -> u64 {
+        self.device.tracker.borrow().peak_accounted_bytes.get()
+    }
+
+    #[must_use]
     pub fn resource_report(&self) -> ResourceReport {
         let tracker = self.device.tracker.borrow();
         ResourceReport {
@@ -471,6 +479,12 @@ impl WgpuBackend {
             .ok_or(ExecutorError::Overflow(
                 "completion result bytes overflow u64",
             ))?;
+        tracker.peak_accounted_bytes.set(
+            tracker
+                .peak_accounted_bytes
+                .get()
+                .max(tracker_owned_bytes(&tracker)?),
+        );
         Ok(())
     }
 

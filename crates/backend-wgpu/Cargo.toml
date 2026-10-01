@@ -16,6 +16,7 @@ wgpu = "=30.0.1"
 [dev-dependencies]
 minifield-backend-cpu = { path = "../backend-cpu" }
 minifield-executor-core = { path = "../executor-core" }
+naga = { version = "=30.0.1", features = ["wgsl-in"] }
 sha2 = "=0.10.9"
 
 [lints]

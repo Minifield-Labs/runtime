@@ -16,6 +16,26 @@ fn limits() -> ResourceLimits {
 }
 
 #[test]
+fn peak_accounting_includes_readback_ownership_and_survives_release() {
+    let mut backend = CpuBackend::new(7, limits());
+    assert_eq!(backend.peak_accounted_bytes(), 0);
+    let buffer = backend
+        .upload_f32(Shape::new(&[2]).expect("shape"), &[1.0, 2.0])
+        .expect("buffer");
+    assert_eq!(backend.peak_accounted_bytes(), 8);
+    let mut readback = backend.read_f32_async(&buffer).expect("readback");
+    assert_eq!(backend.peak_accounted_bytes(), 16);
+    assert_eq!(backend.resource_report().total_owned_bytes(), Ok(16));
+    assert_eq!(
+        readback.poll_step(),
+        CompletionPoll::Ready(Ok(vec![1.0, 2.0]))
+    );
+    drop(buffer);
+    assert_eq!(backend.resource_report().total_owned_bytes(), Ok(0));
+    assert_eq!(backend.peak_accounted_bytes(), 16);
+}
+
+#[test]
 fn completion_retains_buffers_for_pending_success_and_error() {
     let mut backend = CpuBackend::new(7, limits());
     let buffer = backend

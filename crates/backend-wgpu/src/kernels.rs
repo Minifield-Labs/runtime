@@ -231,6 +231,8 @@ const NF4_SWIGLU_HEADER: &str = include_str!("shaders/nf4_swiglu_header.wgsl");
 /// Kernel identifiers in lazy-pipeline-cache order.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Kernel {
+    EncoderGqa,
+    EncoderConv,
     Fill,
     Binary,
     Copy2d,
@@ -251,18 +253,23 @@ pub enum Kernel {
     PackedSwigluGemv,
     PackedGemvNf4,
     PackedGatherNf4,
+    PackedGatherInt8,
     PackedGemvPairNf4,
     PackedSwigluGemvNf4,
     PackedGemvMtNf4,
     PackedGemmNf4,
+    PackedGemmInt8,
     PackedGemmTernary,
     PackedGemvPairMtNf4,
     PackedGemmPairNf4,
+    PackedGemmPairInt8,
     PackedGemmPairTernary,
     PackedSwigluGemvMtNf4,
     PackedSwigluGemmNf4,
+    PackedSwigluGemmInt8,
     PackedSwigluGemmTernary,
     PackedGemmPairSwigluNf4,
+    PackedGemmPairSwigluInt8,
     PackedGemmPairSwiglu,
     PackedGemmTernaryScale128,
     PackedGemmNf4Scale128,
@@ -285,6 +292,8 @@ pub enum Kernel {
 
 impl Kernel {
     pub const ALL: &[Self] = &[
+        Self::EncoderGqa,
+        Self::EncoderConv,
         Self::Fill,
         Self::Binary,
         Self::Copy2d,
@@ -305,18 +314,23 @@ impl Kernel {
         Self::PackedSwigluGemv,
         Self::PackedGemvNf4,
         Self::PackedGatherNf4,
+        Self::PackedGatherInt8,
         Self::PackedGemvPairNf4,
         Self::PackedSwigluGemvNf4,
         Self::PackedGemvMtNf4,
         Self::PackedGemmNf4,
+        Self::PackedGemmInt8,
         Self::PackedGemmTernary,
         Self::PackedGemvPairMtNf4,
         Self::PackedGemmPairNf4,
+        Self::PackedGemmPairInt8,
         Self::PackedGemmPairTernary,
         Self::PackedSwigluGemvMtNf4,
         Self::PackedSwigluGemmNf4,
+        Self::PackedSwigluGemmInt8,
         Self::PackedSwigluGemmTernary,
         Self::PackedGemmPairSwigluNf4,
+        Self::PackedGemmPairSwigluInt8,
         Self::PackedGemmPairSwiglu,
         Self::PackedGemmTernaryScale128,
         Self::PackedGemmNf4Scale128,
@@ -343,11 +357,14 @@ impl Kernel {
     /// declare the same positions read-only.
     pub const fn read_only_mask(self) -> u32 {
         match self {
+            Self::EncoderGqa => 0b0001_1110,
+            Self::EncoderConv => 0b1110,
             Self::Gemv => 0b11100, // x, w, w4
             Self::PackedGemv
             | Self::PackedGemvNf4
             | Self::PackedGemvMtNf4
             | Self::PackedGemmNf4
+            | Self::PackedGemmInt8
             | Self::PackedGemmTernary
             | Self::PackedGemmTernaryScale128
             | Self::PackedGemmNf4Scale128
@@ -362,6 +379,7 @@ impl Kernel {
             | Self::PackedGemvPairNf4
             | Self::PackedGemvPairMtNf4
             | Self::PackedGemmPairNf4
+            | Self::PackedGemmPairInt8
             | Self::PackedGemmPairTernary => {
                 0b1_1111_1000 // x, a+b, x4
             }
@@ -369,8 +387,10 @@ impl Kernel {
             | Self::PackedSwigluGemvNf4
             | Self::PackedSwigluGemvMtNf4
             | Self::PackedSwigluGemmNf4
+            | Self::PackedSwigluGemmInt8
             | Self::PackedSwigluGemmTernary
             | Self::PackedGemmPairSwigluNf4
+            | Self::PackedGemmPairSwigluInt8
             | Self::PackedGemmPairSwiglu
             | Self::PackedGemmPairSwigluLut2 => {
                 0b1111_1100 // x, a+b streams, x4
@@ -387,6 +407,13 @@ impl Kernel {
     #[allow(clippy::too_many_lines)] // Registry maps each finite operation to its shader body.
     pub fn source(self, staging: crate::Nf4Staging) -> String {
         let body = match self {
+            Self::EncoderGqa => include_str!("shaders/encoder_gqa.wgsl"),
+            Self::EncoderConv => include_str!("shaders/encoder_conv.wgsl"),
+            Self::PackedGatherInt8 => include_str!("shaders/packed_gather_int8.wgsl"),
+            Self::PackedGemmPairSwigluInt8 => include_str!("shaders/int8_pair_swiglu_header.wgsl"),
+            Self::PackedSwigluGemmInt8 => include_str!("shaders/int8_swiglu_header.wgsl"),
+            Self::PackedGemmPairInt8 => include_str!("shaders/int8_pair_header.wgsl"),
+            Self::PackedGemmInt8 => include_str!("shaders/int8_linear_header.wgsl"),
             Self::PackedGemmNf4 => NF4_LINEAR_HEADER,
             Self::PackedGemmTernary => TERNARY_LINEAR_HEADER,
             Self::PackedGemmPairNf4 => NF4_PAIR_HEADER,
@@ -441,18 +468,26 @@ impl Kernel {
         };
         if matches!(
             self,
-            Self::PackedGemmNf4
+            Self::PackedGemmInt8
+                | Self::PackedGemmNf4
                 | Self::PackedGemmTernary
                 | Self::PackedGemmPairNf4
+                | Self::PackedGemmPairInt8
                 | Self::PackedGemmPairTernary
                 | Self::PackedSwigluGemmNf4
+                | Self::PackedSwigluGemmInt8
                 | Self::PackedSwigluGemmTernary
                 | Self::PackedGemmPairSwigluNf4
+                | Self::PackedGemmPairSwigluInt8
                 | Self::PackedGemmPairSwiglu
         ) {
             let lut = if matches!(
                 self,
-                Self::PackedGemmPairSwiglu
+                Self::PackedGemmInt8
+                    | Self::PackedGemmPairInt8
+                    | Self::PackedSwigluGemmInt8
+                    | Self::PackedGemmPairSwigluInt8
+                    | Self::PackedGemmPairSwiglu
                     | Self::PackedGemmTernary
                     | Self::PackedGemmPairTernary
                     | Self::PackedSwigluGemmTernary
@@ -461,7 +496,15 @@ impl Kernel {
             } else {
                 NF4_LUT
             };
-            if staging != crate::Nf4Staging::F32 {
+            if staging != crate::Nf4Staging::F32
+                && !matches!(
+                    self,
+                    Self::PackedGemmInt8
+                        | Self::PackedGemmPairInt8
+                        | Self::PackedSwigluGemmInt8
+                        | Self::PackedGemmPairSwigluInt8
+                )
+            {
                 let (stg_x, stg_w) = staging.types();
                 let tile = include_str!("shaders/experimental/nf4_prefill_f16.wgsl")
                     .replace("__STGX__", stg_x)
@@ -559,6 +602,7 @@ impl Kernel {
     /// Storage-buffer bindings after the uniform params binding.
     pub const fn storage_bindings(self) -> u32 {
         match self {
+            Self::EncoderGqa => 6,
             Self::Fill => 1,
             Self::ArgmaxFinal | Self::Copy2d | Self::RepackTernaryLut2 => 2,
             Self::Argmax
@@ -571,13 +615,19 @@ impl Kernel {
             | Self::Rotary
             | Self::ConvGate
             | Self::SwiGlu => 3,
-            Self::Gemv | Self::Conv | Self::PackedGather | Self::PackedGatherNf4 => 4,
+            Self::EncoderConv
+            | Self::Gemv
+            | Self::Conv
+            | Self::PackedGather
+            | Self::PackedGatherNf4
+            | Self::PackedGatherInt8 => 4,
             Self::AddNorm
             | Self::ConvStep
             | Self::PackedGemv
             | Self::PackedGemvNf4
             | Self::PackedGemvMtNf4
             | Self::PackedGemmNf4
+            | Self::PackedGemmInt8
             | Self::PackedGemmTernary
             | Self::PackedGemmTernaryScale128
             | Self::PackedGemmNf4Scale128
@@ -594,21 +644,26 @@ impl Kernel {
             | Self::PackedSwigluGemvNf4
             | Self::PackedSwigluGemvMtNf4
             | Self::PackedSwigluGemmNf4
+            | Self::PackedSwigluGemmInt8
             | Self::PackedSwigluGemmTernary
             | Self::QkNormRope
             | Self::PackedGemmPairSwigluNf4
+            | Self::PackedGemmPairSwigluInt8
             | Self::PackedGemmPairSwiglu
             | Self::PackedGemmPairSwigluLut2 => 7,
             Self::PackedGemvPair
             | Self::PackedGemvPairNf4
             | Self::PackedGemvPairMtNf4
             | Self::PackedGemmPairNf4
+            | Self::PackedGemmPairInt8
             | Self::PackedGemmPairTernary => 8,
         }
     }
 
     pub const fn name(self) -> &'static str {
         match self {
+            Self::EncoderGqa => "encoder_gqa",
+            Self::EncoderConv => "encoder_conv",
             Self::Fill => "fill",
             Self::Binary => "binary",
             Self::Copy2d => "copy2d",
@@ -628,18 +683,23 @@ impl Kernel {
             Self::PackedGemvPair => "packed_gemv_pair",
             Self::PackedSwigluGemv => "packed_swiglu_gemv",
             Self::PackedGemvNf4 => "packed_gemv_nf4",
+            Self::PackedGatherInt8 => "packed_gather_int8",
             Self::PackedGatherNf4 => "packed_gather_nf4",
             Self::PackedGemvPairNf4 => "packed_gemv_pair_nf4",
             Self::PackedSwigluGemvNf4 => "packed_swiglu_gemv_nf4",
+            Self::PackedGemmInt8 => "packed_gemm_int8",
             Self::PackedGemmNf4 => "packed_gemm_nf4",
             Self::PackedGemmTernary => "packed_gemm_ternary",
             Self::PackedGemvMtNf4 => "packed_gemv_mt_nf4",
+            Self::PackedGemmPairInt8 => "packed_gemm_pair_int8",
             Self::PackedGemmPairNf4 => "packed_gemm_pair_nf4",
             Self::PackedGemmPairTernary => "packed_gemm_pair_ternary",
             Self::PackedGemvPairMtNf4 => "packed_gemv_pair_mt_nf4",
+            Self::PackedSwigluGemmInt8 => "packed_swiglu_gemm_int8",
             Self::PackedSwigluGemmNf4 => "packed_swiglu_gemm_nf4",
             Self::PackedSwigluGemmTernary => "packed_swiglu_gemm_ternary",
             Self::PackedSwigluGemvMtNf4 => "packed_swiglu_gemv_mt_nf4",
+            Self::PackedGemmPairSwigluInt8 => "packed_gemm_pair_swiglu_int8",
             Self::PackedGemmPairSwigluNf4 => "packed_gemm_pair_swiglu_nf4",
             Self::PackedGemmPairSwiglu => "packed_gemm_pair_swiglu",
             Self::PackedGemmTernaryScale128 => "packed_gemm_ternary_scale128",

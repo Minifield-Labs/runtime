@@ -1,0 +1,30 @@
+[package]
+name = "minifield-backend-metal"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Independent native Metal inference operations and completion ownership"
+
+[dependencies]
+minifield-engine-api = { path = "../engine-api" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.6.4"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSError"] }
+objc2-metal = { version = "=0.3.2", default-features = false, features = ["std", "MTLAllocation", "MTLBuffer", "MTLResource", "MTLDevice", "MTLCommandQueue", "MTLCommandBuffer", "MTLCommandEncoder", "MTLComputeCommandEncoder", "MTLBlitCommandEncoder", "MTLComputePipeline", "MTLLibrary", "MTLTypes"] }
+
+[dev-dependencies]
+minifield-backend-cpu = { path = "../backend-cpu" }
+
+# The only unsafe operations are the reviewed Objective-C bridge and checked
+# shared-storage access. Other modules keep the workspace's safe-code policy.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"

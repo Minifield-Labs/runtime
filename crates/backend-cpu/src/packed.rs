@@ -4,10 +4,9 @@ use super::{CpuBackend, CpuBuffer};
 use minifield_engine_api::{ExecutorError, OperationKind, Result, Shape, TokenIds};
 
 impl CpuBackend {
-    /// Gather packed ternary rows and dequantize them into an f32 [ids, k] output.
-    /// Codes are the `minifield.ternary.v1` U8 stream: 128 weights per group,
-    /// 32 bytes per group, weight j at byte `j / 4` bits `2 * (j % 4)`.
-    /// Decoded weight `w = (code - 1) * scale`.
+    /// Gather canonical ternary, NF4, or signed INT8 rows into F32 [ids, k].
+    /// Every format applies one scale per 128 weights; codes width chooses
+    /// the 2-bit, 4-bit, or signed-byte decoder.
     #[allow(clippy::needless_pass_by_value)]
     pub fn packed_gather_rows(
         &self,
@@ -71,6 +70,9 @@ impl CpuBackend {
                             & 0x3;
                         f32::from(code) - 1.0
                     }
+                    minifield_kernels_simd::PackedWeightFormat::Int8V1 => {
+                        f32::from(i8::from_ne_bytes([codes.bytes[code_start + index]]))
+                    }
                     minifield_kernels_simd::PackedWeightFormat::Nf4V1 => {
                         let byte = codes.bytes[code_start + group * 64 + within / 2];
                         let nibble = if within % 2 == 0 {
@@ -88,8 +90,9 @@ impl CpuBackend {
         Ok(())
     }
 
-    /// Packed ternary linear: input [m, k] times dequantized weight [n, k].
-    /// Accumulation is sequential f32 in increasing k order, matching `linear`.
+    /// Packed linear: input [m, k] times decoded weight [n, k].
+    /// Group-dot kernels accumulate products within each 128-weight group,
+    /// then apply the scale. F32 reduction order can differ from dense linear.
     pub fn packed_linear(
         &self,
         output: &mut CpuBuffer,
@@ -131,6 +134,9 @@ impl CpuBackend {
             minifield_kernels_simd::PackedWeightFormat::Nf4V1 => {
                 minifield_kernels_simd::nf4_row_dot
             }
+            minifield_kernels_simd::PackedWeightFormat::Int8V1 => {
+                minifield_kernels_simd::int8_row_dot
+            }
         };
         for row in 0..rows {
             for column in 0..output_width {
@@ -145,8 +151,8 @@ impl CpuBackend {
                 let input_start = row.checked_mul(inner).ok_or(ExecutorError::Overflow(
                     "packed input offset overflows usize",
                 ))?;
-                // SIMD group dot (NEON on aarch64, scalar elsewhere) computes
-                // the same products; only f32 accumulation order differs.
+                // Packed group dots apply scales after their within-group reduction.
+                // Their F32 rounding can differ from decoded dense arithmetic.
                 let accumulator = row_dot(
                     &codes.bytes[code_start..code_start + code_width],
                     &scales.values[scale_start..scale_start + groups],
@@ -167,7 +173,7 @@ impl CpuBackend {
     /// stream format). `scales` must be f32 [rows, k/128] for every packed
     /// format, so `k` comes from the scales width; the codes width then picks
     /// the decode unambiguously: `k/4` bytes is `minifield.ternary.v1`, `k/2`
-    /// bytes is `minifield.nf4.v1`.
+    /// bytes is `minifield.nf4.v1`, and `k` bytes is signed INT8.
     fn check_packed_operands(
         &self,
         codes: &CpuBuffer,
@@ -195,9 +201,14 @@ impl CpuBackend {
             minifield_kernels_simd::PackedWeightFormat::TernaryV1
         } else if code_width == inner / 2 {
             minifield_kernels_simd::PackedWeightFormat::Nf4V1
+        } else if code_width == inner {
+            if codes.bytes.contains(&128) {
+                return Err(ExecutorError::InvalidArgument("INT8 -128 code is reserved"));
+            }
+            minifield_kernels_simd::PackedWeightFormat::Int8V1
         } else {
             return Err(ExecutorError::InvalidShape(
-                "packed code width is neither inner/4 (ternary) nor inner/2 (nf4)",
+                "packed code width must be inner/4 (ternary), inner/2 (nf4), or inner (int8)",
             ));
         };
         if scales_shape.dim(0)? != codes_shape.dim(0)? {
@@ -208,7 +219,7 @@ impl CpuBackend {
         Ok((rows, inner, format))
     }
 
-    /// Two packed ternary projections sharing one input, issued as two
+    /// Two packed projections sharing one input, issued as two
     /// sequential `packed_linear` passes. Both weight sets must share one
     /// `[R, K]` shape so the outputs share `[T, R]`.
     #[allow(clippy::too_many_arguments)]
@@ -319,6 +330,9 @@ impl CpuBackend {
             minifield_kernels_simd::PackedWeightFormat::Nf4V1 => {
                 minifield_kernels_simd::nf4_row_dot
             }
+            minifield_kernels_simd::PackedWeightFormat::Int8V1 => {
+                minifield_kernels_simd::int8_row_dot
+            }
         };
         for row in 0..rows {
             let input_start = row.checked_mul(inner).ok_or(ExecutorError::Overflow(
@@ -357,7 +371,7 @@ impl CpuBackend {
         Ok(())
     }
 
-    /// Packed ternary projection over an on-the-fly `SiLU(gate) * up`
+    /// Packed projection over an on-the-fly `SiLU(gate) * up`
     /// activation. The staged activation feeds the same SIMD row dot as
     /// `packed_linear`.
     pub fn packed_swiglu_linear(
@@ -403,6 +417,9 @@ impl CpuBackend {
             }
             minifield_kernels_simd::PackedWeightFormat::Nf4V1 => {
                 minifield_kernels_simd::nf4_row_dot
+            }
+            minifield_kernels_simd::PackedWeightFormat::Int8V1 => {
+                minifield_kernels_simd::int8_row_dot
             }
         };
         let mut activated = self.stage_f32(inner)?;

@@ -46,6 +46,14 @@ pub trait InferenceOps {
     fn poll_retired_fences(&self) -> Result<()>;
     fn capabilities(&self) -> BackendCapabilities;
     fn resource_report(&self) -> ResourceReport;
+
+    /// Highest total backend-accounted storage since construction, including
+    /// completion results and physical pools. Driver memory isn't included.
+    fn peak_accounted_bytes(&self) -> Result<u64> {
+        Err(ExecutorError::Unsupported(
+            "backend has no peak resource counter",
+        ))
+    }
     fn advance_generation(&mut self) -> Result<()>;
 
     /// Allocate an f32 buffer with an explicit lifetime/accounting class.

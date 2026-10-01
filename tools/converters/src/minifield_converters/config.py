@@ -99,7 +99,7 @@ def is_quantized_role(name: str, shape: tuple[int, ...]) -> bool:
     return len(shape) == 2 and name != "classification_head.weight"
 
 
-def validate_config(value: Any) -> Lfm2Config:
+def validate_config(value: Any, *, allow_f16: bool = False) -> Lfm2Config:
     if not isinstance(value, dict) or value.get("model_type") != "lfm2":
         raise ConversionError("only config model_type=lfm2 is supported")
     config = value
@@ -174,7 +174,10 @@ def validate_config(value: Any) -> Lfm2Config:
             config["max_position_embeddings"], "max_position_embeddings", 2**64 - 1
         )
     dtype = config.get("dtype", "float32")
-    if dtype not in ("float32", "f32", "bfloat16", "bf16"):
+    dtypes = {"float32": "F32", "f32": "F32", "bfloat16": "BF16", "bf16": "BF16"}
+    if allow_f16:
+        dtypes.update({"float16": "F16", "f16": "F16"})
+    if dtype not in dtypes:
         raise ConversionError("only dense F32 and BF16 source storage is supported")
     return Lfm2Config(
         hidden,
@@ -184,5 +187,5 @@ def validate_config(value: Any) -> Lfm2Config:
         _integer(config.get("conv_L_cache"), "conv_L_cache"),
         _integer(config.get("vocab_size"), "vocab_size", 65536),
         tuple(layers),
-        "BF16" if dtype in ("bfloat16", "bf16") else "F32",
+        dtypes[dtype],
     )

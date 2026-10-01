@@ -1,6 +1,6 @@
 # Minifield Runtime
 
-Local LFM2 inference in Rust, with CPU and WebGPU backends. The runtime loads dense or packed weights, tokenizes input, runs generation or classification, and supports reusable prefixes and constrained decoding.
+Local LFM2 inference in Rust, with CPU, WebGPU, and independent native Metal backends. The runtime loads dense or packed weights, tokenizes input, runs generation or classification, and supports reusable prefixes and constrained decoding.
 
 This is an early implementation with tested numerical paths and explicit limits. Hardware support and model quality require evidence for the actual bundle and device. Trained weights and a finished product integration aren't included.
 
@@ -15,6 +15,16 @@ scripts/check.sh ci
 
 `ci` runs portable tests, lints, contracts, JavaScript, and converter checks. GPU and browser qualification require actual hardware. See [the development procedure](docs/procedure.md).
 
+The [build workflow](.github/workflows/build.yml) builds release runtime libraries on Linux, macOS, and Windows for x64 and ARM64 after changes land on `main`. It publishes the browser JS/WASM files and all target packages to the Cloudflare R2 bucket `minifield-cdn` under `minifield-runtime/releases/<version>/`, with archive checksums, licenses, and the source revision.
+
+Versions use `YYYY.MM.DD.<build-number>`, for example `2026.09.30.42`, using the America/Toronto date and GitHub's increasing workflow run number. Reruns append `-r2`, `-r3`, and so on. Each release includes `VERSION` and `REVISION` files.
+
+The Actions summary contains the release location; temporary Actions copies expire after 7 days. The workflow can also be run manually; Cloudflare publishing runs only for `main`.
+
+Configure repository variable `CLOUDFLARE_ACCOUNT_ID`, plus secrets `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` for an R2 key with object read/write access to `minifield-cdn`. Set `CLOUDFLARE_R2_PUBLIC_URL` to the bucket's public HTTPS origin to include CDN links in the Actions summary.
+
+The bucket's public domain and CORS policy must allow our sites to import the JS and fetch WASM. Keep lifecycle expiry disabled for `minifield-runtime/releases/` so published versions stay available.
+
 Run a local language-model bundle on the CPU:
 
 ```sh
@@ -23,7 +33,7 @@ printf 'Hello' | cargo run --release --locked -p minifield-infer -- --model-dir 
 
 The directory must contain `config.json`, `model.safetensors`, and `tokenizer/tokenizer.json`. The CLI consumes the prompt exactly as supplied. Callers own chat templates and product policy.
 
-Use [bundle qualification](tools/qualification/README.md) for GPU classification and matched quantization benchmarks, [the browser harness](web/README.md) for WASM execution, and [offline converters](tools/converters/README.md) for packaging or explicitly requested quantization.
+Use the [evaluation host](crates/evaluation-host/README.md) for complete classifier/pointer predictions and independent native Metal/WGPU comparisons. Use [bundle qualification](tools/qualification/README.md) for GPU classification and matched quantization benchmarks, [the browser harness](web/README.md) for WASM execution, and [offline converters](tools/converters/README.md) for packaging or explicitly requested quantization.
 
 ## Repository map
 
@@ -31,7 +41,8 @@ Use [bundle qualification](tools/qualification/README.md) for GPU classification
 | --- | --- |
 | `crates/engine-api` | Finite operation, tensor, ownership, completion, and resource contracts |
 | `crates/backend-cpu` | Scalar reference implementation and packed arithmetic |
-| `crates/backend-wgpu` | GPU storage, dispatch, shaders, completion, and diagnostics |
+| `crates/backend-wgpu` | WebGPU storage, WGSL dispatch, completion, and diagnostics |
+| `crates/backend-metal` | Independent native Metal storage, MSL dispatch, and completion |
 | `crates/kernels-simd` | Isolated portable SIMD kernel work |
 | `crates/executor-core` | Bounded loader, LFM2 execution, classification, and prefix state |
 | `crates/text-tokenizer` | Bounded BPE assets, tokenization, and incremental decoding |
@@ -39,6 +50,7 @@ Use [bundle qualification](tools/qualification/README.md) for GPU classification
 | `crates/json-grammar` | Byte-level decoding constraints and token masks |
 | `crates/decoding-protocol` | Schema validation, framing, and deterministic teacher traces |
 | `crates/infer-cli` | Native plaintext host |
+| `crates/evaluation-host` | Frozen-request native classifier/pointer measurement host |
 | `web` | WASM bindings and browser development harness |
 | `tools/converters` | Independent Python conversion package |
 | `tools/qualification` | Native bundle correctness and timing reports |
@@ -48,11 +60,11 @@ Use [bundle qualification](tools/qualification/README.md) for GPU classification
 
 ## Supported execution
 
-The active model is LFM2 with the configuration subset validated by the loader. Dense F32/BF16 assets execute as F32. Packed `minifield.ternary.v1` and `minifield.nf4.v1` matrices use group-128 scales; mixed formats resolve per weight role. CPU and WebGPU implement the same `InferenceOps` contract.
+The active model is LFM2 with the configuration subset validated by the loader. Dense F32/BF16/F16 assets execute as F32. Packed `minifield.ternary.v1`, `minifield.nf4.v1`, and signed `minifield.int8.v1` matrices use group-128 scales; mixed formats resolve per weight role. CPU, WebGPU, and native Metal implement the same `InferenceOps` contract. The complete-sequence pointer encoder uses `EncoderOps` for bidirectional attention and centered convolution.
 
 The model file specifies weight representation. The runtime chooses compatible kernels from the backend, tensor shape, and explicit memory policy. Backend-private repacks stay in memory. Experimental kernels require a Cargo feature and typed selection. See [architecture](docs/architecture.md).
 
-Native Metal and browser WebGPU are exercised on a reference Apple device. Other GPU families need their own qualification. Dedicated CUDA and Metal backends, general model imports, and mobile/browser compatibility matrices remain future work.
+Native Metal and WGPU-through-Metal are independently exercised on a reference Apple device. Run `scripts/check.sh gpu` for WGPU and `scripts/check.sh gpu-metal` for native Metal. Other GPU families, browser compatibility, and actual model bundles need their own qualification. Dedicated CUDA, general model imports, and mobile compatibility matrices remain future work.
 
 ## Boundaries
 

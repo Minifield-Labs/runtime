@@ -4,6 +4,29 @@
 use super::*;
 use std::time::{Duration, Instant};
 
+#[test]
+fn every_registered_shader_validates_without_a_device() {
+    for &kernel in Kernel::ALL {
+        for staging in [
+            Nf4Staging::F32,
+            Nf4Staging::F16Weights,
+            Nf4Staging::F16Activations,
+            Nf4Staging::F16Both,
+        ] {
+            let source = kernel.source(staging);
+            let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|error| {
+                panic!("{}: {}", kernel.name(), error.emit_to_string(&source))
+            });
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .unwrap_or_else(|error| panic!("{}: {error}", kernel.name()));
+        }
+    }
+}
+
 fn limits(total: u64) -> ResourceLimits {
     ResourceLimits {
         max_allocation_bytes: total,
@@ -71,6 +94,7 @@ fn dropped_and_pooled_allocations_stay_charged_until_safe_eviction() {
         .total_owned_bytes()
         .expect("report");
     assert_eq!(charged, baseline + 1_048_576);
+    assert_eq!(backend.peak_accounted_bytes(), charged);
     drop(buffer);
     assert_eq!(
         backend
@@ -95,6 +119,7 @@ fn dropped_and_pooled_allocations_stay_charged_until_safe_eviction() {
             .expect("report"),
         baseline + 524_288
     );
+    assert_eq!(backend.peak_accounted_bytes(), charged);
     backend
         .resource_report()
         .validate(budget)

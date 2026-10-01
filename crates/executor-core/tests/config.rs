@@ -102,7 +102,7 @@ fn conflicting_aliases_are_rejected_before_model_allocation() {
     ));
 
     let mut root: Value = serde_json::from_slice(PINNED_CONFIG).expect("pinned JSON");
-    root["dtype"] = json!("float16");
+    root["dtype"] = json!("float64");
     assert_eq!(
         parsed(&root),
         Err(ExecutorError::Unsupported(

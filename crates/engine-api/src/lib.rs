@@ -11,6 +11,7 @@
 
 mod assets;
 mod backend;
+mod encoder;
 mod error;
 mod inference;
 mod resources;
@@ -26,6 +27,7 @@ pub use backend::{
     BackendCapabilities, BackendIdentity, BackendKind, BackendLease, GatedShortConvSpec, GqaSpec,
     OperationKind, OperationSet, PackedHeadSpec, PrecisionPolicy, RectCopy2d, RotarySpec,
 };
+pub use encoder::{EncoderOps, EncoderSegments};
 pub use error::{ExecutorError, Result};
 pub use inference::{InferenceOps, TokenIds};
 pub use resources::{

@@ -254,6 +254,7 @@ pub struct Tracker {
     pub limits: minifield_engine_api::ResourceLimits,
     pub next_allocation: u64,
     pub live_bytes: u64,
+    pub peak_accounted_bytes: Cell<u64>,
     /// Physical buffers (including padding, pools, staging, and uniform storage).
     pub owned_buffer_bytes: Rc<Cell<u64>>,
     pub live_by_class: ClassBytes,
@@ -551,6 +552,7 @@ impl DeviceInner {
                 limits,
                 next_allocation: 1,
                 live_bytes: 0,
+                peak_accounted_bytes: Cell::new(uniform_ring_bytes * 2),
                 owned_buffer_bytes: Rc::new(Cell::new(uniform_ring_bytes * 2)),
                 live_by_class: ClassBytes::default(),
                 pending_retained_bytes: 0,
@@ -666,6 +668,12 @@ impl DeviceInner {
         fits(&tracker)?;
         let counter = Rc::clone(&tracker.owned_buffer_bytes);
         counter.set(counter.get() + bytes);
+        tracker.peak_accounted_bytes.set(
+            tracker
+                .peak_accounted_bytes
+                .get()
+                .max(tracker_owned_bytes(&tracker)?),
+        );
         Ok(counter)
     }
 

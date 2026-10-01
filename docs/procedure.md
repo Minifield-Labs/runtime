@@ -19,13 +19,14 @@ The pinned toolchain and lockfiles support reproducibility. Core libraries don't
 | --- | --- |
 | Every code change | Formatting, relevant tests, `quick` |
 | Merge candidate | `ci`: workspace tests/Clippy, contract pins, JS, reference tools, converters, cross-language checks |
-| Shader, GPU ownership, dispatch | `gpu` on a real adapter, including representation and shape boundaries |
+| WebGPU shader, ownership, dispatch | `gpu` on a real adapter, including representation and shape boundaries |
+| Native Metal shader, ownership, dispatch | `gpu-metal` on macOS, requiring native device construction and MSL compilation |
 | Loading/execution or visible output | Actual bundle qualification against matched expected results |
 | Browser bindings/host | `wasm`, actual browser execution, JavaScript tests |
 | Performance claim | Matched repeated benchmark, correctness pass, artifact/device identity, raw samples |
 | Quantization algorithm | Independent byte fixtures, malformed inputs, same-weight parity, separate quality evaluation |
 
-`gpu` requires an adapter and fails when none is available. Portable workspace tests may skip adapter-dependent cases; that output doesn't establish GPU qualification. `wasm` checks compilation only.
+`gpu` requires an adapter and fails when none is available. `gpu-metal` requires macOS and a native Metal device; the gate runs all explicitly ignored native hardware cases and fails on other operating systems. Portable workspace tests may skip adapter-dependent cases; that output doesn't establish GPU qualification. `wasm` checks compilation only.
 
 Hosted CI covers portable checks and WASM compilation. Hardware release evidence comes from a real supported host. Never label a skipped GPU test or a WASM build as a browser pass.
 

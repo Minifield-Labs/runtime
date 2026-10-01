@@ -141,3 +141,64 @@ contains prompt `[1,3]` and appended `[4]` logits. LM output includes actual bas
 and appended prefix length/history. Classifier output includes its reusable base
 state and effective append sequence; the classifier's branch prefix is private.
 The probe uses the standard checked loader and CPU backend and needs no Python.
+
+## Protected evaluation preparation
+
+`prepare-checkpoint` extracts the FP32 `params/` masters from a
+`minifield.full-training-state/1` checkpoint. It validates the full-state header
+and manifest hash, seeks to each parameter's byte range, and streams inference
+output. Optimizer moments and the scalar step aren't loaded or exported.
+The input checkpoint and its manifest stay unchanged.
+
+```sh
+uv run --locked minifield-convert prepare-checkpoint /absolute/state.safetensors \
+  /absolute/classifier-int8 --config /absolute/config.json \
+  --tokenizer /absolute/tokenizer.json --precision int8 --mode classifier \
+  --classes 8 --source-model evaluation/classifier --source-revision EXACT_REVISION
+uv run --locked minifield-convert prepare-checkpoint /absolute/state.safetensors \
+  /absolute/pointer-nf4 --config /absolute/encoder-config.json \
+  --tokenizer /absolute/encoder-tokenizer.json --precision nf4 \
+  --mode pointer-encoder --pointer-width 256 \
+  --source-model evaluation/encoder --source-revision EXACT_REVISION \
+  --expected-tokenizer-sha256 EXACT_SHA256
+uv run --locked minifield-convert package-mixed-qat /absolute/model.safetensors \
+  /absolute/qat-bundle --config /absolute/config.json \
+  --tokenizer /absolute/tokenizer.json --classes 8 \
+  --source-model evaluation/mixed-qat --source-revision EXACT_REVISION
+uv run --locked minifield-convert validate /absolute/pointer-nf4
+```
+
+Preparation has its own `minifield.prepared-evaluation-bundle/1` provenance
+manifest. It records checkpoint, config, tokenizer and output hashes; the
+training cursor; normalized parameter names and hashes; and the exact role
+precision policy. It refuses existing destinations. Legacy `convert` and
+`quantize` keep their original admission and quantization policy.
+
+The supported preparation modes are a causal classifier with an independent
+head, and the bidirectional LFM2 MagicBox joint-pointer encoder with 4 output
+projections. Encoder `lfm2.*` names become `model.*`; the 4
+`magicbox.pointer.{start,end}_{query,key}` masters become
+`pointer.{start,end}_{query,key}.weight`. The encoder config retains its
+bidirectional architecture and declares the versioned pointer dimensions.
+
+`fp16` stores every master as F16. `int8`, `nf4`, and `ternary` store only
+backbone rank-2 projections at the requested precision. Embeddings (including
+the tied LM head), classifier and pointer heads, normalization gains, and
+convolution taps remain F16. These are stored-weight precisions; runtime
+activations and dense arithmetic remain F32. Each precision gets its own
+implementation reference over the exact decoded stored weights.
+
+Low-bit preparation emits `minifield.mixed.v1` with an exhaustive
+`tensor_quantization` map using `f16`, `ternary-v1`, `nf4-v1`, or `int8-v1`.
+The NF4 and ternary algorithms are the same versioned quantizers described
+above. The new `minifield.int8.v1` representation uses U8 `[N,K]` bytes with
+signed two's-complement codes `-127..127`; byte `128` is reserved. Scales are
+F16 `[N,K/128]`. INT8 scale is `absmax/127` rounded to stored F16, and code
+selection divides by that stored scale, rounds half away from 0, and clips to
+`-127..127`. Decode is F32 signed code times the stored scale. All-zero and
+underflowed groups encode 0. This is separate from MFQ8's single-matrix format.
+
+`package-mixed-qat` verifies the same protected-role policy and copies the
+supplied weights byte-for-byte. Its config and tokenizer must match the packed
+inventory, including any previously pruned vocabulary. It performs no new
+quantization, pruning, or training.

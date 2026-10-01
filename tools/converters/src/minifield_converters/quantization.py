@@ -7,12 +7,17 @@ import numpy.typing as npt
 
 from .errors import ConversionError
 
-Scheme = Literal["ternary", "nf4"]
+Scheme = Literal["ternary", "nf4", "int8"]
 GROUP_SIZE = 128
-FORMATS = {"ternary": "minifield.ternary.v1", "nf4": "minifield.nf4.v1"}
+FORMATS = {
+    "ternary": "minifield.ternary.v1",
+    "nf4": "minifield.nf4.v1",
+    "int8": "minifield.int8.v1",
+}
 ALGORITHMS = {
     "ternary": "minifield-converters/ternary-absmax-stored-fp16/1",
     "nf4": "minifield-converters/nf4-absmax-stored-fp16/1",
+    "int8": "minifield-converters/int8-absmax-stored-fp16/1",
 }
 NF4 = np.array(
     [
@@ -40,15 +45,15 @@ NF4.flags.writeable = False
 
 def _scheme(scheme: str) -> int:
     if scheme not in FORMATS:
-        raise ConversionError("quantization scheme must be ternary or nf4")
-    return 2 if scheme == "ternary" else 4
+        raise ConversionError("quantization scheme must be ternary, nf4, or int8")
+    return {"ternary": 2, "nf4": 4, "int8": 8}[scheme]
 
 
 def pack_codes(codes: npt.NDArray[np.uint8], scheme: Scheme) -> npt.NDArray[np.uint8]:
     """Pack row-major codes, first weight in the least-significant bits."""
     bits = _scheme(scheme)
     width = 8 // bits
-    maximum = 2 if scheme == "ternary" else 15
+    maximum = {"ternary": 2, "nf4": 15, "int8": 255}[scheme]
     if (
         codes.dtype != np.uint8
         or codes.ndim != 2
@@ -57,6 +62,8 @@ def pack_codes(codes: npt.NDArray[np.uint8], scheme: Scheme) -> npt.NDArray[np.u
         or np.any(codes > maximum)
     ):
         raise ConversionError("codes must be non-empty valid U8 rows with K%128=0")
+    if scheme == "int8" and np.any(codes == 128):
+        raise ConversionError("INT8 code -128 is reserved")
     grouped = codes.reshape(codes.shape[0], -1, width)
     packed = np.zeros(grouped.shape[:2], dtype=np.uint8)
     for index in range(width):
@@ -81,6 +88,8 @@ def unpack_codes(
         codes[:, index::width] = (packed >> (index * bits)) & ((1 << bits) - 1)
     if scheme == "ternary" and np.any(codes == 3):
         raise ConversionError("ternary code 3 is reserved")
+    if scheme == "int8" and np.any(codes == 128):
+        raise ConversionError("INT8 code -128 is reserved")
     return codes
 
 
@@ -94,7 +103,12 @@ def dequantize(
         or not np.all(np.isfinite(scales) & (scales >= 0))
     ):
         raise ConversionError("scales must be finite nonnegative F16 row/group values")
-    levels = codes.astype(np.float32) - 1 if scheme == "ternary" else NF4[codes]
+    if scheme == "ternary":
+        levels = codes.astype(np.float32) - 1
+    elif scheme == "int8":
+        levels = codes.view(np.int8).astype(np.float32)
+    else:
+        levels = NF4[codes]
     return levels * np.repeat(scales.astype(np.float32), GROUP_SIZE, axis=1)
 
 
@@ -117,15 +131,22 @@ def quantize(
         raise ConversionError("weights must be finite FP32 rows with K%128=0")
     grouped = values.reshape(values.shape[0], -1, GROUP_SIZE)
     with np.errstate(over="ignore", under="ignore"):
-        scales = np.max(np.abs(grouped), axis=-1).astype(np.float16)
+        maximum = np.max(np.abs(grouped), axis=-1)
+        scales = (maximum / np.float32(127) if scheme == "int8" else maximum).astype(
+            np.float16
+        )
     if not np.isfinite(scales).all():
         raise ConversionError("group absmax scale overflows FP16")
     safe = np.where(scales > 0, scales, np.float16(1)).astype(np.float64)
     normalized = (grouped.astype(np.float64) / safe[:, :, None]).astype(np.float32)
-    if scheme == "ternary":
+    if scheme in ("ternary", "int8"):
         rounded = np.sign(normalized) * np.floor(np.abs(normalized) + np.float32(0.5))
-        codes = np.clip(rounded + 1, 0, 2).astype(np.uint8)
-        codes[scales == 0] = 1
+        if scheme == "ternary":
+            codes = np.clip(rounded + 1, 0, 2).astype(np.uint8)
+            codes[scales == 0] = 1
+        else:
+            codes = np.clip(rounded, -127, 127).astype(np.int8).view(np.uint8)
+            codes[scales == 0] = 0
     else:
         # Keep scratch proportional to one codebook level, rather than 16x model size.
         distances = np.full(grouped.shape, np.inf, dtype=np.float32)

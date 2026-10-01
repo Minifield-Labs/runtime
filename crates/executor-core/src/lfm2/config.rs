@@ -25,6 +25,7 @@ pub enum NumericalMode {
 pub enum Lfm2StorageDType {
     F32,
     BF16,
+    F16,
 }
 
 /// Checked LFM2 configuration normalized across published alias spellings.
@@ -200,6 +201,7 @@ fn parse_weight_storage_dtype(object: &Map<String, Value>) -> Result<Lfm2Storage
         Some(Value::String(text)) => match text.as_str() {
             "float32" | "f32" => Ok(Lfm2StorageDType::F32),
             "bfloat16" | "bf16" => Ok(Lfm2StorageDType::BF16),
+            "float16" | "f16" => Ok(Lfm2StorageDType::F16),
             _ => Err(ExecutorError::Unsupported(
                 "configured LFM2 source storage dtype is unsupported",
             )),

@@ -12,6 +12,7 @@ mod attention_convolution;
 mod completion;
 mod dense;
 mod dispatch;
+mod encoder;
 mod normalization_rotary;
 mod packed;
 mod storage;

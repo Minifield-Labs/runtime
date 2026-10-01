@@ -12,21 +12,21 @@ native host / browser bindings / qualification
          model executor + loader
                  |
               engine-api
-              /        \
-     backend-cpu      backend-wgpu
+          /       |        \
+ backend-cpu backend-wgpu backend-metal
 
 offline converters -> versioned files -> loader
 ```
 
-The executor is generic over `InferenceOps`. Backend crates implement that finite contract; the core never imports a concrete backend. A host constructs CPU or WebGPU, then the same loader and model executor run against it. `decoding-protocol` is a separate schema/framing component for callers.
+The executor is generic over `InferenceOps`. Backend crates implement that finite contract; the core never imports a concrete backend. A host constructs CPU, WebGPU, or independent native Metal, then the same loader and model executor run against it. `decoding-protocol` is a separate schema/framing component for callers.
 
 This is the strategy boundary. Keep model equations, stored encodings, platform capabilities, and individual kernels separate. A new kernel shouldn't require a new model implementation or a larger model file.
 
 | Decision | Source | Owner |
 | --- | --- | --- |
 | Architecture and tensor roles | Validated config and inventory | Model loader/executor |
-| Dense, ternary, or NF4 representation | Tensor descriptors and format metadata | Loader/encoding contract |
-| CPU or WebGPU implementation | Host platform and explicit backend construction | Host |
+| Dense, ternary, NF4, or signed INT8 representation | Tensor descriptors and format metadata | Loader/encoding contract |
+| CPU, WebGPU, or native Metal implementation | Host platform and explicit backend construction | Host |
 | Kernel and optional repack | Encoding, shape, capabilities, resource policy | Backend and executor |
 
 The host currently selects a backend explicitly. Within it, dispatch selects compatible implementations. There is no calibrated cross-device autotuner or universal claim that one kernel is fastest.
@@ -35,7 +35,7 @@ Keep the existing trait and typed enums until a real extension needs another int
 
 ## Stored formats and internal layouts
 
-Dense F32/BF16 assets become F32 backend values. Packed ternary and NF4 store U8 code streams with F16 group-128 scales. Ternary uses 2 bits per code; NF4 uses 4. Reserved ternary codes, invalid shapes/scales, unknown formats, and incompatible inventories reject during admission.
+Dense F32/BF16/F16 assets become F32 backend values. Packed ternary, NF4, and signed INT8 store U8 code streams with F16 group-128 scales. Ternary uses 2 bits per code; NF4 uses 4; INT8 uses one two's-complement byte. Reserved ternary codes and signed INT8 -128, invalid shapes/scales, unknown formats, and incompatible inventories reject during admission.
 
 Known safetensors `format=pt` and absent format metadata admit dense assets. Custom product markers aren't inferred as dense. Such exports need explicit offline normalization into a supported format.
 
@@ -64,7 +64,7 @@ Every buffer belongs to one backend identity and generation. Cross-backend or st
 
 WebGPU accounts physical buffer classes, alignment padding, pooled allocations, readback staging, retained results, and fixed host/device uniform storage. A dropped allocation remains charged while pending work or a pool owns it. Safe completed pools may be evicted under budget pressure.
 
-Resource reports classify logical live weights/caches and place physical overhead in scratch. Their total describes backend-accounted storage at that moment. Driver memory, pipelines, process RSS, and an overall process peak need separate instrumentation.
+Resource reports classify logical live weights/caches and place physical overhead in scratch. Their total describes backend-accounted storage at that moment. `peak_accounted_bytes` retains the highest classified total, including completion-owned results. CPU internal mathematical vectors, driver memory, pipelines, and process RSS need separate instrumentation.
 
 Input capacity, selector width, and constraint masks are checked before recording work where possible. Invalid caller input returns an error while preserving the usable executor. A backend failure after partial recording may quarantine it.
 
@@ -72,7 +72,7 @@ Input capacity, selector width, and constraint masks are checked before recordin
 
 `engine-api` separates errors, tensors, capabilities, resources/completion, operations, assets, and tokens. CPU/GPU modules follow operation families. The executor separates construction, storage, execution, dispatch, prefix tasks, readback, and scoring.
 
-GPU shader bodies live in `crates/backend-wgpu/src/shaders`. `kernels.rs` is the registry. Research shaders live under `shaders/experimental`, exposed through the explicit `experimental-kernels` feature and experimental API. Default execution stays on qualified production paths.
+WebGPU shader bodies live in `crates/backend-wgpu/src/shaders`. Native Metal owns its MSL kernels in `crates/backend-metal/src/kernels.metal` and its audited Objective-C bridge in `bridge.rs`. Both implement the same typed operations; each owns its buffers, command submission, and kernel dispatch. `kernels.rs` is the registry. Research shaders live under `shaders/experimental`, exposed through the explicit `experimental-kernels` feature and experimental API. Default execution stays on qualified production paths.
 
 Split modules when ownership or invariants become hard to inspect. A file-length target alone doesn't justify more abstraction.
 

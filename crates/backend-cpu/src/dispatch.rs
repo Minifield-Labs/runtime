@@ -39,6 +39,10 @@ impl InferenceOps for CpuBackend {
         CpuBackend::resource_report(self)
     }
 
+    fn peak_accounted_bytes(&self) -> Result<u64> {
+        Ok(CpuBackend::peak_accounted_bytes(self))
+    }
+
     fn advance_generation(&mut self) -> Result<()> {
         CpuBackend::advance_generation(self)
     }

@@ -14,12 +14,16 @@ use sha2::{Digest, Sha256};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 fn backend() -> CpuBackend {
+    backend_with_pending_limit(10000)
+}
+
+fn backend_with_pending_limit(max_pending_operations: u32) -> CpuBackend {
     CpuBackend::new(
         7,
         ResourceLimits {
             max_allocation_bytes: 16 * 1024 * 1024,
             max_total_bytes: 64 * 1024 * 1024,
-            max_pending_operations: 10000,
+            max_pending_operations,
         },
     )
 }
@@ -389,6 +393,16 @@ fn tiny_weights_with_config(
     Rc<RefCell<CpuBackend>>,
     Rc<EncoderTypedWeights<minifield_backend_cpu::CpuBuffer>>,
 ) {
+    tiny_weights_on_backend(config, backend())
+}
+
+fn tiny_weights_on_backend(
+    config: Vec<u8>,
+    mut backend: CpuBackend,
+) -> (
+    Rc<RefCell<CpuBackend>>,
+    Rc<EncoderTypedWeights<minifield_backend_cpu::CpuBuffer>>,
+) {
     let plan = EncoderWeightPlan::from_config_with_quantization(
         parse_encoder_config(&config).expect("config"),
         Lfm2WeightFormat::Dense,
@@ -464,7 +478,6 @@ fn tiny_weights_with_config(
     .expect("request");
     let mut task = EncoderWeightLoadTask::begin(request).expect("load task");
     let mut provider = MemoryAssetProvider::new(bytes, size);
-    let mut backend = backend();
     for _ in 0..1000 {
         match task.poll_step(&mut provider, &mut backend) {
             LoaderPoll::Pending => {}
@@ -506,6 +519,15 @@ fn reference_hidden(token: u32) -> [f32; 4] {
 }
 
 fn reference_hidden_with_eps(token: u32, block_epsilon: f32, final_epsilon: f32) -> [f32; 4] {
+    reference_hidden_with_layers(token, block_epsilon, final_epsilon, 2)
+}
+
+fn reference_hidden_with_layers(
+    token: u32,
+    block_epsilon: f32,
+    final_epsilon: f32,
+    layers: usize,
+) -> [f32; 4] {
     let mut hidden = [0.0; 4];
     for (index, value) in hidden.iter_mut().enumerate() {
         #[allow(clippy::cast_precision_loss)]
@@ -519,7 +541,7 @@ fn reference_hidden_with_eps(token: u32, block_epsilon: f32, final_epsilon: f32)
             .recip();
         input.map(|value| value * inverse)
     };
-    for _ in 0..2 {
+    for _ in 0..layers {
         let normalized = normalize(hidden, block_epsilon);
         for (value, normalized) in hidden.iter_mut().zip(normalized) {
             *value += (normalized / (1.0 + (-normalized).exp())) * normalized;
@@ -648,6 +670,85 @@ fn encoder_task_drop_cancel_limits_and_stale_generation_preserve_ownership() {
         .advance_generation()
         .expect("generation");
     assert!(encoder.begin_predict(tiny_input()).is_err());
+}
+
+#[test]
+fn encoder_layer_slices_keep_one_fence_and_preserve_results_and_retirement() {
+    let mut config: serde_json::Value = serde_json::from_slice(&tiny_config()).expect("config");
+    config["num_hidden_layers"] = serde_json::json!(6);
+    config["layer_types"] = serde_json::json!([
+        "conv",
+        "full_attention",
+        "conv",
+        "full_attention",
+        "conv",
+        "full_attention"
+    ]);
+    let (backend, weights) = tiny_weights_on_backend(
+        serde_json::to_vec(&config).expect("config bytes"),
+        backend_with_pending_limit(1),
+    );
+    let encoder = Lfm2PointerEncoder::new(
+        Rc::clone(&backend),
+        weights,
+        EncoderLimits {
+            max_tokens: 8,
+            max_questions: 4,
+        },
+    )
+    .expect("encoder");
+    let before = backend.borrow().resource_report();
+    let mut task = encoder.begin_predict(tiny_input()).expect("task");
+    assert!(matches!(task.poll_step(), CompletionPoll::Pending));
+    let first = backend.borrow().resource_report();
+    assert_eq!(first.pending_operations, 1);
+    assert!(first.scratch_bytes > before.scratch_bytes);
+    assert!(matches!(task.poll_step(), CompletionPoll::Pending));
+    let final_slice = backend.borrow().resource_report();
+    assert_eq!(final_slice.pending_operations, 1);
+    assert!(final_slice.scratch_bytes > first.scratch_bytes);
+    assert!(matches!(task.poll_step(), CompletionPoll::Pending));
+    let CompletionPoll::Ready(Ok(output)) = task.poll_step() else {
+        panic!("pointer result was not ready after two layer slices and readback");
+    };
+    let query = reference_hidden_with_layers(1, 0.00001, 0.00001, 6);
+    for (column, token) in [1, 2].into_iter().enumerate() {
+        let key = reference_hidden_with_layers(token, 0.00001, 0.00001, 6);
+        let expected = (query[0] * key[0] + query[1] * key[1]) / 2.0_f32.sqrt();
+        assert!((output.start[column] - expected).abs() < 0.000_001);
+        assert!((output.end[column] - expected).abs() < 0.000_001);
+    }
+    assert_eq!(output.start[2], 0.0);
+    assert_eq!(output.end[2], 0.0);
+    assert!(matches!(
+        task.poll_step(),
+        CompletionPoll::Ready(Err(minifield_engine_api::ExecutorError::CompletionConsumed))
+    ));
+    assert_eq!(backend.borrow().resource_report(), before);
+    assert_eq!(
+        ready(encoder.begin_predict(tiny_input()).expect("repeat task")),
+        output
+    );
+    let mut cancelled = encoder.begin_predict(tiny_input()).expect("cancel task");
+    assert!(matches!(cancelled.poll_step(), CompletionPoll::Pending));
+    cancelled.cancel().expect("cancel intermediate fence");
+    assert_eq!(backend.borrow().resource_report(), before);
+    let mut abandoned = encoder.begin_predict(tiny_input()).expect("drop task");
+    assert!(matches!(abandoned.poll_step(), CompletionPoll::Pending));
+    drop(abandoned);
+    backend.borrow().poll_retired_fences().expect("retirement");
+    assert_eq!(backend.borrow().resource_report(), before);
+    let mut stale = encoder.begin_predict(tiny_input()).expect("stale task");
+    assert!(matches!(stale.poll_step(), CompletionPoll::Pending));
+    backend
+        .borrow_mut()
+        .advance_generation()
+        .expect("generation");
+    assert!(matches!(
+        stale.poll_step(),
+        CompletionPoll::Ready(Err(minifield_engine_api::ExecutorError::StaleBuffer))
+    ));
+    assert_eq!(backend.borrow().resource_report(), before);
 }
 
 #[test]

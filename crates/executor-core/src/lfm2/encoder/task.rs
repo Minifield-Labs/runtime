@@ -113,7 +113,7 @@ impl<B: EncoderOps> Lfm2PointerEncoder<B> {
             context: Rc::clone(&self.context),
             input: Some(input),
             phase: Phase::New,
-            scratch: Vec::new(),
+            scratch: super::execution::Scratch::default(),
             output: None,
         })
     }
@@ -138,7 +138,7 @@ pub struct PointerTask<B: EncoderOps> {
     context: Rc<Context<B>>,
     input: Option<EncoderInput>,
     phase: Phase<B>,
-    scratch: Vec<B::Buffer>,
+    scratch: super::execution::Scratch<B::Buffer>,
     output: Option<usize>,
 }
 
@@ -152,7 +152,7 @@ impl<B: EncoderOps> PointerTask<B> {
     }
 
     fn retire(&mut self, fence: B::Fence) {
-        let retained = core::mem::take(&mut self.scratch);
+        let retained = core::mem::take(&mut self.scratch).into_buffers();
         if let Err(rejected) = self.context.retirement.retire(fence, retained) {
             self.context.retirement.quarantine_rejected(rejected);
         }
@@ -191,7 +191,8 @@ impl<B: EncoderOps> PointerTask<B> {
                 }
             },
             Err(error) => {
-                self.context.quarantine(core::mem::take(&mut self.scratch));
+                self.context
+                    .quarantine(core::mem::take(&mut self.scratch).into_buffers());
                 self.phase = Phase::Terminal;
                 Err(error)
             }
@@ -302,7 +303,8 @@ impl<B: EncoderOps> InferenceCompletion for PointerTask<B> {
                 }
             },
             Phase::Building => {
-                self.context.quarantine(core::mem::take(&mut self.scratch));
+                self.context
+                    .quarantine(core::mem::take(&mut self.scratch).into_buffers());
                 Err(ExecutorError::BackendFailure(
                     "cannot cancel an unfenced encoder pass",
                 ))
@@ -320,7 +322,9 @@ impl<B: EncoderOps> Drop for PointerTask<B> {
                 let result = self.context.backend().and_then(|backend| backend.fence());
                 match result {
                     Ok(fence) => self.retire(fence),
-                    Err(_) => self.context.quarantine(core::mem::take(&mut self.scratch)),
+                    Err(_) => self
+                        .context
+                        .quarantine(core::mem::take(&mut self.scratch).into_buffers()),
                 }
             }
             // The readback owns its staging/source storage; all earlier consumers

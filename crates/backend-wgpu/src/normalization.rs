@@ -191,19 +191,19 @@ impl WgpuBackend {
             )
             .map_err(|_| ExecutorError::ResourceLimit("RoPE table allocation failed"))?;
         table.resize(table_len * 2, 0.0_f32);
-        for (token, position) in positions.iter().copied().enumerate() {
+        for column in 0..half_usize {
             #[allow(clippy::cast_precision_loss)]
-            let position_f32 = position as f32;
-            if !position_f32.is_finite() {
-                return Err(ExecutorError::InvalidArgument(
-                    "RoPE position is not representable as finite f32",
-                ));
-            }
-            for column in 0..half_usize {
+            let exponent = -2.0_f64 * (column as f64) / f64::from(head_dim);
+            #[allow(clippy::cast_possible_truncation)]
+            let frequency = (f64::from(theta).powf(exponent)) as f32;
+            for (token, position) in positions.iter().copied().enumerate() {
                 #[allow(clippy::cast_precision_loss)]
-                let exponent = -2.0_f64 * (column as f64) / f64::from(head_dim);
-                #[allow(clippy::cast_possible_truncation)]
-                let frequency = (f64::from(theta).powf(exponent)) as f32;
+                let position_f32 = position as f32;
+                if !position_f32.is_finite() {
+                    return Err(ExecutorError::InvalidArgument(
+                        "RoPE position is not representable as finite f32",
+                    ));
+                }
                 let angle = position_f32 * frequency;
                 #[allow(clippy::cast_possible_truncation)]
                 let cos = f64::from(angle).cos() as f32;

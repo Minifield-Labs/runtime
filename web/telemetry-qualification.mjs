@@ -12,6 +12,16 @@ export async function qualifyTelemetry(classifier, profile, runtimeModule) {
   check(initial.every(r => r.execution.tokens.output === 0), "classifier output is not generated tokens");
   check(initial.filter(r => r.status === "completed").every(r => r.single_step.predictions_produced === 1 && r.single_step.alternatives_evaluated === profile.classes), "classification counts");
 
+  const firstCached = initial[profile.prompts.length].execution;
+  if (firstCached.tokens.input > 16) {
+    check(firstCached.cache.rebuilds === 1 && firstCached.cache.token_positions_reused === firstCached.tokens.input - 1, "cache reserves one tail token");
+    check(firstCached.prefill.token_positions_processed === firstCached.tokens.input, "cache creation does not repeat the full prompt");
+    if (profile.prompts[0] === profile.prompts[1]) {
+      const repeated = initial[profile.prompts.length + 1].execution;
+      check(repeated.cache.rebuilds === 0 && repeated.prefill.forward_passes === 1 && repeated.prefill.token_positions_processed === 1, "repeated cached prompt executes one tail token");
+    }
+  }
+
   configure_telemetry({ enabled: false });
   await classifier.classify(profile.prompts[0]);
   await flush_telemetry();

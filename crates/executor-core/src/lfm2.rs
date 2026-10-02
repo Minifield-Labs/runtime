@@ -13,8 +13,9 @@ pub use encoder::{
     parse_encoder_config,
 };
 pub use executor::{
-    AppendChoiceTask, ChoiceLogitsTask, Lfm2Classifier, Lfm2ExecutionLimits, Lfm2ExecutionOptions,
-    Lfm2Executor, Lfm2Lut2Mode, Lfm2Prefix, LogitsTask, PrefillChoiceTask, PrefixTask, ScoreTask,
+    AppendChoiceTask, CachedClassifyTask, ChoiceLogitsTask, ClassifierCacheStats, Lfm2Classifier,
+    Lfm2ExecutionLimits, Lfm2ExecutionOptions, Lfm2Executor, Lfm2Lut2Mode, Lfm2Prefix, LogitsTask,
+    PrefillChoiceTask, PrefixTask, ScoreTask,
 };
 pub use weights::{
     Lfm2LayerWeightRole, Lfm2LoadRequest, Lfm2ResolvedWeight, Lfm2TypedWeights, Lfm2WeightFormat,

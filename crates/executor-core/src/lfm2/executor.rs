@@ -285,6 +285,7 @@ pub struct Lfm2Executor<B: InferenceOps> {
     context: Rc<ModelContext<B>>,
 }
 
+mod classifier_cache;
 mod construction;
 mod dispatch;
 mod execution;
@@ -293,6 +294,7 @@ mod readback;
 mod scoring;
 mod storage;
 
+pub use classifier_cache::{CachedClassifyTask, ClassifierCacheStats};
 pub use construction::Lfm2Classifier;
 pub use prefix_task::PrefixTask;
 pub use readback::{AppendChoiceTask, ChoiceLogitsTask, LogitsTask, PrefillChoiceTask};

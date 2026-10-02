@@ -28,8 +28,7 @@ use minifield_engine_api::{
 };
 use minifield_executor_core::{
     Lfm2ExecutionLimits, Lfm2Executor, Lfm2LayerWeightRole, Lfm2LoadRequest, Lfm2WeightFormat,
-    Lfm2WeightLoadTask, Lfm2WeightRole, LoaderLimits, LoaderPoll, detect_lfm2_weight_format,
-    parse_lfm2_tensor_quantization,
+    Lfm2WeightLoadTask, Lfm2WeightRole, LoaderLimits, LoaderPoll,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -402,10 +401,10 @@ fn load_executor_with_capacity(
     total_bytes: u64,
     capacity: u64,
 ) -> Lfm2Executor<CpuBackend> {
-    let request = Lfm2LoadRequest::new_with_format(
+    let request = Lfm2LoadRequest::discover(
         config.to_vec(),
         digest(config),
-        weights.len() as u64,
+        weights,
         digest(weights),
         LoaderLimits {
             max_asset_bytes: weights.len() as u64,
@@ -416,9 +415,10 @@ fn load_executor_with_capacity(
             max_tensors: 4096,
             max_rank: 4,
         },
-        format,
+        None,
     )
     .expect("load request");
+    assert_eq!(request.plan().format(), format);
     finish_load_with_capacity(request, weights, total_bytes, capacity)
 }
 
@@ -633,7 +633,8 @@ fn tiny_packed_fixture_from(config: &[u8], dense: &DenseTensors) -> (Vec<u8>, Ve
         .iter()
         .map(|(n, d, s, b)| (n.as_str(), d.as_str(), s.clone(), b.as_slice()))
         .collect();
-    let packed_bytes = safetensors(&packed_refs);
+    let packed_bytes =
+        safetensors_with_metadata(&packed_refs, Some(json!({"format":"minifield.ternary.v1"})));
     let dequant_bytes = safetensors(&dequant_refs);
     (config.to_vec(), packed_bytes, dequant_bytes)
 }
@@ -1197,13 +1198,10 @@ fn tiny_mixed_fixture() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
 fn mixed_bundle_loads_dense_embedding_and_packed_matmuls() {
     let (config, mixed_bytes, expected_bytes) = tiny_mixed_fixture();
 
-    let format = detect_lfm2_weight_format(&mixed_bytes).expect("detect format");
-    assert_eq!(format, Lfm2WeightFormat::MixedV1);
-    let quantization = parse_lfm2_tensor_quantization(&mixed_bytes).expect("quantization map");
-    let request = Lfm2LoadRequest::new_with_quantization(
+    let request = Lfm2LoadRequest::discover(
         config.clone(),
         digest(&config),
-        mixed_bytes.len() as u64,
+        &mixed_bytes,
         digest(&mixed_bytes),
         LoaderLimits {
             max_asset_bytes: mixed_bytes.len() as u64,
@@ -1214,8 +1212,7 @@ fn mixed_bundle_loads_dense_embedding_and_packed_matmuls() {
             max_tensors: 4096,
             max_rank: 4,
         },
-        format,
-        &quantization,
+        None,
     )
     .expect("load request");
     let plan = request.plan();
@@ -1386,12 +1383,10 @@ fn mixed_pair_fixture(nf4_first: bool) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
 fn mixed_pair_encodings_match_dequantized_cpu_for_decode_and_bulk_prefill_in_both_orders() {
     for nf4_first in [false, true] {
         let (config, packed, reference) = mixed_pair_fixture(nf4_first);
-        let format = detect_lfm2_weight_format(&packed).expect("format");
-        let quantization = parse_lfm2_tensor_quantization(&packed).expect("quantization");
-        let request = Lfm2LoadRequest::new_with_quantization(
+        let request = Lfm2LoadRequest::discover(
             config.clone(),
             digest(&config),
-            packed.len() as u64,
+            &packed,
             digest(&packed),
             LoaderLimits {
                 max_asset_bytes: packed.len() as u64,
@@ -1402,8 +1397,7 @@ fn mixed_pair_encodings_match_dequantized_cpu_for_decode_and_bulk_prefill_in_bot
                 max_tensors: 4096,
                 max_rank: 4,
             },
-            format,
-            &quantization,
+            None,
         )
         .expect("mixed request");
         let mut packed_executor = finish_load_with_capacity(request, &packed, 1 << 26, 128);

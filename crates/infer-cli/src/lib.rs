@@ -465,12 +465,10 @@ fn load_cpu_executor(
 ) -> Result<(Lfm2Executor<CpuBackend>, Model), CliError> {
     let config_hash = digest(config_bytes);
     let weight_hash = digest(&weight_bytes);
-    let weight_length = u64::try_from(weight_bytes.len())
-        .map_err(|_| CliError::Limit("model.safetensors length does not fit u64".into()))?;
-    let request = Lfm2LoadRequest::new(
+    let request = Lfm2LoadRequest::discover(
         config_bytes.to_owned(),
         config_hash,
-        weight_length,
+        &weight_bytes,
         weight_hash,
         LoaderLimits {
             max_asset_bytes: options.max_asset_bytes,
@@ -481,10 +479,11 @@ fn load_cpu_executor(
             max_tensors: 4096,
             max_rank: 4,
         },
+        None,
     )?;
     let model = Model::from_plan(
         request.plan(),
-        &std::collections::HashMap::new(),
+        request.quantization(),
         [config_hash, weight_hash, tokenizer_hash],
     );
     let mut backend = CpuBackend::new(

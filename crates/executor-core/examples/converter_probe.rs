@@ -10,7 +10,7 @@ use minifield_engine_api::{
 };
 use minifield_executor_core::{
     Lfm2Classifier, Lfm2ExecutionLimits, Lfm2Executor, Lfm2LoadRequest, Lfm2TypedWeights,
-    Lfm2WeightLoadTask, LoaderLimits, LoaderPoll, detect_lfm2_weight_format,
+    Lfm2WeightLoadTask, LoaderLimits, LoaderPoll,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -50,7 +50,6 @@ fn load(
     let config_hash = Sha256::digest(&config).into();
     let asset_hash = Sha256::digest(&asset).into();
     let size = u64::try_from(asset.len())?;
-    let format = detect_lfm2_weight_format(&asset)?;
     let limits = LoaderLimits {
         max_asset_bytes: size,
         max_header_bytes: 1 << 20,
@@ -60,19 +59,8 @@ fn load(
         max_tensors: 4096,
         max_rank: 4,
     };
-    let request = if let Some(classes) = classes {
-        Lfm2LoadRequest::new_classifier_with_format(
-            config,
-            config_hash,
-            size,
-            asset_hash,
-            limits,
-            classes,
-            format,
-        )?
-    } else {
-        Lfm2LoadRequest::new_with_format(config, config_hash, size, asset_hash, limits, format)?
-    };
+    let request =
+        Lfm2LoadRequest::discover(config, config_hash, &asset, asset_hash, limits, classes)?;
     let mut backend = CpuBackend::new(
         0xC017,
         ResourceLimits {

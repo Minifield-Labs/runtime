@@ -4,6 +4,7 @@ use crate::{
     LoadRequest, LoaderError, LoaderLimits, LoaderPoll, LoaderResourceReport, LoaderStage,
     TypedWeights, WeightLayout, WeightLoadTask, WeightPlan, WeightRequirement,
 };
+use crate::{lfm2::weights::StoredRepresentation, loader::CheckedHeader};
 use minifield_engine_api::{
     AssetProvider, ExecutorError, InferenceCompletion, InferenceOps, Result, Shape,
 };
@@ -110,9 +111,32 @@ impl EncoderWeightPlan {
 pub struct EncoderLoadRequest {
     request: LoadRequest,
     plan: EncoderWeightPlan,
+    checked_header: Option<CheckedHeader>,
 }
 
 impl EncoderLoadRequest {
+    /// Discover the backbone storage from a checked header and select the pointer head.
+    pub fn discover(
+        config_bytes: Vec<u8>,
+        expected_config_sha256: [u8; 32],
+        asset: &[u8],
+        expected_asset_sha256: [u8; 32],
+        limits: LoaderLimits,
+    ) -> Result<Self> {
+        let stored = StoredRepresentation::discover(asset, config_bytes.len(), limits)?;
+        let mut request = Self::new_with_quantization(
+            config_bytes,
+            expected_config_sha256,
+            stored.header.parsed.asset_bytes,
+            expected_asset_sha256,
+            limits,
+            stored.format,
+            &stored.quantization,
+        )?;
+        request.checked_header = Some(stored.header);
+        Ok(request)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_quantization(
         config_bytes: Vec<u8>,
@@ -134,7 +158,11 @@ impl EncoderLoadRequest {
             plan: plan.plan.clone(),
             limits,
         };
-        Ok(Self { request, plan })
+        Ok(Self {
+            request,
+            plan,
+            checked_header: None,
+        })
     }
     #[must_use]
     pub fn plan(&self) -> &EncoderWeightPlan {
@@ -155,7 +183,7 @@ where
     pub fn begin(request: EncoderLoadRequest) -> core::result::Result<Self, LoaderError> {
         Ok(Self {
             plan: request.plan,
-            task: WeightLoadTask::begin(request.request)?,
+            task: WeightLoadTask::begin_checked(request.request, request.checked_header)?,
         })
     }
     #[must_use]

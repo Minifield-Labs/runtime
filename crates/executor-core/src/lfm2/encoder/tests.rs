@@ -452,14 +452,12 @@ fn tiny_weights_with_config(
         max_rank: 4,
     };
     let config_sha256 = Sha256::digest(&config).into();
-    let request = EncoderLoadRequest::new_with_quantization(
+    let request = EncoderLoadRequest::discover(
         config,
         config_sha256,
-        size,
+        &bytes,
         Sha256::digest(&bytes).into(),
         limits,
-        Lfm2WeightFormat::Dense,
-        &HashMap::new(),
     )
     .expect("request");
     let mut task = EncoderWeightLoadTask::begin(request).expect("load task");

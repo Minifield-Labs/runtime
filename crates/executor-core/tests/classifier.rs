@@ -112,23 +112,14 @@ fn load(
         max_tensors: 1024,
         max_rank: 4,
     };
-    let request = match classes {
-        Some(classes) => Lfm2LoadRequest::new_classifier(
-            CONFIG.to_vec(),
-            Sha256::digest(CONFIG).into(),
-            size,
-            Sha256::digest(&bytes).into(),
-            limits,
-            classes,
-        ),
-        None => Lfm2LoadRequest::new(
-            CONFIG.to_vec(),
-            Sha256::digest(CONFIG).into(),
-            size,
-            Sha256::digest(&bytes).into(),
-            limits,
-        ),
-    }
+    let request = Lfm2LoadRequest::discover(
+        CONFIG.to_vec(),
+        Sha256::digest(CONFIG).into(),
+        &bytes,
+        Sha256::digest(&bytes).into(),
+        limits,
+        classes,
+    )
     .expect("request");
     let mut backend = CpuBackend::new(
         1,

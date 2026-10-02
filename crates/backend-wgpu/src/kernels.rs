@@ -145,9 +145,9 @@ const ADD_NORM: &str = include_str!("shaders/add_norm.wgsl");
 const QK_NORM_ROPE: &str = include_str!("shaders/qk_norm_rope.wgsl");
 
 /// Tiled shared-memory GEMM for m > 1: dst[i,j] = `sum_l` x[i,l] * w[j,l].
-/// Tiles are 16x16; the weight tile is transposed on load because W is packed
-/// [n, k] while the tile needs [k, n]. Grid: (ceil(n/16), ceil(m/16) split over
-/// y/z); each thread produces one output element.
+/// Output tiles are 32x32 with K16 staging; the weight tile is transposed on
+/// load from [n, k] to [k, n]. Grid: (ceil(n/32), ceil(m/32) split over y/z);
+/// each thread accumulates a 2x2 output fragment.
 const GEMM: &str = include_str!("shaders/gemm.wgsl");
 
 /// Row RMS norm: dst[r,c] = src[r,c] * rsqrt(mean(src[r,:]^2) + eps) * alpha[c].

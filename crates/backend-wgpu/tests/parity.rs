@@ -335,7 +335,7 @@ fn linear_gemv_and_gemm_match_cpu() {
     }
 
     // m > 1 tiled GEMM path, including tile-edge sizes.
-    for (m, n, k) in [(5_u64, 37_u64, 65_u64), (17, 16, 48)] {
+    for (m, n, k) in [(5_u64, 37_u64, 65_u64), (17, 16, 48), (33, 35, 17)] {
         let input_shape = Shape::new(&[m, k]).expect("input shape");
         let weight_shape = Shape::new(&[n, k]).expect("weight shape");
         let out_shape = Shape::new(&[m, n]).expect("out shape");

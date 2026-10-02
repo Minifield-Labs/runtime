@@ -131,14 +131,24 @@ fn linear<B: EncoderOps>(
     )
 }
 
-/// Return the retained `[2*questions,tokens]` start/end score buffer index.
+const LAYERS_PER_STEP: usize = 4;
+
+#[derive(Default)]
+pub(super) struct EncodeCursor {
+    next_layer: usize,
+    residual: Option<usize>,
+}
+
+/// Record at most four layers, then the pointer head after the final layer.
+/// Return the retained `[2*questions,tokens]` score index only when complete.
 #[allow(clippy::too_many_lines)]
 pub(super) fn encode<B: EncoderOps>(
     backend: &mut B,
     weights: &EncoderTypedWeights<B::Buffer>,
     input: &EncoderInput,
     scratch: &mut Scratch<B::Buffer>,
-) -> Result<usize> {
+    cursor: &mut EncodeCursor,
+) -> Result<Option<usize>> {
     let cfg = &weights.config().backbone;
     let rows = u64::try_from(input.token_ids.len())
         .map_err(|_| ExecutorError::Overflow("encoder rows exceed u64"))?;
@@ -146,20 +156,36 @@ pub(super) fn encode<B: EncoderOps>(
     let intermediate = u64::from(cfg.effective_intermediate_size);
     let kv_width = u64::from(cfg.key_value_heads) * u64::from(cfg.head_dim);
     let hidden_shape = Shape::new(&[rows, hidden])?;
-    let mut residual = compute(
-        backend,
-        scratch,
-        hidden_shape,
-        |backend, output, _| match weights.resolve(Lfm2WeightRole::TokenEmbedding)? {
-            Lfm2ResolvedWeight::Dense(table) => {
-                backend.gather_rows(output, table, TokenIds::Host(&input.token_ids))
-            }
-            Lfm2ResolvedWeight::Packed { codes, scales } => {
-                backend.packed_gather_rows(output, codes, scales, TokenIds::Host(&input.token_ids))
-            }
-        },
-    )?;
-    for (index, &kind) in cfg.layers.iter().enumerate() {
+    let mut residual = match cursor.residual {
+        Some(index) => index,
+        None => compute(
+            backend,
+            scratch,
+            hidden_shape,
+            |backend, output, _| match weights.resolve(Lfm2WeightRole::TokenEmbedding)? {
+                Lfm2ResolvedWeight::Dense(table) => {
+                    backend.gather_rows(output, table, TokenIds::Host(&input.token_ids))
+                }
+                Lfm2ResolvedWeight::Packed { codes, scales } => backend.packed_gather_rows(
+                    output,
+                    codes,
+                    scales,
+                    TokenIds::Host(&input.token_ids),
+                ),
+            },
+        )?,
+    };
+    let end_layer = cfg
+        .layers
+        .len()
+        .min(cursor.next_layer.saturating_add(LAYERS_PER_STEP));
+    for (index, &kind) in cfg
+        .layers
+        .iter()
+        .enumerate()
+        .take(end_layer)
+        .skip(cursor.next_layer)
+    {
         let normalized = compute(
             backend,
             scratch,
@@ -410,6 +436,11 @@ pub(super) fn encode<B: EncoderOps>(
         scratch.release(sum)?;
         scratch.release(down)?;
     }
+    cursor.next_layer = end_layer;
+    cursor.residual = Some(residual);
+    if end_layer < cfg.layers.len() {
+        return Ok(None);
+    }
     let normalized = compute(
         backend,
         scratch,
@@ -525,5 +556,5 @@ pub(super) fn encode<B: EncoderOps>(
     )?;
     scratch.release(scores[0])?;
     scratch.release(scores[1])?;
-    Ok(output)
+    Ok(Some(output))
 }

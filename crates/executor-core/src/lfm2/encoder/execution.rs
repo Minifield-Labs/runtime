@@ -107,6 +107,33 @@ fn compute<B: EncoderOps>(
     Ok(index)
 }
 
+/// Both outputs return to their distinct slots before a recording error escapes.
+fn compute_pair<B: EncoderOps>(
+    backend: &mut B,
+    scratch: &mut Scratch<B::Buffer>,
+    shapes: [Shape; 2],
+    apply: impl FnOnce(&B, &mut B::Buffer, &mut B::Buffer, &Scratch<B::Buffer>) -> Result<()>,
+) -> Result<(usize, usize)> {
+    let first = compute(backend, scratch, shapes[0], |_, _, _| Ok(()))?;
+    let second = compute(backend, scratch, shapes[1], |_, _, _| Ok(()))?;
+    let mut first_output = scratch.slots[first]
+        .take()
+        .ok_or(ExecutorError::BackendFailure(
+            "encoder scratch value is unavailable",
+        ))?;
+    let Some(mut second_output) = scratch.slots[second].take() else {
+        scratch.slots[first] = Some(first_output);
+        return Err(ExecutorError::BackendFailure(
+            "encoder scratch value is unavailable",
+        ));
+    };
+    let result = apply(backend, &mut first_output.1, &mut second_output.1, scratch);
+    scratch.slots[first] = Some(first_output);
+    scratch.slots[second] = Some(second_output);
+    result?;
+    Ok((first, second))
+}
+
 fn linear<B: EncoderOps>(
     backend: &mut B,
     scratch: &mut Scratch<B::Buffer>,
@@ -362,29 +389,23 @@ pub(super) fn encode<B: EncoderOps>(
                 operator
             }
         };
-        let sum = compute(
+        let (sum, ffn_input) = compute_pair(
             backend,
             scratch,
-            hidden_shape,
-            |backend, output, buffers| {
-                backend.add(output, buffers.buffer(residual)?, buffers.buffer(operator)?)
-            },
-        )?;
-        scratch.release(residual)?;
-        scratch.release(operator)?;
-        let ffn_input = compute(
-            backend,
-            scratch,
-            hidden_shape,
-            |backend, output, buffers| {
-                backend.row_rms_norm(
-                    output,
-                    buffers.buffer(sum)?,
+            [hidden_shape; 2],
+            |backend, sum, normed, buffers| {
+                backend.add_row_rms_norm(
+                    sum,
+                    normed,
+                    buffers.buffer(residual)?,
+                    buffers.buffer(operator)?,
                     weights.dense(layer(index, LayerRole::FfnNorm))?,
                     cfg.block_norm_epsilon,
                 )
             },
         )?;
+        scratch.release(residual)?;
+        scratch.release(operator)?;
         let gate = linear(
             backend,
             scratch,

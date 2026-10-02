@@ -155,6 +155,26 @@ fn elementwise_add_multiply_match_cpu() {
         .multiply(&mut cpu_out, &cpu_a, &cpu_b)
         .expect("cpu multiply");
     assert_exact(&read(&backend, &gpu_out), cpu_out.as_slice());
+
+    let mut gpu_copy = backend.allocate_f32(shape).expect("gpu copy destination");
+    let mut cpu_copy = reference.allocate_f32(shape).expect("cpu copy destination");
+    let passes = backend.stats().compute_passes;
+    backend
+        .add(&mut gpu_out, &gpu_a, &gpu_b)
+        .expect("queued add");
+    backend
+        .multiply(&mut gpu_out, &gpu_a, &gpu_b)
+        .expect("queued multiply");
+    backend.copy(&mut gpu_copy, &gpu_out).expect("queued copy");
+    backend
+        .add(&mut gpu_out, &gpu_copy, &gpu_a)
+        .expect("add after copy");
+    reference.copy(&mut cpu_copy, &cpu_out).expect("cpu copy");
+    reference
+        .add(&mut cpu_out, &cpu_copy, &cpu_a)
+        .expect("cpu add after copy");
+    assert_exact(&read(&backend, &gpu_out), cpu_out.as_slice());
+    assert_eq!(backend.stats().compute_passes - passes, 2);
 }
 
 #[test]

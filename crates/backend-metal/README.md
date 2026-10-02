@@ -41,11 +41,13 @@ This branch implements one cooperative canonical packed family with an 8×32×32
 
 Single and pair entry points cover the existing input/epilogue fusion modes and independently formatted pairs. Unsupported shapes or observed pipeline limits retain scalar dispatch.
 
+RMS normalization uses one complete 256-thread group per row for widths from 256 through `u32::MAX - 255` when the compiled pipeline supports 32-lane SIMD groups and its thread/memory limits fit. Each SIMD group sums its F32 partials, then one thread combines the 8 group sums. Widths outside that range and incompatible pipeline limits retain the scalar kernel; this changes the addition order for admitted rows.
+
 Metal fast math is disabled. Rotary parameters reproduce the portable contract's explicit F64-to-F32 frequency/trig boundaries on the host, then normalization and rotation execute on Metal. Canonical ternary remains the native path; LUT2 repacking isn't advertised.
 
 ## Counters and resource reports
 
-`device_info()` reports the selected native device name and registry ID. `dispatch_counts()` returns the actual MSL entry points recorded, including `dense_linear`, `packed_linear`, `packed_pair`, `attention` and `centered_conv`. The candidate adds `packed_linear_tile8` and `packed_pair_tile8` without renaming scalar counters; every packed operation still records one dispatch.
+`device_info()` reports the selected native device name and registry ID. `dispatch_counts()` returns the actual MSL entry points recorded, including `dense_linear`, `packed_linear`, `packed_pair`, `rms_norm_simd`, `attention` and `centered_conv`. The candidate adds `packed_linear_tile8` and `packed_pair_tile8` without renaming scalar counters; every packed operation still records one dispatch.
 
 `resource_report()` counts physical classified storage, including allocations retained by pending work. Pending bytes include readback staging and reserved capacity for the temporary byte vector and returned F32 vector. Those host vectors each obey the per-allocation cap, while their combined reservation obeys the total cap. `peak_accounted_bytes()` preserves the highest total. Driver memory, pipelines and general process allocations need separate measurements.
 
@@ -76,6 +78,6 @@ MINIFIELD_REQUIRE_GPU=1 cargo +1.89.0 test --locked -p minifield-backend-metal -
 
 Hardware tests are explicitly ignored by portable CI. The hardware command requires actual native Metal construction and shader compilation, and fails if either is unavailable.
 
-The hardware gate includes `--lib`, `parity` and `packed_tile8`: 1 capability unit, 12 existing parity cases and 4 tile8 cases. The private unit retains two JSON records of actual compiled tile8 limits and requires their admission.
+The hardware gate includes `--lib`, `parity` and `packed_tile8`: 1 capability unit, 13 parity cases and 4 tile8 cases. RMS parity includes zero rows, varying gains, scalar fallback widths, and cooperative widths 256, 257, 1024 and 1025. The private unit retains two JSON records of actual compiled tile8 limits and requires their admission.
 
 Both reference-device pipelines report execution width 32 and a 1,024-thread limit; their static allocations are 5,248 and 9,472 bytes against the device's 32,768-byte capacity.

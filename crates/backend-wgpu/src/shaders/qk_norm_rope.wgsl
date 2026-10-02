@@ -38,7 +38,12 @@ fn main(
 
     var acc = 0.0;
     for (var d = tid; d < head_dim; d = d + 256u) {
-        let v = select(k[base + d], q[base + d], is_q);
+        var v: f32;
+        if is_q {
+            v = q[base + d];
+        } else {
+            v = k[base + d];
+        }
         acc = acc + v * v;
         nd[d] = v;
     }
@@ -51,7 +56,12 @@ fn main(
     let scale = inverseSqrt(sh[0] / f32(head_dim) + eps);
     workgroupBarrier();
     for (var d = tid; d < head_dim; d = d + 256u) {
-        let wv = select(kw[d], qw[d], is_q);
+        var wv: f32;
+        if is_q {
+            wv = qw[d];
+        } else {
+            wv = kw[d];
+        }
         nd[d] = nd[d] * scale * wv;
     }
     workgroupBarrier();

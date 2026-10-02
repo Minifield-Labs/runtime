@@ -5,8 +5,7 @@ use minifield_backend_wgpu::WgpuBackend;
 use minifield_engine_api::{MemoryAssetProvider, ResourceLimits};
 use minifield_executor_core::{
     Lfm2Classifier, Lfm2ExecutionLimits, Lfm2Executor, Lfm2LoadRequest, Lfm2TypedWeights,
-    Lfm2WeightLoadTask, LoaderLimits, LoaderPoll, detect_lfm2_weight_format,
-    parse_lfm2_tensor_quantization,
+    Lfm2WeightLoadTask, LoaderLimits, LoaderPoll,
 };
 use minifield_runtime_telemetry::Model;
 use minifield_text_tokenizer::{Tokenizer, TokenizerLimits};
@@ -78,35 +77,20 @@ async fn load_weights(
         max_tensors: 4096,
         max_rank: 4,
     };
-    let format = detect_lfm2_weight_format(&weights).map_err(js_debug)?;
     let config_hash = Sha256::digest(&config).into();
     let weight_hash = Sha256::digest(&weights).into();
-    let quantization = parse_lfm2_tensor_quantization(&weights).map_err(js_debug)?;
-    let request = match classes {
-        Some(classes) => Lfm2LoadRequest::new_classifier_with_quantization(
-            config.clone(),
-            config_hash,
-            weights_len,
-            weight_hash,
-            loader_limits,
-            classes,
-            format,
-            &quantization,
-        ),
-        None => Lfm2LoadRequest::new_with_quantization(
-            config.clone(),
-            config_hash,
-            weights_len,
-            weight_hash,
-            loader_limits,
-            format,
-            &quantization,
-        ),
-    }
+    let request = Lfm2LoadRequest::discover(
+        config,
+        config_hash,
+        &weights,
+        weight_hash,
+        loader_limits,
+        classes,
+    )
     .map_err(js_debug)?;
     let model = Model::from_plan(
         request.plan(),
-        &quantization,
+        request.quantization(),
         [config_hash, weight_hash, tokenizer_hash],
     );
     let mut provider = MemoryAssetProvider::new(weights, weights_len);

@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use crate::{
     lfm2::{LayerKind, Lfm2Config, Lfm2StorageDType, parse_lfm2_config},
     loader::{
-        LoadRequest, LoaderError, LoaderLimits, LoaderPoll, ParsedAsset, StorageDType,
-        TypedWeights, WeightLayout, WeightLoadTask, WeightPlan, WeightRequirement,
+        CheckedHeader, LoadRequest, LoaderError, LoaderLimits, LoaderPoll, ParsedAsset,
+        StorageDType, TypedWeights, WeightLayout, WeightLoadTask, WeightPlan, WeightRequirement,
     },
 };
 
@@ -63,19 +63,23 @@ impl Lfm2WeightFormat {
 /// the bounded loader.
 pub fn detect_lfm2_weight_format(asset: &[u8]) -> Result<Lfm2WeightFormat> {
     match sniff_metadata(asset)?.get("format") {
-        None => Ok(Lfm2WeightFormat::Dense),
-        Some(serde_json::Value::String(marker)) => match marker.as_str() {
-            "pt" => Ok(Lfm2WeightFormat::Dense),
-            "minifield.ternary.v1" => Ok(Lfm2WeightFormat::TernaryV1),
-            "minifield.nf4.v1" => Ok(Lfm2WeightFormat::Nf4V1),
-            "minifield.int8.v1" => Ok(Lfm2WeightFormat::Int8V1),
-            "minifield.mixed.v1" => Ok(Lfm2WeightFormat::MixedV1),
-            _ => Err(ExecutorError::Unsupported(
-                "unrecognized LFM2 weight format",
-            )),
-        },
+        None => format_from_marker(None),
+        Some(serde_json::Value::String(marker)) => format_from_marker(Some(marker)),
         Some(_) => Err(ExecutorError::InvalidArgument(
             "LFM2 weight format marker must be a string",
+        )),
+    }
+}
+
+fn format_from_marker(marker: Option<&str>) -> Result<Lfm2WeightFormat> {
+    match marker {
+        None | Some("pt") => Ok(Lfm2WeightFormat::Dense),
+        Some("minifield.ternary.v1") => Ok(Lfm2WeightFormat::TernaryV1),
+        Some("minifield.nf4.v1") => Ok(Lfm2WeightFormat::Nf4V1),
+        Some("minifield.int8.v1") => Ok(Lfm2WeightFormat::Int8V1),
+        Some("minifield.mixed.v1") => Ok(Lfm2WeightFormat::MixedV1),
+        Some(_) => Err(ExecutorError::Unsupported(
+            "unrecognized LFM2 weight format",
         )),
     }
 }
@@ -106,6 +110,12 @@ pub fn parse_lfm2_tensor_quantization(
             ));
         }
     };
+    quantization_from_entries(&entries)
+}
+
+fn quantization_from_entries(
+    entries: &serde_json::Map<String, serde_json::Value>,
+) -> Result<HashMap<String, Lfm2WeightFormat>> {
     entries
         .iter()
         .map(|(name, level)| {
@@ -123,6 +133,38 @@ pub fn parse_lfm2_tensor_quantization(
             Ok((name.clone(), level))
         })
         .collect()
+}
+
+/// Stored representation derived exclusively from a bounded, validated header.
+pub(crate) struct StoredRepresentation {
+    pub(crate) header: CheckedHeader,
+    pub(crate) format: Lfm2WeightFormat,
+    pub(crate) quantization: HashMap<String, Lfm2WeightFormat>,
+}
+
+impl StoredRepresentation {
+    pub(crate) fn discover(
+        asset: &[u8],
+        config_bytes: usize,
+        limits: LoaderLimits,
+    ) -> Result<Self> {
+        let header = CheckedHeader::from_asset(asset, config_bytes, limits)?;
+        let metadata = &header.parsed.metadata;
+        let format = format_from_marker(metadata.get("format").map(String::as_str))?;
+        let quantization = if let Some(encoded) = metadata.get("tensor_quantization") {
+            let entries = serde_json::from_str(encoded).map_err(|_| {
+                ExecutorError::InvalidArgument("tensor_quantization metadata is not a JSON map")
+            })?;
+            quantization_from_entries(&entries)?
+        } else {
+            HashMap::new()
+        };
+        Ok(Self {
+            header,
+            format,
+            quantization,
+        })
+    }
 }
 
 /// Read a `SafeTensors` header's `__metadata__` object without ingesting
@@ -794,9 +836,56 @@ fn push_matmul(
 pub struct Lfm2LoadRequest {
     request: LoadRequest,
     plan: Lfm2WeightPlan,
+    checked_header: Option<CheckedHeader>,
+    quantization: HashMap<String, Lfm2WeightFormat>,
 }
 
 impl Lfm2LoadRequest {
+    /// Discover storage from one checked header. `None` selects a language-model
+    /// head; `Some(classes)` selects a classifier with that output width.
+    /// The supplied bytes determine the asset length. Loading still checks the
+    /// provider's header and complete asset against the expected identities.
+    pub fn discover(
+        config_bytes: Vec<u8>,
+        expected_config_sha256: [u8; 32],
+        asset: &[u8],
+        expected_asset_sha256: [u8; 32],
+        limits: LoaderLimits,
+        classes: Option<u32>,
+    ) -> Result<Self> {
+        let stored = StoredRepresentation::discover(asset, config_bytes.len(), limits)?;
+        let size = stored.header.parsed.asset_bytes;
+        let mut request = match classes {
+            Some(classes) => Self::new_classifier_with_quantization(
+                config_bytes,
+                expected_config_sha256,
+                size,
+                expected_asset_sha256,
+                limits,
+                classes,
+                stored.format,
+                &stored.quantization,
+            )?,
+            None => Self::new_with_quantization(
+                config_bytes,
+                expected_config_sha256,
+                size,
+                expected_asset_sha256,
+                limits,
+                stored.format,
+                &stored.quantization,
+            )?,
+        };
+        request.checked_header = Some(stored.header);
+        Ok(request)
+    }
+
+    /// Per-tensor storage declarations used to construct this request's plan.
+    #[must_use]
+    pub fn quantization(&self) -> &HashMap<String, Lfm2WeightFormat> {
+        &self.quantization
+    }
+
     /// Build a request for a dense F32/BF16 asset.
     pub fn new(
         config_bytes: Vec<u8>,
@@ -860,6 +949,8 @@ impl Lfm2LoadRequest {
                 limits,
             },
             plan,
+            checked_header: None,
+            quantization: quantization.clone(),
         })
     }
 
@@ -936,6 +1027,8 @@ impl Lfm2LoadRequest {
                 limits,
             },
             plan,
+            checked_header: None,
+            quantization: quantization.clone(),
         })
     }
 
@@ -957,7 +1050,7 @@ where
 {
     pub fn begin(request: Lfm2LoadRequest) -> core::result::Result<Self, LoaderError> {
         let plan = request.plan.clone();
-        let task = WeightLoadTask::begin(request.request)?;
+        let task = WeightLoadTask::begin_checked(request.request, request.checked_header)?;
         Ok(Self { task, plan })
     }
 

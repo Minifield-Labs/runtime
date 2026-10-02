@@ -307,6 +307,73 @@ pub struct ParsedAsset {
     pub tensors: Vec<ParsedTensor>,
 }
 
+/// A private parser result bound to the exact header bytes admitted for a request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedHeader {
+    pub(crate) parsed: ParsedAsset,
+    digest: [u8; 32],
+}
+
+impl CheckedHeader {
+    pub(crate) fn from_asset(
+        asset: &[u8],
+        config_bytes: usize,
+        limits: LoaderLimits,
+    ) -> Result<Self> {
+        limits.validate()?;
+        let prefix = asset.get(..8).ok_or(ExecutorError::OutOfBounds(
+            "asset is shorter than a safetensors prefix",
+        ))?;
+        let header_bytes = u64::from_le_bytes(
+            prefix
+                .try_into()
+                .map_err(|_| ExecutorError::InvalidArgument("safetensors prefix is unreadable"))?,
+        );
+        let end = header_bytes
+            .checked_add(8)
+            .ok_or(ExecutorError::Overflow("header end overflows u64"))?;
+        let retained = u64::try_from(config_bytes)
+            .ok()
+            .and_then(|size| size.checked_add(header_bytes.max(8)))
+            .ok_or(ExecutorError::Overflow(
+                "config and header retained bytes overflow u64",
+            ))?;
+        if retained > limits.max_retained_host_bytes {
+            return Err(ExecutorError::ResourceLimit(
+                "config and header exceed retained host byte limit",
+            ));
+        }
+        let header = asset
+            .get(
+                8..usize::try_from(end)
+                    .map_err(|_| ExecutorError::Overflow("header end exceeds usize"))?,
+            )
+            .ok_or(ExecutorError::OutOfBounds(
+                "header extends beyond asset bytes",
+            ))?;
+        let parsed = parse_safetensors_header(
+            header,
+            header_bytes,
+            u64::try_from(asset.len())
+                .map_err(|_| ExecutorError::Overflow("asset length exceeds u64"))?,
+            limits,
+        )?;
+        Ok(Self {
+            parsed,
+            digest: Sha256::digest(header).into(),
+        })
+    }
+
+    fn verify(self, header: &[u8]) -> Result<ParsedAsset> {
+        if Sha256::digest(header).as_slice() != self.digest {
+            return Err(ExecutorError::InvalidArgument(
+                "asset header differs from discovered representation",
+            ));
+        }
+        Ok(self.parsed)
+    }
+}
+
 impl ParsedAsset {
     fn sorted_tensor_indexes(&self) -> Vec<usize> {
         let mut indexes: Vec<usize> = (0..self.tensors.len()).collect();
@@ -524,6 +591,7 @@ pub struct WeightLoadTask<Read, Fence, Buffer> {
     phase: LoadPhase<Read, Fence>,
     header_bytes: Option<u64>,
     parsed: Option<ParsedAsset>,
+    checked_header: Option<CheckedHeader>,
     bindings: Vec<TensorBinding>,
     sorted_indexes: Vec<usize>,
     next_tensor: usize,
@@ -542,6 +610,13 @@ where
     Fence: InferenceCompletion<Output = ()>,
 {
     pub fn begin(request: LoadRequest) -> core::result::Result<Self, LoaderError> {
+        Self::begin_checked(request, None)
+    }
+
+    pub(crate) fn begin_checked(
+        request: LoadRequest,
+        checked_header: Option<CheckedHeader>,
+    ) -> core::result::Result<Self, LoaderError> {
         request.limits.validate().map_err(|cause| LoaderError {
             stage: LoaderStage::Begin,
             cause,
@@ -588,6 +663,7 @@ where
             phase: LoadPhase::NeedPrefix,
             header_bytes: None,
             parsed: None,
+            checked_header,
             bindings: Vec::new(),
             sorted_indexes: Vec::new(),
             next_tensor: 0,
@@ -610,6 +686,8 @@ where
     }
 
     fn release_transient_host(&mut self) {
+        self.checked_header = None;
+        self.parsed = None;
         self.staged.clear();
         self.request.config_bytes.clear();
         self.request.config_bytes.shrink_to_fit();
@@ -910,12 +988,15 @@ where
                         });
                     }
                     self.report.retained_header_bytes = header_bytes;
-                    let parsed = parse_safetensors_header(
-                        bytes.as_slice(),
-                        header_bytes,
-                        self.request.declared_asset_bytes,
-                        self.request.limits,
-                    )
+                    let parsed = match self.checked_header.take() {
+                        Some(header) => header.verify(bytes.as_slice()),
+                        None => parse_safetensors_header(
+                            bytes.as_slice(),
+                            header_bytes,
+                            self.request.declared_asset_bytes,
+                            self.request.limits,
+                        ),
+                    }
                     .map_err(|cause| LoaderError {
                         stage: LoaderStage::Inventory,
                         cause,

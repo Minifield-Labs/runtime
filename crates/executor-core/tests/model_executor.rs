@@ -57,12 +57,13 @@ fn load_with_backend<B: InferenceOps<Buffer = CpuBuffer>>(
     mut backend: B,
     limits: Lfm2ExecutionLimits,
 ) -> Lfm2Executor<B> {
-    let request = Lfm2LoadRequest::new(
+    let request = Lfm2LoadRequest::discover(
         config.to_vec(),
         digest(config),
-        u64::try_from(weights.len()).expect("asset bytes"),
+        &weights,
         digest(&weights),
         loader_limits(weights.len()),
+        None,
     )
     .expect("checked request");
     let mut task: Lfm2WeightLoadTask<MemoryAssetRead, B::Fence, CpuBuffer> =
@@ -87,6 +88,114 @@ fn load(config: &[u8], weights: Vec<u8>) -> Lfm2Executor<CpuBackend> {
             max_logical_tokens: 64,
         },
     )
+}
+
+#[test]
+fn discovered_headers_preserve_identity_inventory_and_upload_admission() {
+    use minifield_executor_core::LoaderStage;
+    let config = include_bytes!("fixtures/numerical-lfm-001-config.json");
+    let original = include_bytes!("fixtures/numerical-lfm-001-weights.safetensors");
+    for (change_header, discover_changed, expected_stage) in [
+        (true, false, LoaderStage::Inventory),
+        (true, true, LoaderStage::Inventory),
+        (false, false, LoaderStage::Identity),
+    ] {
+        let mut supplied = original.to_vec();
+        if change_header {
+            supplied[10] = b'X'; // Rename the first tensor, preserving header length and layout.
+        } else {
+            let last_value = supplied.len() - 4;
+            supplied[last_value] ^= 1; // Change one finite f32 without changing the header.
+        }
+        let admitted = if discover_changed {
+            supplied.as_slice()
+        } else {
+            original.as_slice()
+        };
+        let request = Lfm2LoadRequest::discover(
+            config.to_vec(),
+            digest(config),
+            admitted,
+            digest(admitted),
+            loader_limits(admitted.len()),
+            None,
+        )
+        .expect("discovery");
+        let mut task = Lfm2WeightLoadTask::begin(request).expect("load task");
+        let mut provider = MemoryAssetProvider::new(supplied, original.len() as u64);
+        let mut cpu = backend();
+        let error = (0..1000)
+            .find_map(|_| match task.poll_step(&mut provider, &mut cpu) {
+                LoaderPoll::Pending => None,
+                LoaderPoll::Ready(result) => Some(result.expect_err("changed bytes must reject")),
+            })
+            .expect("bounded loader completion");
+        assert_eq!(error.stage, expected_stage);
+        if change_header && !discover_changed {
+            assert_eq!(
+                error.cause,
+                ExecutorError::InvalidArgument(
+                    "asset header differs from discovered representation"
+                )
+            );
+        }
+        assert_eq!(cpu.resource_report().resident_weight_bytes, 0);
+    }
+    let request = Lfm2LoadRequest::discover(
+        config.to_vec(),
+        [0; 32],
+        original,
+        digest(original),
+        loader_limits(original.len()),
+        None,
+    )
+    .expect("discovery");
+    let result =
+        Lfm2WeightLoadTask::<MemoryAssetRead, CpuCompletion<()>, CpuBuffer>::begin(request);
+    assert!(matches!(result, Err(error) if error.stage == LoaderStage::Identity));
+}
+
+#[test]
+fn discovery_uses_bounded_header_validation_before_metadata_routing() {
+    let config = include_bytes!("fixtures/numerical-lfm-001-config.json");
+    for header in [
+        r#"{"__metadata__":{"format":"pt","format":"minifield.nf4.v1"}}"#,
+        r#"{"__metadata__":{"format":3}}"#,
+        r#"{"__metadata__":{"format":"minifield.unknown.v1"}}"#,
+        r#"{"__metadata__":{"tensor_quantization":"[]"}}"#,
+        r#"{"a":{"dtype":"F32","shape":[0],"data_offsets":[0,0]},"a":{"dtype":"F32","shape":[0],"data_offsets":[0,0]}}"#,
+    ] {
+        let mut bytes = (header.len() as u64).to_le_bytes().to_vec();
+        bytes.extend_from_slice(header.as_bytes());
+        let mut limits = loader_limits(bytes.len());
+        limits.max_retained_host_bytes = 1 << 20;
+        assert!(
+            Lfm2LoadRequest::discover(
+                config.to_vec(),
+                digest(config),
+                &bytes,
+                digest(&bytes),
+                limits,
+                None
+            )
+            .is_err(),
+            "{header}"
+        );
+    }
+    let bytes = include_bytes!("fixtures/numerical-lfm-001-weights.safetensors");
+    let mut limits = loader_limits(bytes.len());
+    limits.max_header_bytes = 1;
+    assert!(matches!(
+        Lfm2LoadRequest::discover(
+            config.to_vec(),
+            digest(config),
+            bytes,
+            digest(bytes),
+            limits,
+            None
+        ),
+        Err(ExecutorError::ResourceLimit(_))
+    ));
 }
 
 fn ready<T, C: InferenceCompletion<Output = T>>(completion: &mut C) -> T {

@@ -10,8 +10,7 @@ use minifield_engine_api::{
 use minifield_executor_core::{
     Lfm2Classifier, Lfm2ExecutionLimits, Lfm2ExecutionOptions, Lfm2LayerWeightRole,
     Lfm2LoadRequest, Lfm2Lut2Mode, Lfm2TypedWeights, Lfm2WeightFormat, Lfm2WeightLoadTask,
-    Lfm2WeightRole, LoaderLimits, LoaderPoll, detect_lfm2_weight_format,
-    parse_lfm2_tensor_quantization,
+    Lfm2WeightRole, LoaderLimits, LoaderPoll,
 };
 use minifield_text_tokenizer::{EncodeOptions, Tokenizer, TokenizerLimits};
 use serde_json::{Value, json};
@@ -302,10 +301,10 @@ fn load(
     backend: &mut WgpuBackend,
 ) -> HostResult<Lfm2TypedWeights<WgpuBuffer>> {
     let size = u64::try_from(weights.len())?;
-    let request = Lfm2LoadRequest::new_classifier_with_quantization(
+    let request = Lfm2LoadRequest::discover(
         config.to_vec(),
         Sha256::digest(config).into(),
-        size,
+        &weights,
         Sha256::digest(&weights).into(),
         LoaderLimits {
             max_asset_bytes: size,
@@ -316,9 +315,7 @@ fn load(
             max_tensors: 4096,
             max_rank: 4,
         },
-        opts.classes,
-        detect_lfm2_weight_format(&weights)?,
-        &parse_lfm2_tensor_quantization(&weights)?,
+        Some(opts.classes),
     )?;
     let mut provider = MemoryAssetProvider::new(weights, size);
     let mut task = Lfm2WeightLoadTask::begin(request)?;

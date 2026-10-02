@@ -39,7 +39,7 @@ The runner uses official [Chrome headless](https://developer.chrome.com/docs/aut
 
 ## Binding behavior
 
-Each inference call reports a content-free terminal record. Configure origin/environment or
+Generation and classifier calls report a content-free terminal record. Configure origin/environment or
 disable delivery with `configure_telemetry`; flush before terminating a Worker with
 `flush_telemetry`. See [runtime telemetry](../docs/runtime-telemetry.md) for the complete record
 and deployment settings. Build with `npm run build:web` and distribute the paired
@@ -51,6 +51,7 @@ JavaScript and WASM files from `web/pkg/`.
 - `choose` prefills shared context once and scores criterion tails serially, reading only selector logits.
 - `load_classifier` loads an explicit dense classifier head `[classes, hidden]`. Dense F32/BF16 and packed ternary/NF4 backbones share the same API.
 - `classify` starts fresh state. `classify_cached` reuses a shared prefix when possible, with independent class width and input vocabulary. Callers own prompts, action masks, and application state.
+- `load_pointer_encoder` loads the bidirectional model, with a 512-token and 32-question limit. `tokenize(text, bos)` returns IDs and UTF-8 byte offsets, with `[0,0]` for an inserted BOS; `predict(JSON)` accepts `token_ids`, optional `segment_ids`, and explicit pointer questions, then returns scores and decoded answers. Hosts own wording, joint layouts, and conversion from source-relative token spans to source characters; pointer calls don't emit telemetry.
 
 ## Native bundle evidence
 

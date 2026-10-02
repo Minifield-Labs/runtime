@@ -18,10 +18,12 @@ mod constrained;
 mod generation;
 mod interop;
 mod loading;
+mod pointer;
 mod telemetry;
 pub use telemetry::{configure_telemetry, flush_telemetry};
 
 pub use loading::{load, load_classifier};
+pub use pointer::{WebPointerEncoder, load_pointer_encoder};
 
 const MAX_LOGICAL_TOKENS: u64 = 512;
 const STOP_TOKEN_IDS: [TokenId; 1] = [7];

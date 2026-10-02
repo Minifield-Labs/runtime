@@ -52,9 +52,8 @@ impl WebDemo {
     /// `system` is the fixed tool-list block and `rest` the per-call
     /// user/assistant turns; concatenating them yields the full serialized
     /// prompt. The system block's KV state is cached between calls so each
-    /// run only prefills the short tail. When the cache is cold or the tail's
-    /// unmasked greedy sample is not grammar-legal, the whole prompt is
-    /// prefilled with the mask applied directly.
+    /// run only processes the short tail. The executor applies the grammar
+    /// mask before publishing the tail's first sample.
     pub async fn generate_json(
         &mut self,
         system: String,
@@ -226,31 +225,9 @@ impl WebDemo {
             measurement.cache_reused += base.logical_length();
             let mut append = self
                 .executor
-                .append_known(&base, TokenChunk::all(rest_ids))
+                .append_known_masked(&base, TokenChunk::all(rest_ids), enforcer.allowed())
                 .map_err(js_error)?;
-            let staged = pump(&mut append).await?;
-            // The tail append resolved its pending sample unmasked: reuse it
-            // only when it is grammar-legal, else prefill the full prompt
-            // with the mask so the first emitted token is still constrained.
-            let mask = enforcer.allowed();
-            let legal = self
-                .executor
-                .sampled_token(&staged)
-                .map_err(js_error)?
-                .is_some_and(|id| {
-                    mask.get(id as usize / 64)
-                        .is_some_and(|word| word >> (id % 64) & 1 == 1)
-                });
-            if legal {
-                staged
-            } else {
-                measurement.fallback_used = true;
-                let mut prefill = self
-                    .executor
-                    .prefill_masked(TokenChunk::all(input_ids), mask)
-                    .map_err(js_error)?;
-                pump(&mut prefill).await?
-            }
+            pump(&mut append).await?
         };
         Ok(prefix)
     }

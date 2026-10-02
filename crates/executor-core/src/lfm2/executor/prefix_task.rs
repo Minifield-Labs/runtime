@@ -20,6 +20,7 @@ enum PrefixAction<B: InferenceOps> {
     },
     Append {
         tokens: Vec<TokenId>,
+        mask: Option<Rc<[u64]>>,
     },
     /// Single-token greedy append: the token is the source prefix's resolved
     /// argmax sample, embedded directly from its device-resident id buffer.
@@ -93,9 +94,27 @@ impl<B: InferenceOps> PrefixTask<B> {
         source: Lfm2Prefix<B>,
         tokens: Vec<TokenId>,
     ) -> Self {
+        Self::append_impl(context, source, tokens, None)
+    }
+
+    pub(super) fn append_masked(
+        context: Rc<ModelContext<B>>,
+        source: Lfm2Prefix<B>,
+        tokens: Vec<TokenId>,
+        mask: Rc<[u64]>,
+    ) -> Self {
+        Self::append_impl(context, source, tokens, Some(mask))
+    }
+
+    fn append_impl(
+        context: Rc<ModelContext<B>>,
+        source: Lfm2Prefix<B>,
+        tokens: Vec<TokenId>,
+        mask: Option<Rc<[u64]>>,
+    ) -> Self {
         Self {
             context,
-            action: Some(PrefixAction::Append { tokens }),
+            action: Some(PrefixAction::Append { tokens, mask }),
             phase: PrefixPhase::New,
             staged: None,
             source: Some(source),
@@ -226,18 +245,18 @@ impl<B: InferenceOps> PrefixTask<B> {
                 self.phase = PrefixPhase::Building;
                 Ok(None)
             }
-            PrefixAction::Append { tokens } => {
+            PrefixAction::Append { tokens, mask } => {
                 let Some(source) = self.source.take() else {
                     return Err(ExecutorError::BackendFailure(
                         "append source was already consumed",
                     ));
                 };
                 self.context.validate_prefix(&source)?;
-                if tokens.is_empty() {
+                if tokens.is_empty() && mask.is_none() {
                     self.action = None;
                     return Ok(Some(source));
                 }
-                self.stage_storage(source)?;
+                self.stage_storage(source, tokens.is_empty())?;
                 self.phase = PrefixPhase::Building;
                 Ok(None)
             }
@@ -253,7 +272,7 @@ impl<B: InferenceOps> PrefixTask<B> {
                         "prefix has no resolved greedy sample to append",
                     ));
                 }
-                self.stage_storage(source)?;
+                self.stage_storage(source, false)?;
                 self.phase = PrefixPhase::Building;
                 Ok(None)
             }
@@ -280,7 +299,7 @@ impl<B: InferenceOps> PrefixTask<B> {
     /// buffers are reused in place and no copies are recorded. Otherwise the
     /// storage is deep-copied and the source retained until the copies are
     /// fenced.
-    fn stage_storage(&mut self, source: Lfm2Prefix<B>) -> Result<()> {
+    fn stage_storage(&mut self, source: Lfm2Prefix<B>, copy_logits: bool) -> Result<()> {
         let Lfm2Prefix {
             owner,
             lease,
@@ -293,7 +312,7 @@ impl<B: InferenceOps> PrefixTask<B> {
             Ok(storage) => storage,
             Err(storage) => {
                 let mut backend = self.context.borrow_backend()?;
-                let staged = clone_storage(&self.context, &mut *backend, &storage, false)?;
+                let staged = clone_storage(&self.context, &mut *backend, &storage, copy_logits)?;
                 drop(backend);
                 self.retained_prefixes.push(Lfm2Prefix {
                     owner,
@@ -348,8 +367,16 @@ impl<B: InferenceOps> PrefixTask<B> {
         // The mask constrains only the argmax that publishes the next greedy
         // sample: for append_argmax that's the single appended token's.
         let (step, mask): (Option<Step<B>>, Option<Rc<[u64]>>) = match self.action.as_ref() {
-            Some(PrefixAction::Append { tokens }) => {
-                (tokens.get(self.next_token).copied().map(Step::Host), None)
+            Some(PrefixAction::Append { tokens, mask }) => {
+                let final_mask = if tokens.is_empty() || self.next_token + 1 == tokens.len() {
+                    mask.clone()
+                } else {
+                    None
+                };
+                (
+                    tokens.get(self.next_token).copied().map(Step::Host),
+                    final_mask,
+                )
             }
             Some(PrefixAction::AppendArgmax { mask }) => {
                 if self.next_token == 0 {
@@ -380,6 +407,13 @@ impl<B: InferenceOps> PrefixTask<B> {
             }
         };
         let Some(step) = step else {
+            if let Some(mask) = mask {
+                let mut backend = self.context.borrow_backend()?;
+                let staged = self.staged.as_mut().ok_or(ExecutorError::BackendFailure(
+                    "staged prefix state is unavailable while resampling",
+                ))?;
+                sample_epilogue(&mut *backend, staged, Some(&mask))?;
+            }
             self.action = None;
             return self.submit_fence();
         };
@@ -424,7 +458,7 @@ impl<B: InferenceOps> PrefixTask<B> {
             ))?;
         if matches!(
             self.action.as_ref(),
-            Some(PrefixAction::Append { tokens }) if self.next_token == tokens.len()
+            Some(PrefixAction::Append { tokens, .. }) if self.next_token == tokens.len()
         ) || matches!(
             self.action.as_ref(),
             Some(PrefixAction::AppendArgmax { .. }) if self.next_token == 1

@@ -1328,6 +1328,70 @@ fn predictable_capacity_and_mask_rejections_leave_deferred_executor_usable() {
     assert_eq!(prefix_for(&mut executor, &[3]).logical_length(), 1);
 }
 
+#[test]
+fn masked_known_continuation_matches_full_prefill_and_resamples_empty_tails() {
+    let config = include_bytes!("fixtures/numerical-lfm-001-config.json");
+    let weights = include_bytes!("fixtures/numerical-lfm-001-weights.safetensors").to_vec();
+    let mut executor = load(config, weights);
+    let input = [1, 3, 4];
+    let unmasked = prefix_for(&mut executor, &input);
+    let winner = executor
+        .sampled_token(&unmasked)
+        .expect("sample")
+        .expect("id");
+    let allowed = (winner + 1) % 32;
+    let mask: Rc<[u64]> = Rc::from([1_u64 << allowed]);
+    let mut full = executor
+        .prefill_masked(TokenChunk::all(&input), mask.clone())
+        .expect("masked full");
+    let full = ready(&mut full);
+    let base = prefix_for(&mut executor, &input[..1]);
+    let base_sample = executor.sampled_token(&base).expect("base sample");
+    let mut tail = executor
+        .append_known_masked(&base, TokenChunk::all(&input[1..]), mask.clone())
+        .expect("masked tail");
+    let tail = ready(&mut tail);
+    assert_eq!(
+        executor.sampled_token(&tail).expect("sample"),
+        Some(allowed)
+    );
+    assert_eq!(
+        executor.sampled_token(&full).expect("sample"),
+        Some(allowed)
+    );
+    assert_eq!(tail.token_history(), input);
+    assert_close(
+        &logits_for(&mut executor, &tail),
+        &logits_for(&mut executor, &full),
+    );
+    assert_eq!(base.token_history(), &input[..1]);
+    assert_eq!(
+        executor.sampled_token(&base).expect("source sample"),
+        base_sample
+    );
+
+    let before = executor.inference_work();
+    assert!(
+        executor
+            .append_known_masked(&unmasked, TokenChunk::all(&[]), Rc::from([]))
+            .is_err()
+    );
+    let mut resample = executor
+        .append_known_masked(&unmasked, TokenChunk::all(&[]), mask)
+        .expect("empty tail");
+    let resampled = ready(&mut resample);
+    assert_eq!(executor.inference_work(), before);
+    assert_eq!(resampled.token_history(), input);
+    assert_eq!(
+        executor.sampled_token(&resampled).expect("resample"),
+        Some(allowed)
+    );
+    assert_eq!(
+        executor.sampled_token(&unmasked).expect("original sample"),
+        Some(winner)
+    );
+}
+
 fn lut2_policy_fixture() -> (Vec<u8>, Vec<u8>) {
     let mut config: Value =
         serde_json::from_slice(include_bytes!("fixtures/numerical-lfm-001-config.json"))

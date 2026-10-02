@@ -83,6 +83,18 @@ pub trait TokenExecutor {
         prefix: &Self::Prefix,
         input: TokenChunk<'_>,
     ) -> Result<Self::Append>;
+    /// Append known tokens and constrain the next sample to `mask`. The input
+    /// prefix stays immutable. An empty input resamples its existing logits.
+    fn append_known_masked(
+        &mut self,
+        _prefix: &Self::Prefix,
+        _input: TokenChunk<'_>,
+        _mask: Rc<[u64]>,
+    ) -> Result<Self::Append> {
+        Err(ExecutorError::Unsupported(
+            "masked append_known is not implemented for this executor",
+        ))
+    }
     /// The greedy next-token id resolved when `prefix` was published, if it
     /// carries a logits boundary. Implementations resolve the argmax during
     /// the publish completion itself, so this accessor costs no readback and

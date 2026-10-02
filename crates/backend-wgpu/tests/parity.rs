@@ -155,6 +155,26 @@ fn elementwise_add_multiply_match_cpu() {
         .multiply(&mut cpu_out, &cpu_a, &cpu_b)
         .expect("cpu multiply");
     assert_exact(&read(&backend, &gpu_out), cpu_out.as_slice());
+
+    let mut gpu_copy = backend.allocate_f32(shape).expect("gpu copy destination");
+    let mut cpu_copy = reference.allocate_f32(shape).expect("cpu copy destination");
+    let passes = backend.stats().compute_passes;
+    backend
+        .add(&mut gpu_out, &gpu_a, &gpu_b)
+        .expect("queued add");
+    backend
+        .multiply(&mut gpu_out, &gpu_a, &gpu_b)
+        .expect("queued multiply");
+    backend.copy(&mut gpu_copy, &gpu_out).expect("queued copy");
+    backend
+        .add(&mut gpu_out, &gpu_copy, &gpu_a)
+        .expect("add after copy");
+    reference.copy(&mut cpu_copy, &cpu_out).expect("cpu copy");
+    reference
+        .add(&mut cpu_out, &cpu_copy, &cpu_a)
+        .expect("cpu add after copy");
+    assert_exact(&read(&backend, &gpu_out), cpu_out.as_slice());
+    assert_eq!(backend.stats().compute_passes - passes, 2);
 }
 
 #[test]
@@ -315,7 +335,7 @@ fn linear_gemv_and_gemm_match_cpu() {
     }
 
     // m > 1 tiled GEMM path, including tile-edge sizes.
-    for (m, n, k) in [(5_u64, 37_u64, 65_u64), (17, 16, 48)] {
+    for (m, n, k) in [(5_u64, 37_u64, 65_u64), (17, 16, 48), (33, 35, 17)] {
         let input_shape = Shape::new(&[m, k]).expect("input shape");
         let weight_shape = Shape::new(&[n, k]).expect("weight shape");
         let out_shape = Shape::new(&[m, n]).expect("out shape");
@@ -1554,66 +1574,69 @@ fn add_row_rms_norm_matches_cpu() {
 fn qk_norm_rope_matches_cpu() {
     let Some(mut backend) = gpu() else { return };
     let mut reference = cpu();
-    let (tokens, q_heads, kv_heads, head_dim) = (2_u64, 4_u32, 2_u32, 8_u32);
-    let q_width = u64::from(q_heads * head_dim);
-    let kv_width = u64::from(kv_heads * head_dim);
-    let q_shape = Shape::new(&[tokens, q_width]).expect("q shape");
-    let k_shape = Shape::new(&[tokens, kv_width]).expect("k shape");
-    let w_shape = Shape::new(&[u64::from(head_dim)]).expect("weight shape");
-    let query = values(71, (tokens * q_width) as usize);
-    let key = values(73, (tokens * kv_width) as usize);
-    let qw = values(79, head_dim as usize);
-    let kw = values(83, head_dim as usize);
-    let positions = [3_u64, 17];
-    let rope = RotarySpec::new(
-        PackedHeadSpec::new(q_heads, head_dim).expect("q heads"),
-        10_000.0,
-    )
-    .expect("rope spec");
-    let kv_spec = PackedHeadSpec::new(kv_heads, head_dim).expect("kv heads");
+    // The larger unequal-head case exceeds the key allocation's padded size
+    // when a query head evaluates an unselected key-buffer load.
+    for (tokens, q_heads, kv_heads, head_dim) in [(2_u64, 4_u32, 2_u32, 8_u32), (111, 16, 8, 64)] {
+        let q_width = u64::from(q_heads * head_dim);
+        let kv_width = u64::from(kv_heads * head_dim);
+        let q_shape = Shape::new(&[tokens, q_width]).expect("q shape");
+        let k_shape = Shape::new(&[tokens, kv_width]).expect("k shape");
+        let w_shape = Shape::new(&[u64::from(head_dim)]).expect("weight shape");
+        let query = values(71, (tokens * q_width) as usize);
+        let key = values(73, (tokens * kv_width) as usize);
+        let qw = values(79, head_dim as usize);
+        let kw = values(83, head_dim as usize);
+        let positions = (0..tokens).map(|token| 3 + 14 * token).collect::<Vec<_>>();
+        let rope = RotarySpec::new(
+            PackedHeadSpec::new(q_heads, head_dim).expect("q heads"),
+            10_000.0,
+        )
+        .expect("rope spec");
+        let kv_spec = PackedHeadSpec::new(kv_heads, head_dim).expect("kv heads");
 
-    let gpu_q = backend.upload_f32(q_shape, &query).expect("gpu q");
-    let gpu_k = backend.upload_f32(k_shape, &key).expect("gpu k");
-    let gpu_qw = backend.upload_f32(w_shape, &qw).expect("gpu qw");
-    let gpu_kw = backend.upload_f32(w_shape, &kw).expect("gpu kw");
-    let cpu_q = reference.upload_f32(q_shape, &query).expect("cpu q");
-    let cpu_k = reference.upload_f32(k_shape, &key).expect("cpu k");
-    let cpu_qw = reference.upload_f32(w_shape, &qw).expect("cpu qw");
-    let cpu_kw = reference.upload_f32(w_shape, &kw).expect("cpu kw");
-    let mut gpu_qo = backend.allocate_f32(q_shape).expect("gpu q out");
-    let mut gpu_ko = backend.allocate_f32(k_shape).expect("gpu k out");
-    let mut cpu_qo = reference.allocate_f32(q_shape).expect("cpu q out");
-    let mut cpu_ko = reference.allocate_f32(k_shape).expect("cpu k out");
-    backend
-        .qk_norm_rope(
-            &mut gpu_qo,
-            &mut gpu_ko,
-            &gpu_q,
-            &gpu_k,
-            &gpu_qw,
-            &gpu_kw,
-            &positions,
-            rope,
-            kv_spec,
-            1e-5,
-        )
-        .expect("gpu qk norm rope");
-    reference
-        .qk_norm_rope(
-            &mut cpu_qo,
-            &mut cpu_ko,
-            &cpu_q,
-            &cpu_k,
-            &cpu_qw,
-            &cpu_kw,
-            &positions,
-            rope,
-            kv_spec,
-            1e-5,
-        )
-        .expect("cpu qk norm rope");
-    assert_close(&read(&backend, &gpu_qo), cpu_qo.as_slice(), 1e-5, 1e-5);
-    assert_close(&read(&backend, &gpu_ko), cpu_ko.as_slice(), 1e-5, 1e-5);
+        let gpu_q = backend.upload_f32(q_shape, &query).expect("gpu q");
+        let gpu_k = backend.upload_f32(k_shape, &key).expect("gpu k");
+        let gpu_qw = backend.upload_f32(w_shape, &qw).expect("gpu qw");
+        let gpu_kw = backend.upload_f32(w_shape, &kw).expect("gpu kw");
+        let cpu_q = reference.upload_f32(q_shape, &query).expect("cpu q");
+        let cpu_k = reference.upload_f32(k_shape, &key).expect("cpu k");
+        let cpu_qw = reference.upload_f32(w_shape, &qw).expect("cpu qw");
+        let cpu_kw = reference.upload_f32(w_shape, &kw).expect("cpu kw");
+        let mut gpu_qo = backend.allocate_f32(q_shape).expect("gpu q out");
+        let mut gpu_ko = backend.allocate_f32(k_shape).expect("gpu k out");
+        let mut cpu_qo = reference.allocate_f32(q_shape).expect("cpu q out");
+        let mut cpu_ko = reference.allocate_f32(k_shape).expect("cpu k out");
+        backend
+            .qk_norm_rope(
+                &mut gpu_qo,
+                &mut gpu_ko,
+                &gpu_q,
+                &gpu_k,
+                &gpu_qw,
+                &gpu_kw,
+                &positions,
+                rope,
+                kv_spec,
+                1e-5,
+            )
+            .expect("gpu qk norm rope");
+        reference
+            .qk_norm_rope(
+                &mut cpu_qo,
+                &mut cpu_ko,
+                &cpu_q,
+                &cpu_k,
+                &cpu_qw,
+                &cpu_kw,
+                &positions,
+                rope,
+                kv_spec,
+                1e-5,
+            )
+            .expect("cpu qk norm rope");
+        assert_close(&read(&backend, &gpu_qo), cpu_qo.as_slice(), 1e-5, 1e-5);
+        assert_close(&read(&backend, &gpu_ko), cpu_ko.as_slice(), 1e-5, 1e-5);
+    }
 }
 
 /// Scratch latency probe (dev tool, not a gate): measures submit->confirm wall

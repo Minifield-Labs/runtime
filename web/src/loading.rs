@@ -142,9 +142,5 @@ pub async fn load_classifier(
         classes,
         classifier,
         tokenizer,
-        max_logical_tokens: limits.max_logical_tokens,
-        anchor_ids: None,
-        shared_head: None,
-        base: None,
     })
 }

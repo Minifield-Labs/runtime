@@ -45,8 +45,4 @@ pub struct WebClassifier {
     classes: u32,
     classifier: Lfm2Classifier<WgpuBackend>,
     tokenizer: Tokenizer,
-    max_logical_tokens: u64,
-    anchor_ids: Option<Vec<u32>>,
-    shared_head: Option<usize>,
-    base: Option<Lfm2Prefix<WgpuBackend>>,
 }

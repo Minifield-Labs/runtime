@@ -135,7 +135,7 @@ impl WgpuBackend {
 
     /// Row-major linear projection: input [m, k] times weight [n, k] yields
     /// output [m, n]. m == 1 uses the shared-memory-reduction GEMV; larger m
-    /// uses the 16x16 tiled GEMM.
+    /// uses a 32x32 GEMM tile with 2x2 output fragments.
     pub fn linear(
         &self,
         output: &mut WgpuBuffer,
@@ -185,8 +185,8 @@ impl WgpuBackend {
             )
         } else {
             let max = u64::from(MAX_WGS_PER_DIM);
-            let column_tiles = output_width.div_ceil(16);
-            let row_tiles = rows.div_ceil(16);
+            let column_tiles = output_width.div_ceil(32);
+            let row_tiles = rows.div_ceil(32);
             if column_tiles > max || row_tiles > max * max {
                 return Err(ExecutorError::ResourceLimit(
                     "linear dimensions exceed GEMM grid capacity",

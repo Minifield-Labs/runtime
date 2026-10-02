@@ -16,6 +16,101 @@ const WEIGHTS: &[u8] = include_bytes!("fixtures/numerical-lfm-001-weights.safete
 const CLASSES: [usize; 3] = [2, 5, 7];
 
 #[test]
+fn automatic_cache_keeps_a_tail_and_counts_only_the_required_passes() {
+    let (backend, weights) = load(classifier_weights(), Some(3));
+    let mut classifier = Lfm2Classifier::new(
+        backend,
+        weights,
+        Lfm2ExecutionLimits {
+            max_logical_tokens: 32,
+        },
+    )
+    .expect("classifier");
+    let original: Vec<_> = (1..=20).collect();
+    let mut changed = original.clone();
+    changed[0] = 2;
+    for (ids, passes, positions, rebuilds, reused, fallback) in [
+        (&original[..], 2, 20, 1, 19, false),
+        (&original[..], 1, 1, 0, 19, false),
+        (&original[..19], 2, 19, 1, 18, false),
+        (&original[..19], 1, 1, 0, 18, false),
+        (&original[..4], 1, 4, 0, 0, true),
+        (&changed[..], 1, 20, 0, 0, true),
+    ] {
+        let expected = ready(
+            classifier
+                .classify(TokenChunk::all(ids))
+                .expect("reference"),
+        );
+        let before = classifier.inference_work();
+        let mut task = classifier
+            .classify_cached(TokenChunk::all(ids))
+            .expect("cached");
+        let actual = loop {
+            match task.poll_step() {
+                CompletionPoll::Pending => {}
+                CompletionPoll::Ready(result) => break result.expect("cached logits"),
+            }
+        };
+        let stats = task.cache_stats();
+        assert_eq!(stats.rebuilds, rebuilds);
+        assert_eq!(stats.reused_tokens, reused);
+        assert_eq!(stats.fallback_used, fallback);
+        drop(task);
+        let work = classifier.inference_work().since(before);
+        assert_eq!(work.forward_passes, passes);
+        assert_eq!(work.token_positions_processed, positions);
+        for (a, b) in actual.iter().zip(&expected) {
+            assert!((a - b).abs() < 1e-5, "{actual:?} != {expected:?}");
+        }
+    }
+}
+
+#[test]
+fn cancelled_rebuild_and_invalid_inputs_preserve_the_published_cache() {
+    let (backend, weights) = load(classifier_weights(), Some(3));
+    let mut classifier = Lfm2Classifier::new(
+        backend,
+        weights,
+        Lfm2ExecutionLimits {
+            max_logical_tokens: 32,
+        },
+    )
+    .expect("classifier");
+    let ids: Vec<_> = (1..=20).collect();
+    let expected = ready(
+        classifier
+            .classify_cached(TokenChunk::all(&ids))
+            .expect("cached"),
+    );
+    let mut rebuild = classifier
+        .classify_cached(TokenChunk::all(&ids[..19]))
+        .expect("rebuild");
+    rebuild.cancel().expect("cancel before submission");
+    assert!(matches!(rebuild.poll_step(), CompletionPoll::Ready(Err(_))));
+    assert_eq!(rebuild.cache_stats().rebuilds, 0);
+    drop(rebuild);
+    let before = classifier.inference_work();
+    for invalid in [&[][..], &[32][..], &[1; 33][..]] {
+        assert!(
+            classifier
+                .classify_cached(TokenChunk::all(invalid))
+                .is_err()
+        );
+    }
+    assert_eq!(classifier.inference_work(), before);
+    let actual = ready(
+        classifier
+            .classify_cached(TokenChunk::all(&ids))
+            .expect("reuse original"),
+    );
+    assert_eq!(actual, expected);
+    let work = classifier.inference_work().since(before);
+    assert_eq!(work.forward_passes, 1);
+    assert_eq!(work.token_positions_processed, 1);
+}
+
+#[test]
 fn work_counts_cached_and_full_passes_with_the_actual_head_width() {
     let (backend, weights) = load(classifier_weights(), Some(3));
     let mut classifier = Lfm2Classifier::new(

@@ -265,8 +265,9 @@ impl<B: InferenceOps> Lfm2Executor<B> {
 /// Last-valid-token classifier sharing the LFM2 backbone and finite backend ops.
 /// Every call starts with empty attention and convolution state.
 pub struct Lfm2Classifier<B: InferenceOps> {
-    executor: Lfm2Executor<B>,
+    pub(super) executor: Lfm2Executor<B>,
     selectors: Vec<TokenId>,
+    pub(super) cache: super::classifier_cache::ClassifierCache<B>,
 }
 
 impl<B: InferenceOps> Lfm2Classifier<B> {
@@ -296,6 +297,7 @@ impl<B: InferenceOps> Lfm2Classifier<B> {
         Ok(Self {
             executor: Lfm2Executor::new_inner(backend, weights, limits, options)?,
             selectors: (0..classes).collect(),
+            cache: super::classifier_cache::ClassifierCache::default(),
         })
     }
 

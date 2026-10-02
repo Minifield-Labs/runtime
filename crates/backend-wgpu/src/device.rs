@@ -767,34 +767,27 @@ impl DeviceInner {
                 label: Some("minifield-encoder"),
             });
         {
-            let mut ops = ctx.ops.drain(..).collect::<VecDeque<_>>();
-            while let Some(op) = ops.pop_front() {
+            let mut ops = ctx.ops.drain(..).peekable();
+            while let Some(op) = ops.next() {
                 match op {
                     PendingOp::Dispatch { .. } => {
-                        let mut run = Vec::new();
-                        run.push(op);
-                        while let Some(PendingOp::Dispatch { .. }) = ops.front() {
-                            let Some(next) = ops.pop_front() else { break };
-                            run.push(next);
-                        }
                         self.stats.borrow_mut().compute_passes += 1;
                         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                             label: Some("minifield-batch"),
                             timestamp_writes: None,
                         });
-                        for op in run {
-                            let PendingOp::Dispatch {
-                                pipeline,
-                                bind_group,
-                                dynamic_offset,
-                                grid,
-                            } = op
-                            else {
-                                unreachable!("run holds dispatches only");
-                            };
+                        let mut dispatch = Some(op);
+                        while let Some(PendingOp::Dispatch {
+                            pipeline,
+                            bind_group,
+                            dynamic_offset,
+                            grid,
+                        }) = dispatch.take()
+                        {
                             pass.set_pipeline(&pipeline);
                             pass.set_bind_group(0, &bind_group, &[dynamic_offset]);
                             pass.dispatch_workgroups(grid.0, grid.1, grid.2);
+                            dispatch = ops.next_if(|op| matches!(op, PendingOp::Dispatch { .. }));
                         }
                     }
                     PendingOp::Copy {

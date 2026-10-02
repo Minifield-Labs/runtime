@@ -113,8 +113,9 @@ impl<B: EncoderOps> Lfm2PointerEncoder<B> {
             context: Rc::clone(&self.context),
             input: Some(input),
             phase: Phase::New,
-            scratch: Vec::new(),
+            scratch: super::execution::Scratch::default(),
             output: None,
+            cursor: super::execution::EncodeCursor::default(),
         })
     }
 
@@ -138,8 +139,9 @@ pub struct PointerTask<B: EncoderOps> {
     context: Rc<Context<B>>,
     input: Option<EncoderInput>,
     phase: Phase<B>,
-    scratch: Vec<B::Buffer>,
+    scratch: super::execution::Scratch<B::Buffer>,
     output: Option<usize>,
+    cursor: super::execution::EncodeCursor,
 }
 
 impl<B: EncoderOps> PointerTask<B> {
@@ -152,7 +154,7 @@ impl<B: EncoderOps> PointerTask<B> {
     }
 
     fn retire(&mut self, fence: B::Fence) {
-        let retained = core::mem::take(&mut self.scratch);
+        let retained = core::mem::take(&mut self.scratch).into_buffers();
         if let Err(rejected) = self.context.retirement.retire(fence, retained) {
             self.context.retirement.quarantine_rejected(rejected);
         }
@@ -162,8 +164,7 @@ impl<B: EncoderOps> PointerTask<B> {
     fn record(&mut self) -> Result<()> {
         self.context.validate()?;
         self.phase = Phase::Building;
-        let result = {
-            let mut backend = self.context.backend()?;
+        let result = self.context.backend().and_then(|mut backend| {
             let input = self
                 .input
                 .as_ref()
@@ -173,14 +174,15 @@ impl<B: EncoderOps> PointerTask<B> {
                 &self.context.weights,
                 input,
                 &mut self.scratch,
+                &mut self.cursor,
             )
-        };
+        });
         // Even a partially recorded pass needs a completion boundary before release.
         let fence = self.context.backend().and_then(|backend| backend.fence());
         match fence {
             Ok(fence) => match result {
                 Ok(output) => {
-                    self.output = Some(output);
+                    self.output = output;
                     self.phase = Phase::Fence(fence);
                     Ok(())
                 }
@@ -191,7 +193,8 @@ impl<B: EncoderOps> PointerTask<B> {
                 }
             },
             Err(error) => {
-                self.context.quarantine(core::mem::take(&mut self.scratch));
+                self.context
+                    .quarantine(core::mem::take(&mut self.scratch).into_buffers());
                 self.phase = Phase::Terminal;
                 Err(error)
             }
@@ -242,6 +245,13 @@ impl<B: EncoderOps> InferenceCompletion for PointerTask<B> {
                 CompletionPoll::Pending => CompletionPoll::Pending,
                 CompletionPoll::Ready(Err(error)) => self.terminal(Err(error)),
                 CompletionPoll::Ready(Ok(())) => {
+                    if self.output.is_none() {
+                        // The previous slice is complete before another fence is submitted.
+                        return match self.record() {
+                            Ok(()) => CompletionPoll::Pending,
+                            Err(error) => self.terminal(Err(error)),
+                        };
+                    }
                     let result = self.context.validate().and_then(|()| {
                         let output = self
                             .output
@@ -302,7 +312,8 @@ impl<B: EncoderOps> InferenceCompletion for PointerTask<B> {
                 }
             },
             Phase::Building => {
-                self.context.quarantine(core::mem::take(&mut self.scratch));
+                self.context
+                    .quarantine(core::mem::take(&mut self.scratch).into_buffers());
                 Err(ExecutorError::BackendFailure(
                     "cannot cancel an unfenced encoder pass",
                 ))
@@ -320,7 +331,9 @@ impl<B: EncoderOps> Drop for PointerTask<B> {
                 let result = self.context.backend().and_then(|backend| backend.fence());
                 match result {
                     Ok(fence) => self.retire(fence),
-                    Err(_) => self.context.quarantine(core::mem::take(&mut self.scratch)),
+                    Err(_) => self
+                        .context
+                        .quarantine(core::mem::take(&mut self.scratch).into_buffers()),
                 }
             }
             // The readback owns its staging/source storage; all earlier consumers

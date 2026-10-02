@@ -44,6 +44,10 @@ impl<B: InferenceOps> TokenExecutor for Lfm2Executor<B> {
         self.context.validate_prefix(prefix)?;
         Ok(prefix.storage.sampled_id)
     }
+    fn prefix_tokens<'a>(&self, prefix: &'a Self::Prefix) -> Result<&'a [TokenId]> {
+        self.context.validate_prefix(prefix)?;
+        Ok(prefix.token_history())
+    }
     fn append_known_masked(
         &mut self,
         prefix: &Self::Prefix,

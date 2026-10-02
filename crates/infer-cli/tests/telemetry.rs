@@ -70,7 +70,7 @@ fn native_host_reports_once_for_generation_and_failure_without_changing_output()
     assert_eq!(record["execution"]["tokens"]["input"], 2);
     assert_eq!(record["execution"]["tokens"]["output"], 3);
     assert_eq!(record["execution"]["prefill"]["forward_passes"], 1);
-    assert_eq!(record["execution"]["decode"]["forward_passes"], 3);
+    assert_eq!(record["execution"]["decode"]["forward_passes"], 2);
     assert_eq!(record["status"], "completed");
     assert!(record.get("text").is_none());
     output.clear();

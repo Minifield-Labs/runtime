@@ -100,6 +100,12 @@ pub trait TokenExecutor {
     /// the publish completion itself, so this accessor costs no readback and
     /// lets callers inspect the sampled token before deciding to append it.
     fn sampled_token(&mut self, prefix: &Self::Prefix) -> Result<Option<TokenId>>;
+    /// Checked logical history for resuming generation from a published prefix.
+    fn prefix_tokens<'a>(&self, _prefix: &'a Self::Prefix) -> Result<&'a [TokenId]> {
+        Err(ExecutorError::Unsupported(
+            "prefix history is unavailable for this executor",
+        ))
+    }
     /// Append the token currently reported by `sampled_token`. The sampled id
     /// stays backend-resident through the embedding gather, so greedy decode
     /// never reads a full logits row to the host. Takes the prefix by value:
@@ -201,7 +207,10 @@ pub trait TokenChoiceExecutor: TokenExecutor {
 pub trait DecodeConstraint {
     /// Allowed ids for the upcoming sample.
     fn allowed(&mut self) -> Rc<[u64]>;
-    /// Records an emitted token. Called when the id is committed, after the
-    /// decode checks pass and before the append that produced it publishes.
+    /// Records a token from a completed prefix after its decoding checks pass.
     fn advance(&mut self, token: TokenId);
+    /// True only when generation must stop, rather than merely allowing EOS.
+    fn finished(&self) -> bool {
+        false
+    }
 }

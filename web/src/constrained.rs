@@ -6,6 +6,7 @@ use minifield_engine_api::{DecodeConstraint, TokenChunk, TokenExecutor, TokenId}
 use minifield_executor_core::Lfm2Prefix;
 use minifield_json_grammar::AssistantCallEnforcer;
 use minifield_runtime_telemetry::{Measurement, Mode};
+use minifield_text_generation::{GenerationInput, GenerationRequest, StopReason};
 use minifield_text_tokenizer::{EncodeOptions, MODEL_VOCAB_SIZE};
 use wasm_bindgen::{JsValue, prelude::wasm_bindgen};
 
@@ -88,71 +89,43 @@ impl WebDemo {
                     .map_err(js_error)?,
             );
             measurement.tokenized(input_ids.len());
-            let max_tokens = usize::try_from(MAX_LOGICAL_TOKENS)
-                .unwrap_or(usize::MAX)
-                .saturating_sub(input_ids.len())
-                .min(usize::try_from(max_tokens).unwrap_or(usize::MAX));
-            if max_tokens < measurement.max_output_tokens {
-                measurement.stop_reason = "context_limit";
-            }
-            if max_tokens == 0 {
-                return Err(JsValue::from_str("prompt fills the context budget"));
-            }
+            let prompt = format!("{system}{rest}");
+            let mut request = GenerationRequest::with_eos(
+                &prompt,
+                max_tokens as usize,
+                usize::try_from(MAX_LOGICAL_TOKENS).unwrap_or(usize::MAX),
+            );
+            request.add_bos = true;
+            request.skip_special_tokens = false;
             let mut enforcer = self.assistant_enforcer(&names)?;
-
-            let mut prefix = self
-                .constrained_prefix(
-                    &system,
-                    &system_ids,
-                    &input_ids,
-                    &mut enforcer,
+            let input = if max_tokens == 0 {
+                GenerationInput::Prompt
+            } else {
+                let prefix = self
+                    .constrained_prefix(
+                        &system,
+                        &system_ids,
+                        &input_ids,
+                        &mut enforcer,
+                        &mut measurement,
+                    )
+                    .await?;
+                GenerationInput::Prefix(prefix)
+            };
+            let generated = self
+                .run_generation(
+                    &request,
+                    input,
+                    Some(&mut enforcer),
+                    &on_token,
                     &mut measurement,
                 )
                 .await?;
-            measurement.prefilled(self.executor.inference_work());
-
-            let mut decoder = self.tokenizer.streaming_decoder(false);
-            let mut text = String::new();
-            let mut generated = 0_usize;
-            let mut stopped = false;
-
-            loop {
-                let next = self
-                    .executor
-                    .sampled_token(&prefix)
-                    .map_err(js_error)?
-                    .ok_or_else(|| JsValue::from_str("executor published no greedy sample"))?;
-                if STOP_TOKEN_IDS.contains(&next) {
-                    stopped = true;
-                    measurement.stop_reason = "end_token";
-                    break;
-                }
-                let fragment = decoder.push(&[next]).map_err(js_error)?;
-                text.push_str(&fragment);
-                generated += 1;
-                measurement.emitted();
-                enforcer.advance(next);
-                let _ = on_token.call2(
-                    &JsValue::NULL,
-                    &JsValue::from_str(&fragment),
-                    &JsValue::from_f64(f64::from(next)),
-                );
-                if enforcer.complete() {
-                    stopped = true;
-                    measurement.stop_reason = "constraint_complete";
-                    break;
-                }
-                if generated >= max_tokens {
-                    break;
-                }
-                let mut append = self
-                    .executor
-                    .append_argmax_masked(prefix, enforcer.allowed())
-                    .map_err(js_error)?;
-                prefix = pump(&mut append).await?;
-            }
-            text.push_str(&decoder.finish().map_err(js_error)?);
-            stats(&text, generated, stopped)
+            stats(
+                &generated.text,
+                generated.generated_ids.len(),
+                generated.stop_reason != StopReason::MaxOutputTokens,
+            )
         }
         .await;
         self.telemetry

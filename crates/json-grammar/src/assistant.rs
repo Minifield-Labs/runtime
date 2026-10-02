@@ -290,6 +290,10 @@ impl Machine for AssistantCallMachine {
         self.state == AssistPhase::Done
     }
 
+    fn finished(&self) -> bool {
+        self.complete()
+    }
+
     /// The mask at `NameBody` depends on which names the emitted bytes can
     /// still reach, and slot masks depend on the JSON stack; both are part
     /// of the cache key.

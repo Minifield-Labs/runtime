@@ -1,14 +1,18 @@
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
+use std::future::Future;
 use std::rc::Rc;
+use std::task::{Context, Poll, Waker};
 
 use minifield_engine_api::{
-    CandidateScore, DecodeConstraint, ExecutorError, ReadyCompletion, Result as ExecutorResult,
-    TokenChoiceExecutor, TokenChunk, TokenExecutor, TokenId,
+    CandidateScore, CompletionPoll, DecodeConstraint, ExecutorError, InferenceCompletion,
+    ReadyCompletion, Result as ExecutorResult, TokenChoiceExecutor, TokenChunk, TokenExecutor,
+    TokenId,
 };
 use minifield_text_generation::{
     ChoiceCriterion, ChoiceError, ChoiceProbability, ChoiceRequest, GenerationError,
-    GenerationPolicy, GenerationRequest, NeverCancel, StopReason, choose, finish_choice, generate,
-    generate_constrained, prepare_choice,
+    GenerationEvent, GenerationInput, GenerationPolicy, GenerationRequest, NeverCancel, StopReason,
+    choose, finish_choice, generate, generate_constrained, generate_task, prepare_choice,
 };
 use minifield_text_tokenizer::{MODEL_VOCAB_SIZE, Tokenizer, TokenizerLimits};
 
@@ -32,6 +36,8 @@ struct FakeExecutor {
     branch_tails: Vec<Vec<TokenId>>,
     events: Vec<&'static str>,
     fail_append: bool,
+    pending_polls: usize,
+    cancellations: Rc<Cell<usize>>,
 }
 
 impl FakeExecutor {
@@ -53,14 +59,48 @@ impl FakeExecutor {
             branch_tails: Vec::new(),
             events: Vec::new(),
             fail_append: false,
+            pending_polls: 0,
+            cancellations: Rc::new(Cell::new(0)),
+        }
+    }
+}
+
+struct PrefixCompletion {
+    inner: ReadyCompletion<Prefix>,
+    pending_polls: usize,
+    cancellations: Rc<Cell<usize>>,
+}
+
+impl InferenceCompletion for PrefixCompletion {
+    type Output = Prefix;
+    fn poll_step(&mut self) -> CompletionPoll<Prefix> {
+        if self.pending_polls > 0 {
+            self.pending_polls -= 1;
+            CompletionPoll::Pending
+        } else {
+            self.inner.poll_step()
+        }
+    }
+    fn cancel(&mut self) -> ExecutorResult<()> {
+        self.cancellations.set(self.cancellations.get() + 1);
+        self.inner.cancel()
+    }
+}
+
+impl FakeExecutor {
+    fn prefix_completion(&self, result: ExecutorResult<Prefix>) -> PrefixCompletion {
+        PrefixCompletion {
+            inner: ReadyCompletion::new(result),
+            pending_polls: self.pending_polls,
+            cancellations: self.cancellations.clone(),
         }
     }
 }
 
 impl TokenExecutor for FakeExecutor {
     type Prefix = Prefix;
-    type Prefill = ReadyCompletion<Prefix>;
-    type Append = ReadyCompletion<Prefix>;
+    type Prefill = PrefixCompletion;
+    type Append = PrefixCompletion;
     type Fork = ReadyCompletion<Prefix>;
     type Scores = ReadyCompletion<Vec<CandidateScore>>;
     type Logits = ReadyCompletion<Vec<f32>>;
@@ -69,7 +109,7 @@ impl TokenExecutor for FakeExecutor {
         self.prefill_calls += 1;
         self.events.push("prefill");
         self.pending_mask = None;
-        Ok(ReadyCompletion::new(Ok(Prefix(input.ids.to_vec()))))
+        Ok(self.prefix_completion(Ok(Prefix(input.ids.to_vec()))))
     }
 
     fn prefill_masked(
@@ -89,14 +129,14 @@ impl TokenExecutor for FakeExecutor {
         input: TokenChunk<'_>,
     ) -> ExecutorResult<Self::Append> {
         if self.fail_append {
-            return Ok(ReadyCompletion::new(Err(ExecutorError::BackendFailure(
-                "test append failure",
-            ))));
+            return Ok(
+                self.prefix_completion(Err(ExecutorError::BackendFailure("test append failure")))
+            );
         }
         let mut next = prefix.0.clone();
         next.extend_from_slice(input.ids);
         self.appended.extend_from_slice(input.ids);
-        Ok(ReadyCompletion::new(Ok(Prefix(next))))
+        Ok(self.prefix_completion(Ok(Prefix(next))))
     }
 
     fn sampled_token(&mut self, _prefix: &Self::Prefix) -> ExecutorResult<Option<TokenId>> {
@@ -139,9 +179,9 @@ impl TokenExecutor for FakeExecutor {
 
     fn append_argmax(&mut self, prefix: Self::Prefix) -> ExecutorResult<Self::Append> {
         if self.fail_append {
-            return Ok(ReadyCompletion::new(Err(ExecutorError::BackendFailure(
-                "test append failure",
-            ))));
+            return Ok(
+                self.prefix_completion(Err(ExecutorError::BackendFailure("test append failure")))
+            );
         }
         let token = self
             .pending_sample
@@ -153,7 +193,7 @@ impl TokenExecutor for FakeExecutor {
         let mut next = prefix.0.clone();
         next.push(token);
         self.appended.push(token);
-        Ok(ReadyCompletion::new(Ok(Prefix(next))))
+        Ok(self.prefix_completion(Ok(Prefix(next))))
     }
 
     fn append_argmax_masked(
@@ -167,6 +207,10 @@ impl TokenExecutor for FakeExecutor {
             self.pending_mask = Some(mask);
         }
         result
+    }
+
+    fn prefix_tokens<'a>(&self, prefix: &'a Prefix) -> ExecutorResult<&'a [TokenId]> {
+        Ok(&prefix.0)
     }
 
     fn fork(&mut self, prefix: &Self::Prefix) -> ExecutorResult<Self::Fork> {
@@ -235,7 +279,7 @@ impl TokenChoiceExecutor for FakeExecutor {
     fn prefill_choice_base(&mut self, input: TokenChunk<'_>) -> ExecutorResult<Self::Prefill> {
         self.choice_base_calls += 1;
         self.events.push("choice_base");
-        Ok(ReadyCompletion::new(Ok(Prefix(input.ids.to_vec()))))
+        Ok(self.prefix_completion(Ok(Prefix(input.ids.to_vec()))))
     }
 
     fn append_choice_logits(
@@ -263,6 +307,7 @@ impl TokenChoiceExecutor for FakeExecutor {
 struct AllowList {
     mask: Rc<[u64]>,
     advanced: Vec<TokenId>,
+    finish_after: Option<usize>,
 }
 
 impl AllowList {
@@ -274,6 +319,7 @@ impl AllowList {
         Self {
             mask: mask.into(),
             advanced: Vec::new(),
+            finish_after: None,
         }
     }
 }
@@ -285,6 +331,10 @@ impl DecodeConstraint for AllowList {
 
     fn advance(&mut self, token: TokenId) {
         self.advanced.push(token);
+    }
+
+    fn finished(&self) -> bool {
+        self.finish_after == Some(self.advanced.len())
     }
 }
 
@@ -419,7 +469,7 @@ fn rejected_candidate_ids_and_failed_appends_are_not_published() {
         generate(
             &mut append_failure,
             &tokenizer,
-            &request("a", 1, &[7]),
+            &request("a", 2, &[7]),
             &mut cancellation,
         ),
         Err(GenerationError::Executor(ExecutorError::BackendFailure(
@@ -510,8 +560,8 @@ fn constrained_generate_continues_when_the_stop_token_is_masked_out() {
 
     assert_eq!(result.generated_ids, vec![2, 2]);
     assert_eq!(result.stop_reason, StopReason::MaxOutputTokens);
-    // prefill_masked plus two append_argmax_masked calls.
-    assert_eq!(executor.masked_calls, 3);
+    // The final token needs no unused append.
+    assert_eq!(executor.masked_calls, 2);
     assert_eq!(constraint.advanced, vec![2, 2]);
 }
 
@@ -534,6 +584,150 @@ fn constrained_generate_surfaces_an_empty_candidate_row() {
             "mask excluded every candidate"
         )))
     );
+}
+
+#[test]
+fn immediate_and_delayed_tasks_publish_the_same_completed_tokens() {
+    let tokenizer = tokenizer();
+    let request = request("a", 2, &[7]);
+    for delay in [0, 2] {
+        let mut executor =
+            FakeExecutor::new(vec![Ok(logits(&[(2, 1.0)])), Ok(logits(&[(4, 1.0)]))]);
+        executor.pending_polls = delay;
+        let output = RefCell::new(Vec::new());
+        let mut observe = |event: GenerationEvent<'_>, _: &FakeExecutor| {
+            if let GenerationEvent::Token { id, fragment } = event {
+                output.borrow_mut().push((id, fragment.to_owned()));
+            }
+        };
+        let mut cancel = NeverCancel;
+        {
+            let task = generate_task(
+                &mut executor,
+                &tokenizer,
+                &request,
+                GenerationInput::Prompt,
+                None,
+                &mut cancel,
+                &mut observe,
+            );
+            let mut task = std::pin::pin!(task);
+            let mut context = Context::from_waker(Waker::noop());
+            for _ in 0..delay {
+                assert!(task.as_mut().poll(&mut context).is_pending());
+                assert!(output.borrow().is_empty());
+            }
+            for _ in 0..delay {
+                assert!(task.as_mut().poll(&mut context).is_pending());
+                assert_eq!(*output.borrow(), vec![(2, "b".to_owned())]);
+            }
+            let Poll::Ready(Ok(result)) = task.as_mut().poll(&mut context) else {
+                panic!("completed task should publish both tokens");
+            };
+            assert_eq!(result.generated_ids, vec![2, 4]);
+            assert_eq!(result.text, "bx");
+            assert_eq!(
+                *output.borrow(),
+                vec![(2, "b".to_owned()), (4, "x".to_owned())]
+            );
+        }
+        assert_eq!(executor.appended, vec![2]);
+    }
+}
+
+#[test]
+fn cancellation_retires_pending_prefill_without_publishing() {
+    let tokenizer = tokenizer();
+    let request = request("a", 2, &[7]);
+    let mut executor = FakeExecutor::new(Vec::new());
+    executor.pending_polls = 2;
+    let cancellations = Rc::clone(&executor.cancellations);
+    let cancelled = Cell::new(false);
+    let mut cancel = || cancelled.get();
+    let mut observe = |event: GenerationEvent<'_>, _: &FakeExecutor| {
+        assert!(!matches!(event, GenerationEvent::Token { .. }));
+    };
+    let task = generate_task(
+        &mut executor,
+        &tokenizer,
+        &request,
+        GenerationInput::Prompt,
+        None,
+        &mut cancel,
+        &mut observe,
+    );
+    let mut task = std::pin::pin!(task);
+    let mut context = Context::from_waker(Waker::noop());
+    assert!(task.as_mut().poll(&mut context).is_pending());
+    cancelled.set(true);
+    assert_eq!(
+        task.as_mut().poll(&mut context),
+        Poll::Ready(Err(GenerationError::Cancelled))
+    );
+    assert_eq!(cancellations.get(), 1);
+}
+
+#[test]
+fn failed_append_keeps_prior_output_and_publishes_no_unfinished_sample() {
+    let tokenizer = tokenizer();
+    let request = request("a", 2, &[7]);
+    let mut executor = FakeExecutor::new(vec![Ok(logits(&[(2, 1.0)])), Ok(logits(&[(4, 1.0)]))]);
+    executor.fail_append = true;
+    let output = RefCell::new(Vec::new());
+    let mut observe = |event: GenerationEvent<'_>, _: &FakeExecutor| {
+        if let GenerationEvent::Token { id, .. } = event {
+            output.borrow_mut().push(id);
+        }
+    };
+    let mut cancel = NeverCancel;
+    let task = generate_task(
+        &mut executor,
+        &tokenizer,
+        &request,
+        GenerationInput::Prompt,
+        None,
+        &mut cancel,
+        &mut observe,
+    );
+    let mut task = std::pin::pin!(task);
+    assert!(matches!(
+        task.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+        Poll::Ready(Err(GenerationError::Executor(_)))
+    ));
+    assert_eq!(*output.borrow(), vec![2]);
+}
+
+#[test]
+fn terminal_constraint_needs_no_append_and_prefix_input_needs_no_prefill() {
+    let tokenizer = tokenizer();
+    let request = request("ignored for a checked prefix", 5, &[7]);
+    let mut executor = FakeExecutor::new(vec![Ok(logits(&[(2, 1.0)]))]);
+    executor.fail_append = true;
+    let mut constraint = AllowList::new(&[2]);
+    constraint.finish_after = Some(1);
+    let mut cancel = NeverCancel;
+    let mut observe = |_: GenerationEvent<'_>, _: &FakeExecutor| {};
+    {
+        let task = generate_task(
+            &mut executor,
+            &tokenizer,
+            &request,
+            GenerationInput::Prefix(Prefix(vec![0])),
+            Some(&mut constraint),
+            &mut cancel,
+            &mut observe,
+        );
+        let mut task = std::pin::pin!(task);
+        let Poll::Ready(Ok(result)) = task.as_mut().poll(&mut Context::from_waker(Waker::noop()))
+        else {
+            panic!("terminal constraint should complete without an append");
+        };
+        assert_eq!(result.input_ids, vec![0]);
+        assert_eq!(result.generated_ids, vec![2]);
+        assert_eq!(result.stop_reason, StopReason::ConstraintComplete);
+    }
+    assert_eq!(executor.prefill_calls, 0);
+    assert!(executor.appended.is_empty());
 }
 
 fn criteria<'a>(specs: &'a [(&'a str, &'a str)]) -> Vec<ChoiceCriterion<'a>> {

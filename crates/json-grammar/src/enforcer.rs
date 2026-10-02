@@ -18,6 +18,10 @@ pub trait Machine {
     fn accepts(&mut self, bytes: &[u8]) -> bool;
     /// The document is complete (or completable) in this state.
     fn complete(&self) -> bool;
+    /// A terminal document that should stop generation immediately.
+    fn finished(&self) -> bool {
+        false
+    }
     /// Append a byte-identity of the state for mask caching.
     fn key(&self, out: &mut Vec<u8>);
 }
@@ -59,6 +63,10 @@ impl<M: Machine> Enforcer<M> {
 }
 
 impl<M: Machine> DecodeConstraint for Enforcer<M> {
+    fn finished(&self) -> bool {
+        self.machine.finished()
+    }
+
     fn allowed(&mut self) -> Rc<[u64]> {
         let mut key = Vec::new();
         self.machine.key(&mut key);

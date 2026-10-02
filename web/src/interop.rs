@@ -71,6 +71,21 @@ pub(super) async fn pump<T: InferenceCompletion>(task: &mut T) -> Result<T::Outp
     }
 }
 
+pub(super) async fn pump_future<T, E: Display>(
+    task: impl std::future::Future<Output = Result<T, E>>,
+) -> Result<T, JsValue> {
+    let mut task = std::pin::pin!(task);
+    loop {
+        let poll = task
+            .as_mut()
+            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));
+        match poll {
+            std::task::Poll::Ready(result) => return result.map_err(js_error),
+            std::task::Poll::Pending => browser_yield().await,
+        }
+    }
+}
+
 pub(super) fn stats(text: &str, generated: usize, stopped: bool) -> Result<JsValue, JsValue> {
     let stats = js_sys::Object::new();
     Reflect::set(&stats, &JsValue::from_str("text"), &JsValue::from_str(text))?;

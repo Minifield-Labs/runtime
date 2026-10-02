@@ -58,7 +58,7 @@ export async function qualifyTelemetry(classifier, profile, runtimeModule) {
     const [generated, choice, constrained, failed] = all.slice(initial.length);
     check(generated.execution.tokens.output === 3 && generated.execution.decode.forward_passes === 2, "autoregressive pass count");
     check(choice.mode === "single_step" && choice.single_step.alternatives_evaluated === 2, "choice counts");
-    check(constrained.autoregressive.constraint === "tool_call" && constrained.execution.fallback_used, "constrained fallback counted");
+    check(constrained.autoregressive.constraint === "tool_call" && !constrained.execution.fallback_used, "masked cached continuation avoids fallback");
     check(constrained.execution.cache.token_positions_reused > 0, "warm prefix reused");
     check(failed.status === "failed" && failed.execution.tokens.output === 0, "failed generation");
   }

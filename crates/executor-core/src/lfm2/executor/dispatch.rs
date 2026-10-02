@@ -44,6 +44,27 @@ impl<B: InferenceOps> TokenExecutor for Lfm2Executor<B> {
         self.context.validate_prefix(prefix)?;
         Ok(prefix.storage.sampled_id)
     }
+    fn append_known_masked(
+        &mut self,
+        prefix: &Self::Prefix,
+        input: TokenChunk<'_>,
+        mask: Rc<[u64]>,
+    ) -> Result<Self::Append> {
+        self.context.validate_prefix(prefix)?;
+        self.context.validate_sample_mask(&mask)?;
+        let tokens = self.accepted_tokens(input, prefix.storage.length)?;
+        if tokens.is_empty() && prefix.storage.next_logits.is_none() {
+            return Err(ExecutorError::InvalidArgument(
+                "masked empty append requires a prefix with logits",
+            ));
+        }
+        Ok(PrefixTask::append_masked(
+            Rc::clone(&self.context),
+            prefix.clone(),
+            tokens,
+            mask,
+        ))
+    }
     fn append_argmax(&mut self, prefix: Self::Prefix) -> Result<Self::Append> {
         self.context.validate_prefix(&prefix)?;
         self.context.checked_length(prefix.storage.length, 1)?;

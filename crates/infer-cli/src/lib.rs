@@ -357,6 +357,7 @@ pub fn run_with_reporter(
         measurement.stop_reason = match result.stop_reason {
             StopReason::MaxOutputTokens => "output_limit",
             StopReason::StopToken(_) => "end_token",
+            StopReason::ConstraintComplete => "constraint_complete",
         };
     }
     report(measurement.finish(&model, executor.inference_work(), result.is_ok(), "cpu"));

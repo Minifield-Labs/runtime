@@ -36,14 +36,16 @@ export async function qualifyTelemetry(classifier, profile, runtimeModule) {
       new Uint8Array(await (await fetch(`/generation-assets/${name}`)).arrayBuffer())));
     const runtime = await load(...bytes);
     try {
-      const generated = await runtime.generate("a", 3, () => {});
+      const fragments = [];
+      const generated = await runtime.generate("a", 3, fragment => fragments.push(fragment));
       check(generated.tokens === 3, "synthetic autoregressive fixture must emit 3 tokens");
+      check(fragments.length === 3 && fragments.join("") === generated.text, "streamed output matches completed output");
       await runtime.choose("a", ["first", "second"], ["x", "b"]);
       await runtime.warm_tools("a");
       await runtime.generate_json("a", "x", "example", 6, () => {});
-      let rejected = false;
-      try { await runtime.generate("a", 0, () => {}); } catch { rejected = true; }
-      check(rejected, "zero-budget generation rejected");
+      let emptyCallbacks = 0;
+      const empty = await runtime.generate("a", 0, () => { emptyCallbacks += 1; });
+      check(empty.tokens === 0 && empty.text === "" && emptyCallbacks === 0, "zero-budget generation succeeds without output");
       await flush_telemetry();
     } finally { runtime.free(); }
   }
@@ -65,12 +67,12 @@ export async function qualifyTelemetry(classifier, profile, runtimeModule) {
     }
   }
   if (profile.generation) {
-    const [generated, choice, constrained, failed] = all.slice(initial.length);
+    const [generated, choice, constrained, empty] = all.slice(initial.length);
     check(generated.execution.tokens.output === 3 && generated.execution.decode.forward_passes === 2, "autoregressive pass count");
     check(choice.mode === "single_step" && choice.single_step.alternatives_evaluated === 2, "choice counts");
     check(constrained.autoregressive.constraint === "tool_call" && !constrained.execution.fallback_used, "masked cached continuation avoids fallback");
     check(constrained.execution.cache.token_positions_reused > 0, "warm prefix reused");
-    check(failed.status === "failed" && failed.execution.tokens.output === 0, "failed generation");
+    check(empty.status === "completed" && empty.execution.tokens.output === 0 && empty.execution.prefill.forward_passes === 0, "zero-budget generation performs no model work");
   }
   return { records: all.length, classifier: true, generation: Boolean(profile.generation), optOut: true, deliveryFailure: true };
 }

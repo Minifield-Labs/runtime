@@ -2,16 +2,18 @@
 
 use js_sys::{Function, Reflect};
 use minifield_backend_wgpu::WgpuBackend;
-use minifield_engine_api::{TokenChoiceExecutor, TokenChunk, TokenExecutor};
-use minifield_executor_core::Lfm2Prefix;
+use minifield_engine_api::{DecodeConstraint, TokenChoiceExecutor, TokenChunk};
+use minifield_executor_core::{Lfm2Executor, Lfm2Prefix};
 use minifield_runtime_telemetry::{Measurement, Mode};
-use minifield_text_generation::{ChoiceCriterion, ChoiceRequest, finish_choice, prepare_choice};
-use minifield_text_tokenizer::EncodeOptions;
+use minifield_text_generation::{
+    ChoiceCriterion, ChoiceRequest, GenerationEvent, GenerationInput, GenerationRequest,
+    GenerationResult, NeverCancel, StopReason, finish_choice, generate_task, prepare_choice,
+};
 use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
 
 use super::{
-    MAX_LOGICAL_TOKENS, STOP_TOKEN_IDS, WebDemo,
-    interop::{js_error, pump, stats, to_string_vec},
+    MAX_LOGICAL_TOKENS, WebDemo,
+    interop::{js_error, pump, pump_future, stats, to_string_vec},
 };
 
 #[wasm_bindgen]
@@ -28,51 +30,27 @@ impl WebDemo {
             Measurement::new(Mode::Autoregressive, self.executor.inference_work());
         measurement.max_output_tokens = max_tokens as usize;
         let result = async {
-            let (input_ids, max_tokens) = self.prompt_budget(&prompt, max_tokens)?;
-            measurement.tokenized(input_ids.len());
-            if max_tokens < measurement.max_output_tokens {
-                measurement.stop_reason = "context_limit";
-            }
-
-            let mut prefill = self
-                .executor
-                .prefill(TokenChunk::all(&input_ids))
-                .map_err(js_error)?;
-            let mut prefix: Lfm2Prefix<WgpuBackend> = pump(&mut prefill).await?;
-            measurement.prefilled(self.executor.inference_work());
-            let mut decoder = self.tokenizer.streaming_decoder(false);
-            let mut text = String::new();
-            let mut generated = 0_usize;
-            let mut stopped = false;
-
-            loop {
-                let next = self
-                    .executor
-                    .sampled_token(&prefix)
-                    .map_err(js_error)?
-                    .ok_or_else(|| JsValue::from_str("executor published no greedy sample"))?;
-                if STOP_TOKEN_IDS.contains(&next) {
-                    stopped = true;
-                    measurement.stop_reason = "end_token";
-                    break;
-                }
-                let fragment = decoder.push(&[next]).map_err(js_error)?;
-                text.push_str(&fragment);
-                generated += 1;
-                measurement.emitted();
-                let _ = on_token.call2(
-                    &JsValue::NULL,
-                    &JsValue::from_str(&fragment),
-                    &JsValue::from_f64(f64::from(next)),
-                );
-                if generated >= max_tokens {
-                    break;
-                }
-                let mut append = self.executor.append_argmax(prefix).map_err(js_error)?;
-                prefix = pump(&mut append).await?;
-            }
-            text.push_str(&decoder.finish().map_err(js_error)?);
-            stats(&text, generated, stopped)
+            let mut request = GenerationRequest::with_eos(
+                &prompt,
+                max_tokens as usize,
+                usize::try_from(MAX_LOGICAL_TOKENS).unwrap_or(usize::MAX),
+            );
+            request.add_bos = true;
+            request.skip_special_tokens = false;
+            let generated = self
+                .run_generation(
+                    &request,
+                    GenerationInput::Prompt,
+                    None,
+                    &on_token,
+                    &mut measurement,
+                )
+                .await?;
+            stats(
+                &generated.text,
+                generated.generated_ids.len(),
+                generated.stop_reason != StopReason::MaxOutputTokens,
+            )
         }
         .await;
         self.telemetry
@@ -184,25 +162,46 @@ impl WebDemo {
 }
 
 impl WebDemo {
-    fn prompt_budget(&self, prompt: &str, max_tokens: u32) -> Result<(Vec<u32>, usize), JsValue> {
-        let input_ids = self
-            .tokenizer
-            .encode(
-                prompt,
-                EncodeOptions {
-                    add_special_tokens: true,
-                },
-            )
-            .map_err(js_error)?;
-        let budget = usize::try_from(MAX_LOGICAL_TOKENS)
-            .unwrap_or(usize::MAX)
-            .saturating_sub(input_ids.len());
-        let max_tokens = usize::try_from(max_tokens)
-            .unwrap_or(usize::MAX)
-            .min(budget);
-        if max_tokens == 0 {
-            return Err(JsValue::from_str("prompt fills the context budget"));
-        }
-        Ok((input_ids, max_tokens))
+    pub(super) async fn run_generation(
+        &mut self,
+        request: &GenerationRequest<'_>,
+        input: GenerationInput<Lfm2Prefix<WgpuBackend>>,
+        constraint: Option<&mut dyn DecodeConstraint>,
+        on_token: &Function,
+        measurement: &mut Measurement,
+    ) -> Result<GenerationResult, JsValue> {
+        let mut observe =
+            |event: GenerationEvent<'_>, executor: &Lfm2Executor<WgpuBackend>| match event {
+                GenerationEvent::Tokenized(count) => {
+                    if measurement.tokenization_ms.is_none() {
+                        measurement.tokenized(count);
+                    }
+                }
+                GenerationEvent::Prefilled => measurement.prefilled(executor.inference_work()),
+                GenerationEvent::Token { id, fragment } => {
+                    measurement.emitted();
+                    let _ = on_token.call2(
+                        &JsValue::NULL,
+                        &JsValue::from_str(fragment),
+                        &JsValue::from_f64(f64::from(id)),
+                    );
+                }
+            };
+        let result = pump_future(generate_task(
+            &mut self.executor,
+            &self.tokenizer,
+            request,
+            input,
+            constraint,
+            &mut NeverCancel,
+            &mut observe,
+        ))
+        .await?;
+        measurement.stop_reason = match result.stop_reason {
+            StopReason::MaxOutputTokens => "output_limit",
+            StopReason::StopToken(_) => "end_token",
+            StopReason::ConstraintComplete => "constraint_complete",
+        };
+        Ok(result)
     }
 }

@@ -29,6 +29,8 @@ pub enum StopReason {
     MaxOutputTokens,
     /// The next selected ID was an explicit caller stop token and was not emitted.
     StopToken(TokenId),
+    /// The constraint reached its terminal document state.
+    ConstraintComplete,
 }
 
 /// Caller-provided bounded plaintext-generation request.
@@ -152,15 +154,15 @@ impl From<ExecutorError> for GenerationError {
 ///
 /// The executor resolves the greedy next token inside its append/prefill
 /// completion (`sampled_token`), so no full logits row crosses to the host.
-/// The executor prefix and output decoder are only replaced after an append
-/// completion succeeds. A selected unmapped or malformed UTF-8 token is
-/// rejected before that append begins.
+/// Each emitted token comes from a completed prefix and passes decoding checks.
+/// Only tokens needed to obtain another sample are appended; the final output
+/// token does not trigger an unused forward pass.
 ///
 /// # Errors
 ///
 /// Returns an error for tokenizer admission/decoding, executor completion, cancellation, invalid
 /// logits, or caller context limits. A failed operation never publishes its candidate prefix or
-/// candidate decoded text.
+/// next token from an incomplete prefix.
 pub fn generate<E, C>(
     executor: &mut E,
     tokenizer: &Tokenizer,
@@ -233,13 +235,80 @@ pub fn generate_observed<E: TokenExecutor, C: Cancellation>(
     generate_impl(executor, tokenizer, request, None, cancellation, observer)
 }
 
-fn generate_impl<E, C>(
+fn generate_impl<E: TokenExecutor, C: Cancellation>(
     executor: &mut E,
     tokenizer: &Tokenizer,
     request: &GenerationRequest<'_>,
-    mut constraint: Option<&mut dyn DecodeConstraint>,
+    constraint: Option<&mut dyn DecodeConstraint>,
     cancellation: &mut C,
     observer: &mut impl FnMut(GenerationProgress, &E),
+) -> Result<GenerationResult, GenerationError> {
+    let mut observe = |event: GenerationEvent<'_>, executor: &E| {
+        observer(
+            match event {
+                GenerationEvent::Tokenized(count) => GenerationProgress::Tokenized(count),
+                GenerationEvent::Prefilled => GenerationProgress::Prefilled,
+                GenerationEvent::Token { .. } => GenerationProgress::TokenEmitted,
+            },
+            executor,
+        );
+    };
+    let task = generate_task(
+        executor,
+        tokenizer,
+        request,
+        GenerationInput::Prompt,
+        constraint,
+        cancellation,
+        &mut observe,
+    );
+    let mut task = std::pin::pin!(task);
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    loop {
+        match std::future::Future::poll(task.as_mut(), &mut context) {
+            std::task::Poll::Ready(result) => return result,
+            std::task::Poll::Pending => std::thread::yield_now(),
+        }
+    }
+}
+
+/// Start from request text or continue a checked, already-completed prefix.
+pub enum GenerationInput<P> {
+    Prompt,
+    Prefix(P),
+}
+
+/// Progress and decoded fragments from the shared generation task.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GenerationEvent<'a> {
+    Tokenized(usize),
+    Prefilled,
+    /// The prefix that produced this token completed successfully.
+    Token {
+        id: TokenId,
+        fragment: &'a str,
+    },
+}
+
+/// A pollable generation future shared by native and browser adapters.
+///
+/// Executor completions use cooperative polling. Pending work requests another
+/// poll; browser adapters must yield to the event loop between polls. Dropping
+/// the future drops its pending completion with normal retirement guarantees.
+///
+/// # Errors
+/// Returns tokenizer, executor, cancellation, and context errors. No token is
+/// delivered from a failed or unfinished prefix. Previously delivered tokens
+/// remain valid when a subsequent append fails.
+#[allow(clippy::too_many_lines)] // Keep publication and completion order together.
+pub async fn generate_task<E, C>(
+    executor: &mut E,
+    tokenizer: &Tokenizer,
+    request: &GenerationRequest<'_>,
+    input: GenerationInput<E::Prefix>,
+    mut constraint: Option<&mut dyn DecodeConstraint>,
+    cancellation: &mut C,
+    observer: &mut impl FnMut(GenerationEvent<'_>, &E),
 ) -> Result<GenerationResult, GenerationError>
 where
     E: TokenExecutor,
@@ -250,13 +319,21 @@ where
             "only greedy generation is implemented",
         )));
     }
-    let input_ids = tokenizer.encode(
-        request.prompt,
-        EncodeOptions {
-            add_special_tokens: request.add_bos,
-        },
-    )?;
-    observer(GenerationProgress::Tokenized(input_ids.len()), executor);
+    let (input_ids, prepared_prefix) = match input {
+        GenerationInput::Prompt => (
+            tokenizer.encode(
+                request.prompt,
+                EncodeOptions {
+                    add_special_tokens: request.add_bos,
+                },
+            )?,
+            None,
+        ),
+        GenerationInput::Prefix(prefix) => {
+            (executor.prefix_tokens(&prefix)?.to_vec(), Some(prefix))
+        }
+    };
+    observer(GenerationEvent::Tokenized(input_ids.len()), executor);
     ensure_context(input_ids.len(), request.max_context_tokens)?;
     if request.max_output_tokens == 0 {
         return Ok(GenerationResult {
@@ -267,14 +344,18 @@ where
         });
     }
 
-    let mut prefill = match constraint.as_deref_mut() {
-        Some(constraint) => {
-            executor.prefill_masked(TokenChunk::all(&input_ids), constraint.allowed())?
-        }
-        None => executor.prefill(TokenChunk::all(&input_ids))?,
+    let mut prefix = if let Some(prefix) = prepared_prefix {
+        prefix
+    } else {
+        let mut prefill = match constraint.as_deref_mut() {
+            Some(constraint) => {
+                executor.prefill_masked(TokenChunk::all(&input_ids), constraint.allowed())?
+            }
+            None => executor.prefill(TokenChunk::all(&input_ids))?,
+        };
+        complete(&mut prefill, cancellation).await?
     };
-    let mut prefix = complete(&mut prefill, cancellation)?;
-    observer(GenerationProgress::Prefilled, executor);
+    observer(GenerationEvent::Prefilled, executor);
     let mut generated_ids = Vec::new();
     let mut decoded = tokenizer.streaming_decoder(request.skip_special_tokens);
     let mut text = String::new();
@@ -295,6 +376,18 @@ where
             .ok_or(GenerationError::Executor(ExecutorError::BackendFailure(
                 "executor published no greedy next-token sample",
             )))?;
+        if let Some(constraint) = constraint.as_deref_mut() {
+            let mask = constraint.allowed();
+            if mask
+                .get(next_id as usize / 64)
+                .is_none_or(|word| word & (1_u64 << (next_id % 64)) == 0)
+            {
+                return Err(ExecutorError::InvalidArgument(
+                    "published sample violates the decode constraint",
+                )
+                .into());
+            }
+        }
         if request.stop_token_ids.contains(&next_id) {
             let tail = decoded.finish()?;
             text.push_str(&tail);
@@ -311,20 +404,32 @@ where
         if cancellation.is_cancelled() {
             return Err(GenerationError::Cancelled);
         }
-        let mut append_task = match constraint.as_deref_mut() {
-            Some(constraint) => {
-                constraint.advance(next_id);
-                executor.append_argmax_masked(prefix, constraint.allowed())?
-            }
-            None => executor.append_argmax(prefix)?,
-        };
-        let candidate_prefix = complete(&mut append_task, cancellation)?;
-        prefix = candidate_prefix;
         decoded = candidate_decoder;
         generated_ids.push(next_id);
-        observer(GenerationProgress::TokenEmitted, executor);
         text.push_str(&decoded_fragment);
+        if let Some(constraint) = constraint.as_deref_mut() {
+            constraint.advance(next_id);
+        }
+        observer(
+            GenerationEvent::Token {
+                id: next_id,
+                fragment: &decoded_fragment,
+            },
+            executor,
+        );
 
+        if constraint
+            .as_deref()
+            .is_some_and(DecodeConstraint::finished)
+        {
+            text.push_str(&decoded.finish()?);
+            return Ok(GenerationResult {
+                input_ids,
+                generated_ids,
+                text,
+                stop_reason: StopReason::ConstraintComplete,
+            });
+        }
         if generated_ids.len() == request.max_output_tokens {
             let tail = decoded.finish()?;
             text.push_str(&tail);
@@ -335,6 +440,11 @@ where
                 stop_reason: StopReason::MaxOutputTokens,
             });
         }
+        let mut append_task = match constraint.as_deref_mut() {
+            Some(constraint) => executor.append_argmax_masked(prefix, constraint.allowed())?,
+            None => executor.append_argmax(prefix)?,
+        };
+        prefix = complete(&mut append_task, cancellation).await?;
     }
 }
 
@@ -763,21 +873,29 @@ where
     }
 }
 
-fn complete<T, C>(completion: &mut T, cancellation: &mut C) -> Result<T::Output, GenerationError>
-where
-    T: InferenceCompletion,
-    C: Cancellation,
-{
-    loop {
+async fn complete<T: InferenceCompletion, C: Cancellation>(
+    completion: &mut T,
+    cancellation: &mut C,
+) -> Result<T::Output, GenerationError> {
+    std::future::poll_fn(|context| {
+        use std::task::Poll;
         if cancellation.is_cancelled() {
-            completion.cancel()?;
-            return Err(GenerationError::Cancelled);
+            return Poll::Ready(
+                completion
+                    .cancel()
+                    .map_err(GenerationError::from)
+                    .and(Err(GenerationError::Cancelled)),
+            );
         }
         match completion.poll_step() {
-            CompletionPoll::Pending => {}
-            CompletionPoll::Ready(result) => return result.map_err(GenerationError::from),
+            CompletionPoll::Pending => {
+                context.waker().wake_by_ref();
+                Poll::Pending
+            }
+            CompletionPoll::Ready(result) => Poll::Ready(result.map_err(GenerationError::from)),
         }
-    }
+    })
+    .await
 }
 
 #[cfg(test)]

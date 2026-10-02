@@ -6,8 +6,9 @@ or model-loading policy.
 
 `generate` checks the complete 65,536-logit head, rejects non-finite logits, chooses the lowest
 ID on an exact maximum tie, and stops only for an explicit caller stop ID. It checks context and
-output bounds before every candidate, validates candidate decoding before model append, and only
-publishes the prefix and text after append completes. Callers choose BOS insertion, special-token
+output bounds before every candidate, validates candidate decoding, and publishes only tokens sampled from completed prefixes.
+The final output token needs no extra append. `generate_task` exposes the same loop as a
+pollable Rust future; hosts yield when it is pending and deliver its token events. Callers choose BOS insertion, special-token
 rendering, and cancellation handling through `GenerationRequest`.
 
 `choose` performs typed binary-criterion choice scoring over a `TokenChoiceExecutor`. A shared

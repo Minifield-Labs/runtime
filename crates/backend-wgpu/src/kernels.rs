@@ -55,8 +55,8 @@ const GEMV: &str = include_str!("shaders/gemv.wgsl");
 const PACKED_GEMV: &str = include_str!("shaders/packed_gemv.wgsl");
 
 /// Packed ternary gather: dst[r*k + l] = (code(ids[r], l) - 1) *
-/// scale(ids[r], l/128). One thread per output element; the code decode is
-/// the same byte/bit scheme as `PACKED_GEMV`.
+/// scale(ids[r], l/128). One thread per packed word produces 16 elements
+/// from the canonical two-bit layout.
 const PACKED_GATHER: &str = include_str!("shaders/packed_gather.wgsl");
 
 /// NF4 codebook for `minifield.nf4.v1` streams: decode

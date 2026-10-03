@@ -13,22 +13,30 @@ fn main(
     @builtin(local_invocation_id) lid: vec3<u32>,
 ) {
     let i = flat_wg(wid, numw) * 256u + lid.x;
-    let total = pc.p.x * pc.p.y;
-    if i >= total { return; }
     let k = pc.p.y;
-    let r = i / k;
-    let l = i - r * k;
+    let words_per_row = k >> 4u;
+    let total = pc.p.x * words_per_row;
+    if i >= total { return; }
+    let r = i / words_per_row;
+    let word_column = i - r * words_per_row;
+    let l = word_column << 4u;
+    let base = r * k + l;
     let srcf = ids[r];
     var src = 0xFFFFFFFFu;
     if srcf >= 0.0 && srcf < 16777216.0 && fract(srcf) == 0.0 {
         src = u32(srcf);
     }
     if src >= pc.p.z {
-        dst[i] = bitcast<f32>(pc.p.w);
+        let fill = bitcast<f32>(pc.p.w);
+        for (var j = 0u; j < 16u; j += 1u) {
+            dst[base + j] = fill;
+        }
         return;
     }
-    let word = codes[src * (k >> 4u) + (l >> 4u)];
-    let byte = (word >> (((l >> 2u) & 3u) << 3u)) & 0xFFu;
-    let code = (byte >> ((l & 3u) << 1u)) & 3u;
-    dst[i] = f32(i32(code) - 1) * scales[src * (k >> 7u) + (l >> 7u)];
+    let word = codes[src * words_per_row + word_column];
+    let scale = scales[src * (k >> 7u) + (l >> 7u)];
+    for (var j = 0u; j < 16u; j += 1u) {
+        let code = (word >> (j << 1u)) & 3u;
+        dst[base + j] = f32(i32(code) - 1) * scale;
+    }
 }

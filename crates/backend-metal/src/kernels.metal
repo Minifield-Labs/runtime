@@ -1,6 +1,6 @@
 // Independent native Metal baseline. Host validation bounds every allocation,
-// shape product and selector before encoding. Each sequential reduction belongs
-// to one output row or element, so these kernels require no atomics or barriers.
+// shape product and selector before encoding. Cooperative reductions require
+// the complete threadgroups and pipeline limits checked by the host.
 #include <metal_stdlib>
 using namespace metal;
 struct Params { uint v[16]; };
@@ -162,6 +162,36 @@ kernel void rms_norm(device float *out [[buffer(0)]], device const float *in [[b
     for (uint column = 0; column < width; column++) { float value = in[row * width + column]; sum += value * value; }
     float inverse_rms = rsqrt(sum / float(width) + as_type<float>(p.v[2]));
     for (uint column = 0; column < width; column++) out[row * width + column] = in[row * width + column] * inverse_rms * weights[column];
+}
+
+// Same parameters as rms_norm. Host admits a complete 256-thread group per
+// row only for a compiled SIMD width of 32. Small widths retain scalar dispatch.
+kernel void rms_norm_simd(device float *out [[buffer(0)]], device const float *in [[buffer(1)]],
+                          device const float *weights [[buffer(2)]], constant Params &p [[buffer(8)]],
+                          uint row [[threadgroup_position_in_grid]],
+                          uint tid [[thread_index_in_threadgroup]],
+                          uint group [[simdgroup_index_in_threadgroup]],
+                          uint lane [[thread_index_in_simdgroup]]) {
+    uint width = p.v[1];
+    threadgroup float partials[8];
+    threadgroup float inverse_rms;
+    float sum = 0;
+    for (uint column = tid; column < width; column += 256) {
+        float value = in[row * width + column];
+        sum += value * value;
+    }
+    sum = simd_sum(sum);
+    if (lane == 0) partials[group] = sum;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid == 0) {
+        float total = 0;
+        for (uint i = 0; i < 8; i++) total += partials[i];
+        inverse_rms = rsqrt(total / float(width) + as_type<float>(p.v[2]));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint column = tid; column < width; column += 256) {
+        out[row * width + column] = in[row * width + column] * inverse_rms * weights[column];
+    }
 }
 
 // Params: [tokens,heads,head_dimension]. Host stages portable F64-to-F32 cosine

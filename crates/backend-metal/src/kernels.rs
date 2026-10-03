@@ -12,6 +12,7 @@ pub(crate) enum Kernel {
     PackedLinear,
     PackedPair,
     RmsNorm,
+    RmsNormSimd,
     Rotary,
     Attention,
     CausalConv,
@@ -23,7 +24,7 @@ pub(crate) enum Kernel {
 
 impl Kernel {
     #[cfg(any(target_os = "macos", test))]
-    pub(crate) const ALL: [Self; 17] = [
+    pub(crate) const ALL: [Self; 18] = [
         Self::Elementwise,
         Self::RectCopy,
         Self::Gather,
@@ -34,6 +35,7 @@ impl Kernel {
         Self::PackedLinear,
         Self::PackedPair,
         Self::RmsNorm,
+        Self::RmsNormSimd,
         Self::Rotary,
         Self::Attention,
         Self::CausalConv,
@@ -55,6 +57,7 @@ impl Kernel {
             Self::PackedLinear => "packed_linear",
             Self::PackedPair => "packed_pair",
             Self::RmsNorm => "rms_norm",
+            Self::RmsNormSimd => "rms_norm_simd",
             Self::Rotary => "rotary",
             Self::Attention => "attention",
             Self::CausalConv => "causal_conv",
@@ -100,7 +103,7 @@ mod tests {
     }
 
     #[test]
-    fn baseline_counter_names_are_preserved_and_only_two_tile_names_are_added() {
+    fn baseline_counter_names_are_preserved_with_cooperative_names() {
         let legacy = [
             "elementwise",
             "rect_copy",
@@ -130,6 +133,7 @@ mod tests {
             tiled.as_slice(),
             &[Kernel::PackedLinearTile8, Kernel::PackedPairTile8]
         );
-        assert_eq!(names.len(), legacy.len() + tiled.len());
+        assert!(names.contains("rms_norm_simd"));
+        assert_eq!(names.len(), legacy.len() + tiled.len() + 1);
     }
 }

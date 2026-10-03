@@ -676,6 +676,50 @@ fn short_history_updates_and_even_centered_crop_match_cpu() {
 }
 
 #[test]
+#[ignore = "requires actual Metal device and cooperative RMS shader compilation"]
+fn cooperative_rms_matches_cpu_at_group_boundaries() {
+    fn run<B: InferenceOps>(backend: &mut B, width: u64) -> Vec<f32> {
+        let shape = Shape::new(&[3, width]).expect("RMS shape");
+        let input: Vec<_> = (0..3 * width)
+            .map(|i| {
+                if i < width {
+                    0.0
+                } else {
+                    ((i * 17 % 101) as f32 - 50.0) * 0.125
+                }
+            })
+            .collect();
+        let weights: Vec<_> = (0..width).map(|i| 0.5 + (i % 11) as f32 * 0.125).collect();
+        let source = backend.upload_f32(shape, &input).expect("RMS input");
+        let gain = backend
+            .upload_f32(Shape::new(&[width]).expect("gain shape"), &weights)
+            .expect("RMS gain");
+        let mut output = backend.allocate_f32(shape).expect("RMS output");
+        backend
+            .row_rms_norm(&mut output, &source, &gain, 1e-5)
+            .expect("RMS dispatch");
+        read(backend, &output)
+    }
+
+    let mut gpu = metal();
+    let mut cpu = CpuBackend::new(78, limits());
+    for width in [64, 255, 256, 257, 1024, 1025] {
+        close(&run(&mut cpu, width), &run(&mut gpu, width));
+    }
+    let counts = gpu.dispatch_counts();
+    assert_eq!(
+        counts.get("rms_norm"),
+        Some(&2),
+        "small-row scalar fallback"
+    );
+    assert_eq!(
+        counts.get("rms_norm_simd"),
+        Some(&4),
+        "cooperative pipeline admission"
+    );
+}
+
+#[test]
 #[ignore = "requires real native Metal"]
 fn dependent_dispatches_survive_copy_and_submission_boundaries() {
     let mut gpu = metal();

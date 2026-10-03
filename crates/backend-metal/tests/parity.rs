@@ -718,3 +718,26 @@ fn cooperative_rms_matches_cpu_at_group_boundaries() {
         "cooperative pipeline admission"
     );
 }
+
+#[test]
+#[ignore = "requires real native Metal"]
+fn dependent_dispatches_survive_copy_and_submission_boundaries() {
+    let mut gpu = metal();
+    let shape = Shape::new(&[4]).expect("shape");
+    let input = gpu.upload_f32(shape, &[1., 2., 3., 4.]).expect("input");
+    let mut doubled = gpu.allocate_f32(shape).expect("doubled");
+    let mut squared = gpu.allocate_f32(shape).expect("squared");
+    let mut copied = gpu.allocate_f32(shape).expect("copied");
+    let mut result = gpu.allocate_f32(shape).expect("result");
+    gpu.add(&mut doubled, &input, &input)
+        .expect("first compute");
+    gpu.multiply(&mut squared, &doubled, &doubled)
+        .expect("dependent compute");
+    gpu.copy(&mut copied, &squared).expect("blit boundary");
+    gpu.add(&mut result, &copied, &input)
+        .expect("compute after blit");
+    assert_eq!(read(&gpu, &result), [5., 18., 39., 68.]);
+    gpu.add(&mut result, &copied, &doubled)
+        .expect("new submission");
+    assert_eq!(read(&gpu, &result), [6., 20., 42., 72.]);
+}

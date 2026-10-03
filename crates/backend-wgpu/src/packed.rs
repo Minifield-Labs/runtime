@@ -206,10 +206,10 @@ impl WgpuBackend {
         let elements = id_count.checked_mul(inner).ok_or(ExecutorError::Overflow(
             "gather element count overflows u64",
         ))?;
-        let invocations = if format == PackedStreamFormat::TernaryV1 {
-            elements / 16
-        } else {
-            elements
+        let invocations = match format {
+            PackedStreamFormat::TernaryV1 => elements / 16,
+            PackedStreamFormat::Int8V1 => elements / 4,
+            PackedStreamFormat::Nf4V1 => elements,
         };
         let groups = element_groups(invocations);
         let c = codes.wgpu_buffer()?.clone();

@@ -1,4 +1,4 @@
-//! Signed-byte conformance at GEMM tile and dispatch boundaries.
+//! Signed-byte conformance across projection and gather boundaries.
 #![allow(
     clippy::unwrap_used,
     clippy::cast_precision_loss,
@@ -8,7 +8,7 @@
 )]
 use minifield_backend_wgpu::WgpuBackend;
 use minifield_engine_api::{
-    AllocationClass, CompletionPoll, InferenceCompletion, ResourceLimits, Shape,
+    AllocationClass, CompletionPoll, InferenceCompletion, ResourceLimits, Shape, TokenIds,
 };
 mod common;
 
@@ -22,6 +22,111 @@ fn read(backend: &WgpuBackend, buffer: &minifield_backend_wgpu::WgpuBuffer) -> V
             CompletionPoll::Ready(result) => return result.unwrap(),
         }
     }
+}
+
+#[test]
+fn packed_gather_decodes_words_and_poisons_invalid_device_ids() {
+    let Some(mut backend) = common::gpu(ResourceLimits {
+        max_allocation_bytes: 64 << 20,
+        max_total_bytes: 512 << 20,
+        max_pending_operations: 64,
+    }) else {
+        return;
+    };
+    let rows = 3_usize;
+    let inner = 384_usize;
+    let codes = (0..rows * inner)
+        .map(|i| ((i % 255) as i16 - 127).to_le_bytes()[0])
+        .collect::<Vec<_>>();
+    let scales = (0..rows * 3)
+        .map(|i| (1 + i % 7) as f32 * 0.03125)
+        .collect::<Vec<_>>();
+    let code_buffer = backend
+        .upload_u8_classified(
+            Shape::new(&[rows as u64, inner as u64]).unwrap(),
+            &codes,
+            AllocationClass::Weight,
+        )
+        .unwrap();
+    let scale_buffer = backend
+        .upload_f32(Shape::new(&[rows as u64, 3]).unwrap(), &scales)
+        .unwrap();
+    let id_shape = Shape::new(&[10]).unwrap();
+    let base = backend
+        .upload_f32(
+            id_shape,
+            &[
+                0.0,
+                2.0,
+                -0.0,
+                -1.0,
+                0.5,
+                3.0,
+                16_777_216.0,
+                3e38,
+                3e38,
+                -3e38,
+            ],
+        )
+        .unwrap();
+    let factors = backend
+        .upload_f32(
+            id_shape,
+            &[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0],
+        )
+        .unwrap();
+    let keep = backend
+        .upload_f32(
+            id_shape,
+            &[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0],
+        )
+        .unwrap();
+    let mut overflowed = backend.allocate_f32(id_shape).unwrap();
+    let mut ids = backend.allocate_f32(id_shape).unwrap();
+    backend.multiply(&mut overflowed, &base, &factors).unwrap();
+    backend.multiply(&mut ids, &overflowed, &keep).unwrap();
+    let produced_ids = read(&backend, &ids);
+    assert!(produced_ids[7].is_infinite() && produced_ids[7].is_sign_positive());
+    assert!(produced_ids[8].is_nan());
+    assert!(produced_ids[9].is_infinite() && produced_ids[9].is_sign_negative());
+    let mut output = backend
+        .allocate_f32(Shape::new(&[10, inner as u64]).unwrap())
+        .unwrap();
+    // 960 code-word invocations leave 64 padded invocations in the last group.
+    backend
+        .packed_gather_rows(
+            &mut output,
+            &code_buffer,
+            &scale_buffer,
+            TokenIds::Device(&ids),
+        )
+        .unwrap();
+    let actual = read(&backend, &output);
+    for (destination, values) in actual.chunks_exact(inner).enumerate() {
+        if destination < 3 {
+            let source = [0, 2, 0][destination];
+            for (column, &value) in values.iter().enumerate() {
+                let expected = f32::from(i8::from_ne_bytes([codes[source * inner + column]]))
+                    * scales[source * 3 + column / 128];
+                assert_eq!(value.to_bits(), expected.to_bits());
+            }
+        } else {
+            assert!(
+                values.iter().all(|value| value.is_nan()),
+                "row {destination}"
+            );
+        }
+    }
+    let mut empty = backend
+        .allocate_f32(Shape::new(&[0, inner as u64]).unwrap())
+        .unwrap();
+    backend
+        .packed_gather_rows(&mut empty, &code_buffer, &scale_buffer, TokenIds::Host(&[]))
+        .unwrap();
+    assert_eq!(
+        backend.dispatch_counts().get("packed_gather_int8").copied(),
+        Some(1)
+    );
 }
 #[test]
 #[allow(

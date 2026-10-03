@@ -24,6 +24,8 @@ Construct with `WgpuOptions` for diagnostics or experimental NF4 staging precisi
 
 INT8 uses its own decode headers with the shared F32 GEMM template at every row count. Its group-128 scales and signed byte layout are explicit, and experimental F16 staging doesn't change this arithmetic path.
 
+INT8 embedding gather assigns one packed code word to each invocation. It validates the token ID once, applies one group-128 scale to four signed bytes, and stores one F32 vector. Invalid device IDs still produce NaN across the entire output row; empty gathers record no dispatch.
+
 Raw packed APIs accept canonical codes only. LUT2/PN4 buffers have separate layout tags. Small-row paths retain canonical weights, while qualified shapes can use the explicitly admitted repack. The executor's duplicate-weight budget controls repack admission.
 
 ## Verification

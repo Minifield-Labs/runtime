@@ -737,13 +737,16 @@ fn packed_linear_matches_cpu() {
 fn packed_gather_rows_matches_cpu() {
     let Some(mut backend) = gpu() else { return };
     let mut reference = cpu();
-    let (n, k) = (64_u64, 256_u64);
+    let (n, k) = (64_u64, 384_u64);
     let codes_shape = Shape::new(&[n, k / 4]).expect("codes shape");
     let scales_shape = Shape::new(&[n, k / 128]).expect("scales shape");
     let weight = values(53, (n * k) as usize);
     let (codes, scales) = pack_weights(&weight, n as usize, k as usize);
-    let ids = [63_u32, 0, 17, 17, 2, 41];
-    let out_shape = Shape::new(&[6, k]).expect("out shape");
+    // 408 packed words cross the 256-invocation workgroup boundary.
+    let ids = [
+        63_u32, 0, 17, 17, 2, 41, 1, 62, 3, 61, 4, 60, 5, 59, 6, 58, 7,
+    ];
+    let out_shape = Shape::new(&[ids.len() as u64, k]).expect("out shape");
 
     let gpu_codes = backend
         .upload_u8_classified(codes_shape, &codes, AllocationClass::Weight)
@@ -767,6 +770,93 @@ fn packed_gather_rows_matches_cpu() {
         .expect("cpu packed gather");
     // Dequantized weights are exact products, so parity is bitwise.
     assert_exact(&read(&backend, &gpu_out), cpu_out.as_slice());
+}
+
+#[test]
+fn ternary_word_gather_preserves_invalid_device_ids() {
+    let Some(mut backend) = gpu() else { return };
+    let (n, k) = (2_u64, 384_u64);
+    let codes: Vec<u8> = (0..n * k / 4)
+        .map(|i| [0x24, 0x49, 0x92][(i % 3) as usize])
+        .collect();
+    let scales = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0];
+    let gpu_codes = backend
+        .upload_u8_classified(
+            Shape::new(&[n, k / 4]).expect("codes shape"),
+            &codes,
+            AllocationClass::Weight,
+        )
+        .expect("codes");
+    let gpu_scales = backend
+        .upload_f32(Shape::new(&[n, k / 128]).expect("scales shape"), &scales)
+        .expect("scales");
+    let ids_shape = Shape::new(&[10]).expect("IDs shape");
+    let ids = backend
+        .upload_f32(
+            ids_shape,
+            &[
+                0.0,
+                1.0,
+                0.5,
+                -1.0,
+                2.0,
+                16_777_216.0,
+                3e38,
+                -3e38,
+                3e38,
+                -0.0,
+            ],
+        )
+        .expect("IDs");
+    let multipliers = backend
+        .upload_f32(
+            ids_shape,
+            &[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 1.0],
+        )
+        .expect("overflow factors");
+    let final_factors = backend
+        .upload_f32(
+            ids_shape,
+            &[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0],
+        )
+        .expect("NaN factors");
+    let mut overflowed_ids = backend.allocate_f32(ids_shape).expect("overflowed IDs");
+    let mut device_ids = backend.allocate_f32(ids_shape).expect("device IDs");
+    backend
+        .multiply(&mut overflowed_ids, &ids, &multipliers)
+        .expect("overflow IDs");
+    backend
+        .multiply(&mut device_ids, &overflowed_ids, &final_factors)
+        .expect("NaN ID");
+    let mut output = backend
+        .allocate_f32(Shape::new(&[10, k]).expect("output shape"))
+        .expect("output");
+    backend
+        .packed_gather_rows(
+            &mut output,
+            &gpu_codes,
+            &gpu_scales,
+            TokenIds::Device(&device_ids),
+        )
+        .expect("device gather");
+    let actual = read(&backend, &output);
+    for row in [0_usize, 1, 9] {
+        let source = usize::from(row == 1);
+        let expected: Vec<f32> = (0..k as usize)
+            .map(|column| {
+                let code = (codes[source * k as usize / 4 + column / 4] >> (2 * (column % 4))) & 3;
+                f32::from(i16::from(code) - 1) * scales[source * 3 + column / 128]
+            })
+            .collect();
+        assert_exact(&actual[row * k as usize..(row + 1) * k as usize], &expected);
+    }
+    for row in 2..9 {
+        assert!(
+            actual[row * k as usize..(row + 1) * k as usize]
+                .iter()
+                .all(|value| value.is_nan())
+        );
+    }
 }
 
 #[test]

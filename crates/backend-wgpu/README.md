@@ -28,6 +28,8 @@ INT8 embedding gather assigns one packed code word to each invocation. It valida
 
 Raw packed APIs accept canonical codes only. LUT2/PN4 buffers have separate layout tags. Small-row paths retain canonical weights, while qualified shapes can use the explicitly admitted repack. The executor's duplicate-weight budget controls repack admission.
 
+Ternary row gather assigns each invocation one packed word and writes its 16 decoded F32 values. The aligned word shares one ID validation and group-scale load; invalid device IDs fill all 16 outputs with the existing invalid-ID value.
+
 ## Verification
 
 ```sh

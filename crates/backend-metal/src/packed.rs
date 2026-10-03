@@ -1,4 +1,4 @@
-//! Backend-private canonical packing and the one fixed cooperative tile plan.
+//! Backend-private canonical packing and checked dispatch geometry.
 
 use crate::{Device, MetalBuffer, kernels::Kernel, product};
 use minifield_engine_api::{ExecutorError, Result};
@@ -87,6 +87,12 @@ pub(crate) struct PipelineCaps {
 }
 
 impl PipelineCaps {
+    pub(crate) const fn admits_rms_norm(self) -> bool {
+        self.execution_width == SIMD_WIDTH
+            && self.max_threads >= THREADS
+            && self.static_bytes <= self.device_threadgroup_bytes
+    }
+
     pub(crate) const fn admits_tile8(self) -> bool {
         self.execution_width == SIMD_WIDTH
             && self.max_threads >= THREADS
@@ -128,11 +134,16 @@ impl Tile8Grid {
 pub(crate) enum Geometry {
     Linear(usize),
     Tile8(Tile8Grid),
+    RmsNorm(usize),
 }
 
 impl Geometry {
     pub(crate) const fn matches_kernel(self, kernel: Kernel) -> bool {
-        matches!(self, Self::Tile8(_)) == kernel.is_tile8()
+        match self {
+            Self::Tile8(_) => kernel.is_tile8(),
+            Self::RmsNorm(_) => matches!(kernel, Kernel::RmsNormSimd),
+            Self::Linear(_) => !kernel.is_tile8() && !matches!(kernel, Kernel::RmsNormSimd),
+        }
     }
 }
 
@@ -239,6 +250,7 @@ mod tests {
     #[test]
     fn compiled_limits_use_actual_allocation_and_exact_thread_boundary() {
         assert!(caps().admits_tile8());
+        assert!(caps().admits_rms_norm());
         for incompatible in [
             PipelineCaps {
                 execution_width: 16,
@@ -257,6 +269,7 @@ mod tests {
                 ..caps()
             },
         ] {
+            assert!(!incompatible.admits_rms_norm());
             assert_eq!(
                 Plan::select(Mode::Pair, 9, 33, 128, incompatible),
                 Plan::Scalar(Kernel::PackedPair)
@@ -382,6 +395,9 @@ mod tests {
         assert!(Geometry::Tile8(grid).matches_kernel(Kernel::PackedLinearTile8));
         assert!(!Geometry::Tile8(grid).matches_kernel(Kernel::PackedLinear));
         assert!(!Geometry::Linear(1).matches_kernel(Kernel::PackedPairTile8));
+        assert!(Geometry::RmsNorm(3).matches_kernel(Kernel::RmsNormSimd));
+        assert!(!Geometry::RmsNorm(3).matches_kernel(Kernel::RmsNorm));
+        assert!(!Geometry::Linear(3).matches_kernel(Kernel::RmsNormSimd));
     }
 
     #[test]

@@ -4,7 +4,7 @@ use crate::{
     encode_words,
     kernels::Kernel,
     p,
-    packed::{Format, Mode},
+    packed::{Format, Geometry, Mode},
     product,
 };
 use minifield_engine_api::{
@@ -129,12 +129,27 @@ impl MetalBackend {
                 "Metal RMS epsilon must be finite and positive",
             ));
         }
-        self.device.dispatch(
-            Kernel::RmsNorm,
-            &[output, input, weight],
-            &[p(rows)?, p(width)?, epsilon.to_bits()],
-            rows,
-        )
+        let words = [p(rows)?, p(width)?, epsilon.to_bits()];
+        if rows != 0
+            && cooperative_rms_width(width)
+            && self
+                .device
+                .raw
+                .pipeline_caps(Kernel::RmsNormSimd)?
+                .admits_rms_norm()
+        {
+            let groups = usize::try_from(rows).map_err(|_| {
+                ExecutorError::ResourceLimit("Metal RMS grid exceeds address space")
+            })?;
+            return self.device.encode(
+                Kernel::RmsNormSimd,
+                &[output, input, weight],
+                &words,
+                Geometry::RmsNorm(groups),
+            );
+        }
+        self.device
+            .dispatch(Kernel::RmsNorm, &[output, input, weight], &words, rows)
     }
     fn new_scratch(&self, shape: Shape) -> Result<MetalBuffer> {
         self.allocate(shape, DType::F32, AllocationClass::Scratch, None)
@@ -959,4 +974,22 @@ pub(crate) fn validate_qk_rotary(
         ));
     }
     RotarySpec::new(key, theta)
+}
+
+// Leave room for the shader's final uint column += 256, including tail lanes.
+fn cooperative_rms_width(width: u64) -> bool {
+    (256..=u64::from(u32::MAX - 255)).contains(&width)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn cooperative_rms_width_leaves_room_for_the_final_stride() {
+        for width in [256, 257, 1024, 4_294_967_040] {
+            assert!(super::cooperative_rms_width(width));
+        }
+        for width in [0, 255, 4_294_967_041, u64::from(u32::MAX), u64::MAX] {
+            assert!(!super::cooperative_rms_width(width));
+        }
+    }
 }

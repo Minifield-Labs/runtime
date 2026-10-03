@@ -111,6 +111,9 @@ mod native {
                 Geometry::Linear(threads) if threads == 0 || caps.max_threads == 0 => {
                     Err(ExecutorError::InvalidArgument("Metal linear grid is empty"))
                 }
+                Geometry::RmsNorm(rows) if rows == 0 || !caps.admits_rms_norm() => Err(
+                    ExecutorError::Unsupported("Metal RMS group/pipeline is incompatible"),
+                ),
                 Geometry::Tile8(_) if !caps.admits_tile8() => Err(ExecutorError::Unsupported(
                     "Metal tile8 pipeline/grid is incompatible",
                 )),
@@ -196,6 +199,22 @@ mod native {
                             },
                             MTLSize {
                                 width: pipeline.caps.max_threads.min(256),
+                                height: 1,
+                                depth: 1,
+                            },
+                        );
+                    }
+                    Geometry::RmsNorm(rows) => {
+                        // The RMS pipeline is admitted for eight complete 32-lane
+                        // SIMD groups. Every lane reaches both shared barriers.
+                        encoder.dispatchThreadgroups_threadsPerThreadgroup(
+                            MTLSize {
+                                width: rows,
+                                height: 1,
+                                depth: 1,
+                            },
+                            MTLSize {
+                                width: crate::packed::THREADS,
                                 height: 1,
                                 depth: 1,
                             },

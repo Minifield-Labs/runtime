@@ -19,7 +19,7 @@ mod native {
         MTLComputePipelineState, MTLCreateSystemDefaultDevice, MTLDevice, MTLLibrary,
         MTLResourceOptions, MTLSize,
     };
-    use std::{collections::BTreeMap, ptr::NonNull};
+    use std::{cell::RefCell, collections::BTreeMap, ptr::NonNull};
 
     // MTLCreateSystemDefaultDevice requires CoreGraphics to be loaded.
     #[link(name = "CoreGraphics", kind = "framework")]
@@ -35,7 +35,10 @@ mod native {
         caps: PipelineCaps,
     }
     pub struct Buffer(pub Retained<ProtocolObject<dyn MTLBuffer>>);
-    pub struct Command(pub Retained<ProtocolObject<dyn MTLCommandBuffer>>);
+    pub struct Command {
+        raw: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
+        compute: RefCell<Option<Retained<ProtocolObject<dyn MTLComputeCommandEncoder>>>>,
+    }
 
     impl Device {
         pub fn new() -> Result<Self> {
@@ -144,7 +147,10 @@ mod native {
         pub fn command(&self) -> Result<Command> {
             self.queue
                 .commandBuffer()
-                .map(Command)
+                .map(|raw| Command {
+                    raw,
+                    compute: RefCell::new(None),
+                })
                 .ok_or(ExecutorError::BackendFailure(
                     "Metal command buffer creation failed",
                 ))
@@ -161,13 +167,15 @@ mod native {
                 .pipelines
                 .get(&kernel)
                 .ok_or(ExecutorError::BackendFailure("Metal pipeline missing"))?;
-            let encoder =
-                command
-                    .0
-                    .computeCommandEncoder()
-                    .ok_or(ExecutorError::BackendFailure(
-                        "Metal compute encoder creation failed",
-                    ))?;
+            let mut compute = command.compute.borrow_mut();
+            if compute.is_none() {
+                *compute = Some(command.raw.computeCommandEncoder().ok_or(
+                    ExecutorError::BackendFailure("Metal compute encoder creation failed"),
+                )?);
+            }
+            let encoder = compute.as_ref().ok_or(ExecutorError::BackendFailure(
+                "Metal compute encoder missing",
+            ))?;
             encoder.setComputePipelineState(&pipeline.raw);
             // SAFETY: the finite operation's checked geometry establishes every
             // shader access bound; bindings are <=7, params occupy slot8, and all
@@ -214,7 +222,6 @@ mod native {
                     }
                 }
             }
-            encoder.endEncoding();
             Ok(())
         }
         #[allow(clippy::unused_self)] // Common bridge API also supports the non-macOS stub.
@@ -225,8 +232,9 @@ mod native {
             input: &Buffer,
             length: usize,
         ) -> Result<()> {
+            command.end_compute();
             let encoder = command
-                .0
+                .raw
                 .blitCommandEncoder()
                 .ok_or(ExecutorError::BackendFailure(
                     "Metal blit encoder creation failed",
@@ -242,17 +250,28 @@ mod native {
         }
     }
     impl Command {
+        fn end_compute(&self) {
+            if let Some(encoder) = self.compute.borrow_mut().take() {
+                encoder.endEncoding();
+            }
+        }
         pub fn commit(&self) {
-            self.0.commit();
+            self.end_compute();
+            self.raw.commit();
         }
         pub fn poll(&self) -> Option<Result<()>> {
-            match self.0.status() {
+            match self.raw.status() {
                 MTLCommandBufferStatus::Completed => Some(Ok(())),
                 MTLCommandBufferStatus::Error => Some(Err(ExecutorError::BackendFailure(
                     "Metal command execution failed",
                 ))),
                 _ => None,
             }
+        }
+    }
+    impl Drop for Command {
+        fn drop(&mut self) {
+            self.end_compute();
         }
     }
     impl Buffer {

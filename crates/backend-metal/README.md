@@ -17,7 +17,7 @@ Construction requires macOS and an actual Metal device. Other targets compile a 
 
 ## Execution and ownership
 
-Operations record into a retained-reference `MTLCommandBuffer`. `fence()` and `read_f32_async()` submit. Their `poll_step()` reads command status and returns pending or terminal completion without blocking.
+Operations record adjacent dispatches through one serial compute encoder in a retained-reference `MTLCommandBuffer`. Copies and submission end the encoder; a later dispatch starts a new one. `fence()` and `read_f32_async()` submit. Their `poll_step()` reads command status and returns pending or terminal completion without blocking.
 
 Each batch keeps `Rc` ownership of every referenced allocation. Submitted batches remain in a backend-owned queue until completion, even if callers drop buffers or completion handles. Abandoned model tasks transfer their fence and buffers into `MetalFenceRetirement`; foreign-instance rejections return the full payload intact.
 
@@ -76,6 +76,6 @@ MINIFIELD_REQUIRE_GPU=1 cargo +1.89.0 test --locked -p minifield-backend-metal -
 
 Hardware tests are explicitly ignored by portable CI. The hardware command requires actual native Metal construction and shader compilation, and fails if either is unavailable.
 
-The hardware gate includes `--lib`, `parity` and `packed_tile8`: 1 capability unit, 12 existing parity cases and 4 tile8 cases. The private unit retains two JSON records of actual compiled tile8 limits and requires their admission.
+The hardware gate includes `--lib`, `parity` and `packed_tile8`: 1 capability unit, 13 parity cases and 4 tile8 cases, including dependent dispatches across copy and submission boundaries. The private unit retains two JSON records of actual compiled tile8 limits and requires their admission.
 
 Both reference-device pipelines report execution width 32 and a 1,024-thread limit; their static allocations are 5,248 and 9,472 bytes against the device's 32,768-byte capacity.

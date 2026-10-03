@@ -3,6 +3,9 @@ name: Build runtime
 on:
   push:
     branches: [main]
+  schedule:
+    - cron: '17 3 * * *'
+      timezone: America/Toronto
   pull_request:
     paths:
       - .github/workflows/build.yml

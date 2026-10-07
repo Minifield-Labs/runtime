@@ -5,13 +5,19 @@ backend-neutral library: callers supply tokenizer JSON bytes and text, while
 this crate performs no filesystem, network, model, generation, prompt, or tool
 execution work.
 
-`Tokenizer::from_json_bytes` admits only the declared profile: no normalizer,
-the ordered Unicode-aware Split expression followed by `ByteLevel`, BPE with no
+`Tokenizer::from_json_bytes` admits only the declared profile: a `null`
+normalizer or a `Sequence` of literal `Replace` rules (plain-string patterns,
+applied in order like the reference tokenizer), the ordered Unicode-aware Split expression followed by `ByteLevel`, BPE with no
 dropout, unknown-token, byte-fallback, or merge-ignore mode, and the BOS-only
 template. It validates vocabulary IDs, merge definitions, added-token IDs and
 content, then encodes ordinary text and exact added-token substrings. BOS ID 1
 is emitted only through `EncodeOptions { add_special_tokens: true }`; no EOS is
 inserted.
+
+`encode` runs the normalizer first. `Tokenizer::normalize` returns the same
+normalized text with the original byte offset of each of its byte boundaries,
+so `Normalized::original_span` maps a token's normalized bytes back to the text
+the caller supplied. Bytes inside a replacement map to the replaced span.
 
 The model head has 65,536 scores. IDs 64,402 through 65,535 intentionally have
 no tokenizer mapping. `decode` and `token_bytes` return `UnmappedToken` for

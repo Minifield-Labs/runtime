@@ -16,25 +16,58 @@ use wasm_bindgen::{JsValue, prelude::wasm_bindgen};
 
 use super::interop::{browser_yield, js_debug, js_error, pump};
 
-const LIMITS: EncoderLimits = EncoderLimits {
-    max_tokens: 512,
-    max_questions: 32,
-};
-const MAX_TOKENS: usize = 512;
+/// Joint tokens per request unless the host asks for another bound.
+const DEFAULT_MAX_TOKENS: u32 = 2048;
+const MAX_QUESTIONS: u32 = 32;
+/// JSON bytes allowed per joint token: room for an extract `selectable`
+/// entry per question plus IDs and segments.
+const INPUT_BYTES_PER_TOKEN: usize = 256;
 
 #[wasm_bindgen]
 pub struct WebPointerEncoder {
     encoder: Lfm2PointerEncoder<WgpuBackend>,
     tokenizer: Tokenizer,
+    max_tokens: usize,
+}
+
+/// A tokenizer on its own, so hosts can lay out requests before a model loads.
+#[wasm_bindgen]
+pub struct WebTokenizer {
+    tokenizer: Tokenizer,
+}
+
+/// Load a bundle's `tokenizer.json` without a model or GPU.
+#[wasm_bindgen]
+pub fn load_tokenizer(tokenizer: &[u8]) -> Result<WebTokenizer, JsValue> {
+    Ok(WebTokenizer {
+        tokenizer: Tokenizer::from_json_bytes(tokenizer, TokenizerLimits::default())
+            .map_err(js_error)?,
+    })
+}
+
+#[wasm_bindgen]
+impl WebTokenizer {
+    /// Exact IDs and half-open UTF-8 byte offsets into `text`, as `WebPointerEncoder::tokenize`.
+    pub fn tokenize(&self, text: &str, bos: bool) -> Result<JsValue, JsValue> {
+        tokenize(&self.tokenizer, text, bos)
+    }
 }
 
 /// Load a bidirectional pointer bundle, independently of causal generation.
+///
+/// `max_tokens` bounds joint tokens per request (default 2048); larger
+/// bounds cost GPU memory and time.
 #[wasm_bindgen]
 pub async fn load_pointer_encoder(
     config: Vec<u8>,
     weights: Vec<u8>,
     tokenizer: Vec<u8>,
+    max_tokens: Option<u32>,
 ) -> Result<WebPointerEncoder, JsValue> {
+    let max_tokens = max_tokens.unwrap_or(DEFAULT_MAX_TOKENS);
+    if max_tokens == 0 {
+        return Err(JsValue::from_str("max_tokens must be positive"));
+    }
     let tokenizer =
         Tokenizer::from_json_bytes(&tokenizer, TokenizerLimits::default()).map_err(js_error)?;
     let mut backend = WgpuBackend::new_async(
@@ -76,48 +109,29 @@ pub async fn load_pointer_encoder(
             LoaderPoll::Ready(result) => break result.map_err(js_debug)?,
         }
     };
-    let encoder = Lfm2PointerEncoder::new(Rc::new(RefCell::new(backend)), Rc::new(typed), LIMITS)
+    let limits = EncoderLimits {
+        max_tokens: u64::from(max_tokens),
+        max_questions: MAX_QUESTIONS,
+    };
+    let encoder = Lfm2PointerEncoder::new(Rc::new(RefCell::new(backend)), Rc::new(typed), limits)
         .map_err(js_error)?;
-    Ok(WebPointerEncoder { encoder, tokenizer })
+    Ok(WebPointerEncoder {
+        encoder,
+        tokenizer,
+        max_tokens: max_tokens as usize,
+    })
 }
 
 #[wasm_bindgen]
 impl WebPointerEncoder {
-    /// Exact IDs and half-open UTF-8 byte offsets. Optional BOS has offset `[0,0]`.
+    /// Exact IDs and half-open UTF-8 byte offsets into `text`. Optional BOS has offset `[0,0]`.
     pub fn tokenize(&self, text: &str, bos: bool) -> Result<JsValue, JsValue> {
-        let ids = self
-            .tokenizer
-            .encode(
-                text,
-                EncodeOptions {
-                    add_special_tokens: bos,
-                },
-            )
-            .map_err(js_error)?;
-        let mut cursor = 0;
-        let mut offsets = Vec::with_capacity(ids.len());
-        for (index, &id) in ids.iter().enumerate() {
-            if bos && index == 0 {
-                offsets.push([0, 0]);
-                continue;
-            }
-            let bytes = self.tokenizer.token_bytes(id).map_err(js_error)?;
-            let end = cursor + bytes.len();
-            if text.as_bytes().get(cursor..end) != Some(bytes) {
-                return Err(JsValue::from_str("token bytes differ from source text"));
-            }
-            offsets.push([cursor, end]);
-            cursor = end;
-        }
-        if cursor != text.len() {
-            return Err(JsValue::from_str("token bytes don't cover source text"));
-        }
-        js_sys::JSON::parse(&json!({"ids": ids, "offsets": offsets}).to_string())
+        tokenize(&self.tokenizer, text, bos)
     }
 
     /// Predict an explicit joint layout. Spans are half-open source-relative token offsets.
     pub async fn predict(&mut self, input: &str) -> Result<JsValue, JsValue> {
-        let input = parse_input(input).map_err(js_error)?;
+        let input = parse_input(input, self.max_tokens).map_err(js_error)?;
         let mut task = self.encoder.begin_predict(input).map_err(js_error)?;
         let output = pump(&mut task).await?;
         let answers: Vec<Value> = output.answers.into_iter().map(|answer| match answer {
@@ -136,6 +150,41 @@ impl WebPointerEncoder {
     }
 }
 
+/// IDs and original-text byte offsets. The tokenizer encodes normalized
+/// text, so offsets map back through its normalizer; a span covers every
+/// original byte its normalized bytes came from.
+fn tokenize(tokenizer: &Tokenizer, text: &str, bos: bool) -> Result<JsValue, JsValue> {
+    let ids = tokenizer
+        .encode(
+            text,
+            EncodeOptions {
+                add_special_tokens: bos,
+            },
+        )
+        .map_err(js_error)?;
+    let normalized = tokenizer.normalize(text).map_err(js_error)?;
+    let mut cursor = 0;
+    let mut offsets = Vec::with_capacity(ids.len());
+    for (index, &id) in ids.iter().enumerate() {
+        if bos && index == 0 {
+            offsets.push([0, 0]);
+            continue;
+        }
+        let bytes = tokenizer.token_bytes(id).map_err(js_error)?;
+        let end = cursor + bytes.len();
+        if normalized.text.as_bytes().get(cursor..end) != Some(bytes) {
+            return Err(JsValue::from_str("token bytes differ from source text"));
+        }
+        let (start, stop) = normalized.original_span(cursor, end);
+        offsets.push([start, stop]);
+        cursor = end;
+    }
+    if cursor != normalized.text.len() {
+        return Err(JsValue::from_str("token bytes don't cover source text"));
+    }
+    js_sys::JSON::parse(&json!({"ids": ids, "offsets": offsets}).to_string())
+}
+
 fn unsigned(value: &Value) -> Result<u32, &'static str> {
     value
         .as_u64()
@@ -151,22 +200,20 @@ fn integers(value: &Value, limit: usize) -> Result<Vec<u32>, &'static str> {
     values.iter().map(unsigned).collect()
 }
 
-fn parse_input(input: &str) -> Result<EncoderInput, &'static str> {
-    if input.len() > 131_072 {
+fn parse_input(input: &str, max_tokens: usize) -> Result<EncoderInput, &'static str> {
+    if input.len() > max_tokens * INPUT_BYTES_PER_TOKEN {
         return Err("pointer input exceeds byte limit");
     }
     let value: Value = serde_json::from_str(input).map_err(|_| "invalid pointer input JSON")?;
-    let token_ids = integers(&value["token_ids"], MAX_TOKENS)?;
+    let token_ids = integers(&value["token_ids"], max_tokens)?;
     let segment_ids = match value.get("segment_ids") {
-        Some(ids) => integers(ids, MAX_TOKENS)?,
+        Some(ids) => integers(ids, max_tokens)?,
         None => vec![1; token_ids.len()],
     };
     let segments = EncoderSegments::new(segment_ids).map_err(|_| "invalid encoder segments")?;
     let questions = value["questions"]
         .as_array()
-        .filter(|questions| {
-            !questions.is_empty() && questions.len() <= LIMITS.max_questions as usize
-        })
+        .filter(|questions| !questions.is_empty() && questions.len() <= MAX_QUESTIONS as usize)
         .ok_or("expected 1..=32 pointer questions")?;
     let questions = questions
         .iter()
@@ -181,7 +228,7 @@ fn parse_input(input: &str) -> Result<EncoderInput, &'static str> {
                 Some("extract") => {
                     let selectable = policy["selectable"]
                         .as_array()
-                        .filter(|values| values.len() <= MAX_TOKENS)
+                        .filter(|values| values.len() <= max_tokens)
                         .ok_or("expected a bounded selectable array")?
                         .iter()
                         .map(|value| value.as_bool().ok_or("selectable values must be boolean"))
@@ -199,7 +246,7 @@ fn parse_input(input: &str) -> Result<EncoderInput, &'static str> {
             };
             Ok(PointerQuestion {
                 query_index: unsigned(&question["query_index"])?,
-                option_indices: integers(&question["option_indices"], MAX_TOKENS)?,
+                option_indices: integers(&question["option_indices"], max_tokens)?,
                 kind,
             })
         })
@@ -224,23 +271,27 @@ mod tests {
             },
         }]});
         assert_eq!(
-            parse_input(&input.to_string()).map(|input| input.token_ids),
+            parse_input(&input.to_string(), 512).map(|input| input.token_ids),
             Ok(vec![1, 2, 3])
         );
         let mut bad = input.clone();
         bad["questions"][0]["kind"]["selectable"][0] = json!(1);
-        assert!(parse_input(&bad.to_string()).is_err());
+        assert!(parse_input(&bad.to_string(), 512).is_err());
         let mut bad = input;
         bad["token_ids"][0] = json!(1.5);
-        assert!(parse_input(&bad.to_string()).is_err());
+        assert!(parse_input(&bad.to_string(), 512).is_err());
     }
 
     #[test]
     fn rejects_oversized_or_unknown_requests() {
-        assert!(parse_input(&" ".repeat(131_073)).is_err());
+        assert!(parse_input(&" ".repeat(131_073), 512).is_err());
         assert!(
-            parse_input(&json!({"token_ids": vec![1; 513], "questions": []}).to_string()).is_err()
+            parse_input(
+                &json!({"token_ids": vec![1; 513], "questions": []}).to_string(),
+                512
+            )
+            .is_err()
         );
-        assert!(parse_input(r#"{"token_ids":[1],"questions":[{"query_index":0,"option_indices":[0],"kind":{"type":"unknown"}}]}"#).is_err());
+        assert!(parse_input(r#"{"token_ids":[1],"questions":[{"query_index":0,"option_indices":[0],"kind":{"type":"unknown"}}]}"#, 512).is_err());
     }
 }

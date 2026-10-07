@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde::de::{DeserializeSeed, Error as DeError, MapAccess, SeqAccess, Visitor};
 use serde_json::{Value, json};
 
+use crate::normalize::Replacements;
 use crate::{FIRST_UNMAPPED_MODEL_TOKEN_ID, TokenizerError, byte_level};
 
 /// Walks JSON before `serde_json::Value` can overwrite duplicate object keys.
@@ -130,6 +131,7 @@ fn reject_duplicate_json_object_keys(bytes: &[u8]) -> Result<(), TokenizerError>
 pub struct TokenizerAsset {
     model: AssetModel,
     added_tokens: Vec<AddedToken>,
+    replacements: Replacements,
 }
 
 /// Internal BPE tables. Keys are owned to keep asset parsing independent from
@@ -203,6 +205,7 @@ impl TokenizerAsset {
         let raw: RawAsset = serde_json::from_slice(bytes)
             .map_err(|error| TokenizerError::Json(error.to_string()))?;
         validate_profile(&raw)?;
+        let replacements = Replacements::from_value(&raw.normalizer)?;
 
         let mut vocab = HashMap::with_capacity(raw.model.vocab.len());
         let mut ids = HashSet::with_capacity(raw.model.vocab.len());
@@ -307,8 +310,9 @@ impl TokenizerAsset {
                     token.content
                 ));
             }
-            // The accepted normalizer is null, so `normalized` has no transform
-            // to apply. The pinned Mathias/python definitions set it true.
+            // Added tokens match before normalization. The admitted literal
+            // replacements never touch special-token text, so `normalized`
+            // changes nothing. The pinned definitions set it true.
             let _ = token.normalized;
             added_tokens.push(AddedToken {
                 id: token.id,
@@ -328,11 +332,12 @@ impl TokenizerAsset {
         Ok(Self {
             model: AssetModel { vocab, merge_ranks },
             added_tokens,
+            replacements,
         })
     }
 
-    pub(crate) fn into_parts(self) -> (AssetModel, Vec<AddedToken>) {
-        (self.model, self.added_tokens)
+    pub(crate) fn into_parts(self) -> (AssetModel, Vec<AddedToken>, Replacements) {
+        (self.model, self.added_tokens, self.replacements)
     }
 }
 
@@ -340,13 +345,13 @@ fn validate_profile(raw: &RawAsset) -> Result<(), TokenizerError> {
     if raw.version != "1.0" {
         return invalid("tokenizer version must be 1.0");
     }
-    if !raw.truncation.is_null() || !raw.padding.is_null() || !raw.normalizer.is_null() {
-        return invalid("truncation, padding, and normalizer must all be null");
+    if !raw.truncation.is_null() || !raw.padding.is_null() {
+        return invalid("truncation and padding must be null");
     }
     if raw.pre_tokenizer != expected_pretokenizer() {
         return invalid("pre-tokenizer is not the pinned Split then ByteLevel profile");
     }
-    if raw.post_processor != expected_postprocessor() {
+    if !matches_postprocessor(&raw.post_processor) {
         return invalid("post-processor is not the pinned BOS-only template profile");
     }
     if raw.decoder != expected_decoder() {
@@ -379,6 +384,20 @@ fn expected_pretokenizer() -> Value {
             {"type": "ByteLevel", "add_prefix_space": false, "trim_offsets": true, "use_regex": false}
         ]
     })
+}
+
+/// The pinned post-processor, also accepting `add_prefix_space: false` on its
+/// `ByteLevel` step. With `trim_offsets: false` that flag changes no IDs or
+/// offsets; dataset builders write it either way.
+fn matches_postprocessor(value: &Value) -> bool {
+    let mut value = value.clone();
+    if let Some(flag) = value
+        .pointer_mut("/processors/0/add_prefix_space")
+        .filter(|flag| flag.as_bool() == Some(false))
+    {
+        *flag = Value::Bool(true);
+    }
+    value == expected_postprocessor()
 }
 
 fn expected_postprocessor() -> Value {

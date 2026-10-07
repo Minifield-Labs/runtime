@@ -51,7 +51,7 @@ JavaScript and WASM files from `web/pkg/`.
 - `choose` prefills shared context once and scores criterion tails serially, reading only selector logits.
 - `load_classifier` loads an explicit dense classifier head `[classes, hidden]`. Dense F32/BF16 and packed ternary/NF4 backbones share the same API.
 - `classify` starts fresh state. `classify_cached` reuses a shared prefix when possible, with independent class width and input vocabulary. Callers own prompts, action masks, and application state.
-- `load_pointer_encoder` loads the bidirectional model, with a 512-token and 32-question limit. `tokenize(text, bos)` returns IDs and UTF-8 byte offsets, with `[0,0]` for an inserted BOS; `predict(JSON)` accepts `token_ids`, optional `segment_ids`, and explicit pointer questions, then returns scores and decoded answers. Hosts own wording, joint layouts, and conversion from source-relative token spans to source characters; pointer calls don't emit telemetry.
+- `load_pointer_encoder(config, weights, tokenizer, maxTokens?)` loads the bidirectional model, with a joint-token limit (default 2048) and a 32-question limit. Larger limits cost GPU memory and time. `tokenize(text, bos)` returns IDs and UTF-8 byte offsets into the original text, with `[0,0]` for an inserted BOS; offsets map back through the tokenizer's normalizer. `load_tokenizer(bytes)` returns the same `tokenize` without a model or GPU, so hosts can lay out requests first; `predict(JSON)` accepts `token_ids`, optional `segment_ids`, and explicit pointer questions, then returns scores and decoded answers. Hosts own wording, joint layouts, and conversion from source-relative token spans to source characters; pointer calls don't emit telemetry.
 
 ## Native bundle evidence
 

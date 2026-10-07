@@ -23,7 +23,7 @@ mod telemetry;
 pub use telemetry::{configure_telemetry, flush_telemetry};
 
 pub use loading::{load, load_classifier};
-pub use pointer::{WebPointerEncoder, load_pointer_encoder};
+pub use pointer::{WebPointerEncoder, WebTokenizer, load_pointer_encoder, load_tokenizer};
 
 const MAX_LOGICAL_TOKENS: u64 = 512;
 const STOP_TOKEN_IDS: [TokenId; 1] = [7];

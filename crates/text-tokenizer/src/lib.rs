@@ -8,15 +8,18 @@
 
 mod asset;
 mod byte_level;
+mod normalize;
 mod pretokenize;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 pub use asset::TokenizerAsset;
+pub use normalize::Normalized;
 pub use pretokenize::{PretokenizedPiece, TextSpan};
 
 use crate::asset::{AddedToken, AssetModel};
+use crate::normalize::Replacements;
 
 /// The fixed model-head width, including intentionally unmapped token IDs.
 pub const MODEL_VOCAB_SIZE: u32 = 65_536;
@@ -102,6 +105,7 @@ pub struct Tokenizer {
     added_trie: Arc<AddedTrie>,
     token_bytes: Arc<Vec<Option<TokenBytes>>>,
     special_tokens: Arc<Vec<bool>>,
+    replacements: Arc<Replacements>,
 }
 
 #[derive(Clone, Debug)]
@@ -152,7 +156,7 @@ impl Tokenizer {
         asset: TokenizerAsset,
         limits: TokenizerLimits,
     ) -> Result<Self, TokenizerError> {
-        let (model, added_tokens) = asset.into_parts();
+        let (model, added_tokens, replacements) = asset.into_parts();
         let mut token_bytes = vec![None; FIRST_UNMAPPED_MODEL_TOKEN_ID as usize];
         let mut special_tokens = vec![false; FIRST_UNMAPPED_MODEL_TOKEN_ID as usize];
 
@@ -199,7 +203,21 @@ impl Tokenizer {
             added_trie: Arc::new(trie),
             token_bytes: Arc::new(token_bytes),
             special_tokens: Arc::new(special_tokens),
+            replacements: Arc::new(replacements),
         })
+    }
+
+    /// Applies the asset's normalizer, keeping each byte's original offset.
+    ///
+    /// `encode` tokenizes this text; map token spans back with
+    /// [`Normalized::original_span`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the input exceeds the caller limit.
+    pub fn normalize(&self, input: &str) -> Result<Normalized, TokenizerError> {
+        self.check_input(input)?;
+        Ok(self.replacements.apply(input))
     }
 
     /// Returns exact pretokenized byte-level pieces and character offsets.
@@ -214,10 +232,14 @@ impl Tokenizer {
 
     /// Encodes text without implicit EOS or prompt construction.
     ///
+    /// The asset's normalizer runs first; see [`Tokenizer::normalize`].
+    ///
     /// # Errors
     ///
     /// Returns an error for caller limits or an invalid BPE asset relation.
     pub fn encode(&self, input: &str, options: EncodeOptions) -> Result<Vec<u32>, TokenizerError> {
+        let normalized = self.normalize(input)?;
+        let input = normalized.text.as_str();
         self.check_input(input)?;
         let mut output = Vec::new();
         let mut remaining_merge_work = self.limits.max_merge_steps;
@@ -760,6 +782,30 @@ mod tests {
             tokenizer.decode(&[64_402], false),
             Err(TokenizerError::UnmappedToken(64_402))
         );
+    }
+
+    #[test]
+    fn literal_replacements_normalize_before_encoding() {
+        let mut asset: serde_json::Value = serde_json::from_slice(&compact_asset())
+            .unwrap_or_else(|error| panic!("synthetic JSON parse failed: {error}"));
+        asset["normalizer"] = json!({"type": "Sequence", "normalizers": [
+            {"type": "Replace", "pattern": {"String": "\u{2019}"}, "content": "'"}
+        ]});
+        let asset = serde_json::to_vec(&asset)
+            .unwrap_or_else(|error| panic!("synthetic JSON serialization failed: {error}"));
+        let tokenizer = Tokenizer::from_json_bytes(&asset, TokenizerLimits::default())
+            .unwrap_or_else(|error| panic!("literal replacements rejected: {error}"));
+        let plain = Tokenizer::from_json_bytes(&compact_asset(), TokenizerLimits::default())
+            .unwrap_or_else(|error| panic!("synthetic asset admission failed: {error}"));
+        assert_eq!(
+            tokenizer.encode("a\u{2019}b", EncodeOptions::default()),
+            plain.encode("a'b", EncodeOptions::default())
+        );
+        let normalized = tokenizer
+            .normalize("a\u{2019}b")
+            .unwrap_or_else(|error| panic!("normalize failed: {error}"));
+        assert_eq!(normalized.text, "a'b");
+        assert_eq!(normalized.original_span(2, 3), (4, 5));
     }
 
     #[test]

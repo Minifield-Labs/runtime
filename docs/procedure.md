@@ -61,6 +61,8 @@ A browser-specific failure blocks browser support. Native Metal parity doesn't c
 
 ## Publication checklist
 
+The [runtime build workflow](../.github/workflows/build.yml) publishes the 7 target packages from `main` on pushes, manual runs, and a nightly schedule at 03:17 America/Toronto. Nightly runs use the same dated versioning and Cloudflare R2 release path as push builds.
+
 - A fresh clone runs portable checks without sibling repositories, private models, or global Python packages.
 - README commands, supported-format claims, active links, and crate paths match the tree.
 - Contracts and locks are pinned. Attribution and third-party notices are retained.

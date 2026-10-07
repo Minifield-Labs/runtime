@@ -785,6 +785,37 @@ mod tests {
     }
 
     #[test]
+    fn postprocessor_prefix_space_flag_is_ignored_without_offset_trimming() {
+        let mut asset: serde_json::Value = serde_json::from_slice(&compact_asset())
+            .unwrap_or_else(|error| panic!("synthetic JSON parse failed: {error}"));
+        asset["post_processor"]["processors"][0]["add_prefix_space"] = json!(false);
+        let flagged = serde_json::to_vec(&asset)
+            .unwrap_or_else(|error| panic!("synthetic JSON serialization failed: {error}"));
+        let tokenizer = Tokenizer::from_json_bytes(&flagged, TokenizerLimits::default())
+            .unwrap_or_else(|error| panic!("prefix-space variant rejected: {error}"));
+        let plain = Tokenizer::from_json_bytes(&compact_asset(), TokenizerLimits::default())
+            .unwrap_or_else(|error| panic!("synthetic asset admission failed: {error}"));
+        assert_eq!(
+            tokenizer.encode(
+                " ab ab",
+                EncodeOptions {
+                    add_special_tokens: true
+                }
+            ),
+            plain.encode(
+                " ab ab",
+                EncodeOptions {
+                    add_special_tokens: true
+                }
+            )
+        );
+        asset["post_processor"]["processors"][0]["trim_offsets"] = json!(true);
+        let trimmed = serde_json::to_vec(&asset)
+            .unwrap_or_else(|error| panic!("synthetic JSON serialization failed: {error}"));
+        assert!(Tokenizer::from_json_bytes(&trimmed, TokenizerLimits::default()).is_err());
+    }
+
+    #[test]
     fn literal_replacements_normalize_before_encoding() {
         let mut asset: serde_json::Value = serde_json::from_slice(&compact_asset())
             .unwrap_or_else(|error| panic!("synthetic JSON parse failed: {error}"));

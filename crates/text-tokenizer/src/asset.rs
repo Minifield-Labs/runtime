@@ -351,7 +351,7 @@ fn validate_profile(raw: &RawAsset) -> Result<(), TokenizerError> {
     if raw.pre_tokenizer != expected_pretokenizer() {
         return invalid("pre-tokenizer is not the pinned Split then ByteLevel profile");
     }
-    if raw.post_processor != expected_postprocessor() {
+    if !matches_postprocessor(&raw.post_processor) {
         return invalid("post-processor is not the pinned BOS-only template profile");
     }
     if raw.decoder != expected_decoder() {
@@ -384,6 +384,20 @@ fn expected_pretokenizer() -> Value {
             {"type": "ByteLevel", "add_prefix_space": false, "trim_offsets": true, "use_regex": false}
         ]
     })
+}
+
+/// The pinned post-processor, also accepting `add_prefix_space: false` on its
+/// `ByteLevel` step. With `trim_offsets: false` that flag changes no IDs or
+/// offsets; dataset builders write it either way.
+fn matches_postprocessor(value: &Value) -> bool {
+    let mut value = value.clone();
+    if let Some(flag) = value
+        .pointer_mut("/processors/0/add_prefix_space")
+        .filter(|flag| flag.as_bool() == Some(false))
+    {
+        *flag = Value::Bool(true);
+    }
+    value == expected_postprocessor()
 }
 
 fn expected_postprocessor() -> Value {
